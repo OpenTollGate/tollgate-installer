@@ -1,0 +1,25 @@
+/* Base CSS file for additional global styles */
+html {
+  font-size: 16px;
+}
+
+@media (max-width: 768px) {
+  html {
+    font-size: 14px;
+  }
+}
+
+/* For QR reader component */
+video {
+  max-width: 100%;
+}
+
+/* For focus visible accessibility */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid #F97316;
+  outline-offset: 2px;
+}

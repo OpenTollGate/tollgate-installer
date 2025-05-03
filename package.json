@@ -1,0 +1,67 @@
+{
+  "name": "tollgate-installer",
+  "version": "0.1.0",
+  "description": "Easily install TollGate on your fresh router with just a few clicks",
+  "main": "dist/main/main.js",
+  "author": "TollGate Team",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "tsc -p tsconfig.electron.json && electron .",
+    "build": "npm run build:vite && npm run build:electron",
+    "build:vite": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "dist": "electron-builder",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nostr-dev-kit/ndk": "^2.0.0",
+    "default-gateway": "^7.2.2",
+    "electron-is-dev": "^2.0.0",
+    "electron-updater": "^6.1.7",
+    "html5-qrcode": "^2.3.8",
+    "ip": "^1.1.8",
+    "node-ssh": "^13.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "ssh2": "^1.15.0",
+    "styled-components": "^6.1.8"
+  },
+  "devDependencies": {
+    "@types/default-gateway": "^3.0.1",
+    "@types/electron": "^1.6.10",
+    "@types/ip": "^1.1.3",
+    "@types/node": "^20.17.32",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@types/ssh2": "^1.15.5",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10"
+  },
+  "build": {
+    "appId": "com.tollgate.installer",
+    "productName": "TollGate Installer",
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Utility"
+    }
+  }
+}

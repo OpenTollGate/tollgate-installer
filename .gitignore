@@ -1,0 +1,52 @@
+# IDE and editor files
+.idea
+.nsite
+.vite
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment and configuration
+certs/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.DS_Store
+
+# Build artifacts
+dist/
+dist-ssr
+release/
+build/
+out/
+
+# Tool configuration
+.roo
+roo-code-settings.json
+cursor-tools.config.json
+.roomodes
+.cursorrules
+.clinerules
+
+# Dependency directories
+node_modules/
+
+# Package lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
