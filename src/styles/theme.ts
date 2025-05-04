@@ -4,9 +4,9 @@
 export const theme = {
   colors: {
     // Primary colors
-    primary: '#E76F51', // Updated to match the reference image (coral orange)
-    primaryDark: '#D65F40',
-    primaryLight: '#FFEDE8',
+    primary: '#f7b44c', // Changed to gold color
+    primaryDark: '#FFC400',
+    primaryLight: '#FFF2CC',
     
     // Text colors
     text: '#293241', // Darker navy for main text

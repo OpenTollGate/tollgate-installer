@@ -3,6 +3,7 @@ import { useNostrVersions } from './NostrVersionProvider';
 import styled from 'styled-components';
 import Card from './common/Card';
 import Button from './common/Button';
+import logoWhite from '../assets/TollGate_Logo-C-white.png';
 
 interface WelcomeProps {
   onStart: () => void;
@@ -15,7 +16,19 @@ const WelcomeContainer = styled.div`
   justify-content: center;
   min-height: 100vh;
   padding: ${props => props.theme.space.xl};
-  background-color: ${props => props.theme.colors.backgroundAlt};
+  background-color: transparent;
+  position: relative;
+  z-index: 1;
+`;
+
+const ContentCard = styled.div`
+  background: #FFFFFF;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: ${props => props.theme.space.xl};
+  border-radius: ${props => props.theme.radii.lg};
+  text-align: center;
+  max-width: 600px;
+  margin: 0 auto;
 `;
 
 const LogoContainer = styled.div`
@@ -33,7 +46,7 @@ const LogoContainer = styled.div`
 const LogoCircle = styled.div`
   width: 120px;
   height: 120px;
-  background-color: ${props => props.theme.colors.primary};
+  background-color: ${props => props.theme.colors.primary || '#FFD700'}; // Ensure gold color
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -157,16 +170,19 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
     };
   };
   return (
-    <WelcomeContainer>
-      <Card>
-        <LogoContainer>
-          <LogoCircle>
-            TG
-          </LogoCircle>
-        </LogoContainer>
-        
-        <Title>TollGate Installer</Title>
-        <Description>
+        <WelcomeContainer>
+          <img
+            src={logoWhite}
+            alt="TollGate Logo"
+            style={{
+              width: '300px', // Increased size
+              height: 'auto',
+              margin: '2rem auto' // Centered and added margin
+            }}
+          />
+          <ContentCard>
+            <Title>TollGate Installer</Title>
+            <Description>
           Easily install TollGate OS on your fresh router with just a few clicks
         </Description>
         
@@ -219,9 +235,9 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
             </VersionsList>
           )}
         </VersionsContainer>
-      </Card>
-    </WelcomeContainer>
-  );
+          </ContentCard>
+        </WelcomeContainer>
+      );
 };
 
 export default Welcome;

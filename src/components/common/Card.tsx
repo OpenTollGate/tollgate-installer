@@ -10,16 +10,15 @@ interface CardProps {
 }
 
 const CardContainer = styled.div<{ fullWidth?: boolean }>`
-  background-color: ${props => props.theme.colors.background};
+  background-color: transparent;
   border-radius: ${props => props.theme.radii.lg};
-  box-shadow: ${props => props.theme.shadows.md};
   overflow: hidden;
   display: flex;
   flex-direction: column;
   width: ${props => props.fullWidth ? '100%' : '550px'};
   max-width: 100%;
   margin: 0 auto;
-  border: 1px solid ${props => props.theme.colors.border};
+  padding: ${props => props.theme.space.xl};
 `;
 
 const CardHeader = styled.div`

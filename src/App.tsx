@@ -8,6 +8,7 @@ import PasswordEntry from './components/PasswordEntry';
 import Installer from './components/Installer';
 import Complete from './components/Complete';
 import NostrVersionProvider from './components/NostrVersionProvider';
+import Background from './components/Background';
 
 // App stages
 enum Stage {
@@ -42,8 +43,8 @@ const AppContainer = styled.div`
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background-color: ${props => props.theme.colors.background};
   color: ${props => props.theme.colors.text};
+  overflow: hidden;
 `;
 
 const App: React.FC = () => {
@@ -174,6 +175,7 @@ const App: React.FC = () => {
       <GlobalStyle />
       <NostrVersionProvider>
         <AppContainer>
+          <Background />
           {stage === Stage.WELCOME && (
             <Welcome onStart={scanForRouters} />
           )}

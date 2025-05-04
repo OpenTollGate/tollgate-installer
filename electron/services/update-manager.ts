@@ -39,7 +39,7 @@ export class UpdateManager {
       // Connect to relays
       console.log("DEBUG - UpdateManager: Attempting to connect to NDK relays");
       try {
-        await this.ndk.connect(2000);
+        await this.ndk.connect();
         console.log("DEBUG - UpdateManager: Successfully connected to NDK relays");
       } catch (connectError) {
         console.error("DEBUG - UpdateManager: Error connecting to NDK relays", connectError);
