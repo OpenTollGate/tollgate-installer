@@ -1,9 +1,8 @@
 import React from 'react';
 import { useNostrVersions } from './NostrVersionProvider';
 import styled from 'styled-components';
-import Card from './common/Card';
 import Button from './common/Button';
-import logoWhite from '../assets/TollGate_Logo-C-white.png';
+import PageContainer from './common/PageContainer';
 
 interface WelcomeProps {
   onStart: () => void;
@@ -170,74 +169,61 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
     };
   };
   return (
-        <WelcomeContainer>
-          <img
-            src={logoWhite}
-            alt="TollGate Logo"
-            style={{
-              width: '300px', // Increased size
-              height: 'auto',
-              margin: '2rem auto' // Centered and added margin
-            }}
-          />
-          <ContentCard>
-            <Title>TollGate Installer</Title>
-            <Description>
-          Easily install TollGate OS on your fresh router with just a few clicks
-        </Description>
-        
-        <Features>
-          <Feature>
-            <CheckIcon>✓</CheckIcon>
-            Automatically detects routers on your network
-          </Feature>
-          <Feature>
-            <CheckIcon>✓</CheckIcon>
-            Simple guided installation process
-          </Feature>
-          <Feature>
-            <CheckIcon>✓</CheckIcon>
-            Securely transfers and installs TollGate OS
-          </Feature>
-          <Feature>
-            <CheckIcon>✓</CheckIcon>
-            Optimized for consecutive router installs
-          </Feature>
-        </Features>
-        
-        <ActionButton 
-          variant="primary" 
-          size="large" 
-          fullWidth 
-          onClick={onStart}
-        >
-          Start Installation
-        </ActionButton>
-        
-        <VersionsContainer>
-          <VersionTitle>Available OS Versions</VersionTitle>
-          {error ? (
-            <LoadingText>Error loading versions: {error}</LoadingText>
-          ) : loading ? (
-            <LoadingText>Searching for available OS versions...</LoadingText>
-          ) : versions.length === 0 ? (
-            <LoadingText>No OS versions found.</LoadingText>
-          ) : (
-            <VersionsList>
-              {versions.map((event, index) => {
-                const { tollgateVersion, model, openWrtVersion } = getVersionDetails(event);
-                return (
-                  <VersionItem key={index}>
-                    TollGate OS {tollgateVersion} for {model} (OpenWrt {openWrtVersion})
-                  </VersionItem>
-                );
-              })}
-            </VersionsList>
-          )}
-        </VersionsContainer>
-          </ContentCard>
-        </WelcomeContainer>
-      );
+    <PageContainer
+      title="TollGate Installer"
+      subtitle="Easily install TollGate OS on your fresh router with just a few clicks"
+    >
+      <Features>
+        <Feature>
+          <CheckIcon>✓</CheckIcon>
+          Automatically detects routers on your network
+        </Feature>
+        <Feature>
+          <CheckIcon>✓</CheckIcon>
+          Simple guided installation process
+        </Feature>
+        <Feature>
+          <CheckIcon>✓</CheckIcon>
+          Securely transfers and installs TollGate OS
+        </Feature>
+        <Feature>
+          <CheckIcon>✓</CheckIcon>
+          Optimized for consecutive router installs
+        </Feature>
+      </Features>
+      
+      <ActionButton
+        variant="primary"
+        size="large"
+        fullWidth
+        onClick={onStart}
+      >
+        Start Installation
+      </ActionButton>
+      
+      <VersionsContainer>
+        <VersionTitle>Available OS Versions</VersionTitle>
+        {error ? (
+          <LoadingText>Error loading versions: {error}</LoadingText>
+        ) : loading ? (
+          <LoadingText>Searching for available OS versions...</LoadingText>
+        ) : versions.length === 0 ? (
+          <LoadingText>No OS versions found.</LoadingText>
+        ) : (
+          <VersionsList>
+            {versions.map((event: any, index: number) => {
+              const { tollgateVersion, model, openWrtVersion } = getVersionDetails(event);
+              return (
+                <VersionItem key={index}>
+                  TollGate OS {tollgateVersion} for {model} (OpenWrt {openWrtVersion})
+                </VersionItem>
+              );
+            })}
+          </VersionsList>
+        )}
+      </VersionsContainer>
+    </PageContainer>
+  );
 };
 
 export default Welcome;

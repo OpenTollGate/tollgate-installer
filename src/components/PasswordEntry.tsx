@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import styled from 'styled-components';
-import Card from './common/Card';
 import Button from './common/Button';
 import Input from './common/Input';
+import PageContainer from './common/PageContainer';
 
 interface PasswordEntryProps {
   routerIp: string;
@@ -21,7 +21,7 @@ const PasswordForm = styled.form`
 const QrScannerContainer = styled.div`
   margin-top: 1.5rem;
   padding: 1rem;
-  border: 1px solid ${props => props.theme.colors.border};
+  background-color: #FFFFFF;
   border-radius: ${props => props.theme.radii.md};
 `;
 
@@ -108,23 +108,19 @@ const PasswordEntry: React.FC<PasswordEntryProps> = ({
   const [showQrScanner, setShowQrScanner] = useState(false);
   const qrScannerRef = useRef<Html5Qrcode | null>(null);
   const qrContainerRef = useRef<HTMLDivElement>(null);
-  
-  // Initialize QR scanner when showing the scanner
+
   useEffect(() => {
     if (showQrScanner && qrContainerRef.current) {
       const qrScannerId = "qr-scanner-container";
       
-      // Create container if it doesn't exist
       if (!document.getElementById(qrScannerId)) {
         const container = document.createElement("div");
         container.id = qrScannerId;
         qrContainerRef.current.appendChild(container);
       }
-      
-      // Initialize the scanner
+
       qrScannerRef.current = new Html5Qrcode(qrScannerId);
       
-      // Start scanning
       qrScannerRef.current.start(
         { facingMode: "environment" },
         {
@@ -132,14 +128,11 @@ const PasswordEntry: React.FC<PasswordEntryProps> = ({
           qrbox: 250
         },
         (decodedText) => {
-          // On success - set the password
           setPassword(decodedText);
           stopQrScanner();
-          // Auto-submit after scanning
           handleSubmit();
         },
         (errorMessage) => {
-          // Ignoring errors in scanning - they're expected during the scan process
           console.log(errorMessage);
         }
       )
@@ -147,14 +140,12 @@ const PasswordEntry: React.FC<PasswordEntryProps> = ({
         console.error("Error starting QR scanner:", err);
       });
     }
-    
-    // Cleanup
+
     return () => {
       stopQrScanner();
     };
   }, [showQrScanner]);
-  
-  // Stop QR scanner
+
   const stopQrScanner = () => {
     if (qrScannerRef.current && qrScannerRef.current.isScanning) {
       qrScannerRef.current.stop()
@@ -166,23 +157,20 @@ const PasswordEntry: React.FC<PasswordEntryProps> = ({
         });
     }
   };
-  
-  // Toggle QR scanner
+
   const toggleQrScanner = () => {
     setShowQrScanner(!showQrScanner);
   };
-  
+
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSubmitting(true);
     onSubmit();
-    // In a real implementation, we would wait for the response before setting isSubmitting to false
-    // For now, we'll use a timeout to simulate the delay
     setTimeout(() => {
       setIsSubmitting(false);
     }, 2000);
   };
-  
+
   const footerButtons = (
     <ButtonGroup>
       <Button variant="outline" onClick={onBack} disabled={isSubmitting}>
@@ -198,12 +186,11 @@ const PasswordEntry: React.FC<PasswordEntryProps> = ({
       </Button>
     </ButtonGroup>
   );
-  
+
   return (
-    <Card
-      title="Router Password"
+    <PageContainer 
+      title="Router Password" 
       subtitle="Enter the password for your router"
-      footer={footerButtons}
     >
       {error && <ErrorMessage>{error}</ErrorMessage>}
       
@@ -256,7 +243,8 @@ const PasswordEntry: React.FC<PasswordEntryProps> = ({
           </Button>
         </QrScannerContainer>
       )}
-    </Card>
+      {footerButtons}
+    </PageContainer>
   );
 };
 

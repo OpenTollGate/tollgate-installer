@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import Card from './common/Card';
 import Button from './common/Button';
 import ProgressBar from './common/ProgressBar';
+import PageContainer from './common/PageContainer';
 
 interface RouterScannerProps {
   routers: Array<{ ip: string; sshOpen: boolean; meta?: any }>;
@@ -48,8 +48,10 @@ const RouterDetail = styled.div`
 
 const NoRoutersMessage = styled.div`
   text-align: center;
-  padding: 2rem 0;
+  padding: 2rem;
   color: ${props => props.theme.colors.textSecondary};
+  background-color: #FFFFFF;
+  border-radius: ${props => props.theme.radii.md};
 `;
 
 const ErrorMessage = styled.div`
@@ -65,7 +67,9 @@ const LoadingState = styled.div`
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 2rem 0;
+  padding: 2rem;
+  background-color: #FFFFFF;
+  border-radius: ${props => props.theme.radii.md};
 `;
 
 const LoadingText = styled.div`
@@ -78,6 +82,7 @@ const FooterButtons = styled.div`
   display: flex;
   justify-content: center;
   gap: 1rem;
+  margin-top: 2rem;
 `;
 
 const RouterScanner: React.FC<RouterScannerProps> = ({
@@ -89,12 +94,10 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   
-  // Simulate scanning animation
   useEffect(() => {
     if (routers.length === 0 && !error) {
       setIsScanning(true);
       
-      // Simulate progress
       const interval = setInterval(() => {
         setScanProgress(prev => {
           const newProgress = prev + 5;
@@ -113,13 +116,13 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       setScanProgress(100);
     }
   }, [routers, error]);
-  
+
   const handleRescan = () => {
     setScanProgress(0);
     setIsScanning(true);
     onRescan();
   };
-  
+
   const renderContent = () => {
     if (isScanning) {
       return (
@@ -164,28 +167,24 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       </RouterList>
     );
   };
-  
-  const footer = (
-    <FooterButtons>
-      <Button
-        variant="outline"
-        onClick={handleRescan}
-        disabled={isScanning}
-      >
-        Scan Again
-      </Button>
-    </FooterButtons>
-  );
-  
+
   return (
-    <Card
-      title="Detected Routers"
+    <PageContainer 
+      title="Detected Routers" 
       subtitle="Select a router to install TollGate OS"
-      footer={footer}
     >
       {error && <ErrorMessage>{error}</ErrorMessage>}
       {renderContent()}
-    </Card>
+      <FooterButtons>
+        <Button
+          variant="outline"
+          onClick={handleRescan}
+          disabled={isScanning}
+        >
+          Scan Again
+        </Button>
+      </FooterButtons>
+    </PageContainer>
   );
 };
 

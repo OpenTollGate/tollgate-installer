@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import Card from './common/Card';
 import ProgressBar from './common/ProgressBar';
+import PageContainer from './common/PageContainer';
 
 interface RouterInfo {
   ip: string;
@@ -16,8 +16,12 @@ interface InstallerProps {
   error: string | null;
 }
 
-const InstallerContainer = styled.div`
-  padding: 1rem 0;
+const ErrorMessage = styled.div`
+  color: ${props => props.theme.colors.error};
+  background-color: ${props => props.theme.colors.primaryLight};
+  padding: 1rem;
+  border-radius: ${props => props.theme.radii.md};
+  margin-bottom: 1rem;
 `;
 
 const StatusSection = styled.div`
@@ -33,14 +37,6 @@ const StatusTitle = styled.h3`
 const StatusMessage = styled.p`
   color: ${props => props.theme.colors.textSecondary};
   margin-bottom: 1.5rem;
-`;
-
-const ErrorMessage = styled.div`
-  color: ${props => props.theme.colors.error};
-  background-color: ${props => props.theme.colors.primaryLight};
-  padding: 1rem;
-  border-radius: ${props => props.theme.radii.md};
-  margin-bottom: 1rem;
 `;
 
 const RouterDetails = styled.div`
@@ -173,74 +169,72 @@ const Installer: React.FC<InstallerProps> = ({
     
     return () => clearInterval(interval);
   }, [initialProgress, currentStep]);
-  
+
   return (
-    <Card
-      title="Installing TollGateOS"
+    <PageContainer 
+      title="Installing TollGateOS" 
       subtitle={`Installing on router ${router?.ip || ''}`}
     >
       {error && <ErrorMessage>{error}</ErrorMessage>}
       
-      <InstallerContainer>
-        <StatusSection>
-          <StatusTitle>
-            {progress < 100 ? 'Installation in progress...' : 'Installation complete!'}
-          </StatusTitle>
-          <StatusMessage>
-            {progress < 100 
-              ? 'Please wait while TollGateOS is being installed on your router. This may take a few minutes.' 
-              : 'TollGateOS has been successfully installed on your router!'}
-          </StatusMessage>
-          
-          <ProgressBar 
-            progress={progress} 
-            color={progress >= 100 ? 'success' : 'primary'} 
-          />
-        </StatusSection>
+      <StatusSection>
+        <StatusTitle>
+          {progress < 100 ? 'Installation in progress...' : 'Installation complete!'}
+        </StatusTitle>
+        <StatusMessage>
+          {progress < 100 
+            ? 'Please wait while TollGateOS is being installed on your router. This may take a few minutes.' 
+            : 'TollGateOS has been successfully installed on your router!'}
+        </StatusMessage>
         
-        {router && (
-          <RouterDetails>
+        <ProgressBar 
+          progress={progress} 
+          color={progress >= 100 ? 'success' : 'primary'} 
+        />
+      </StatusSection>
+      
+      {router && (
+        <RouterDetails>
+          <RouterDetail>
+            <DetailLabel>Router IP:</DetailLabel>
+            <DetailValue>{router.ip}</DetailValue>
+          </RouterDetail>
+          {router.boardName && (
             <RouterDetail>
-              <DetailLabel>Router IP:</DetailLabel>
-              <DetailValue>{router.ip}</DetailValue>
+              <DetailLabel>Model:</DetailLabel>
+              <DetailValue>{router.boardName}</DetailValue>
             </RouterDetail>
-            {router.boardName && (
-              <RouterDetail>
-                <DetailLabel>Model:</DetailLabel>
-                <DetailValue>{router.boardName}</DetailValue>
-              </RouterDetail>
-            )}
-            {router.architecture && (
-              <RouterDetail>
-                <DetailLabel>Architecture:</DetailLabel>
-                <DetailValue>{router.architecture}</DetailValue>
-              </RouterDetail>
-            )}
-          </RouterDetails>
-        )}
-        
-        <StepList>
-          {steps.map((step, index) => (
-            <Step
-              key={index}
-              $active={index === currentStep}
+          )}
+          {router.architecture && (
+            <RouterDetail>
+              <DetailLabel>Architecture:</DetailLabel>
+              <DetailValue>{router.architecture}</DetailValue>
+            </RouterDetail>
+          )}
+        </RouterDetails>
+      )}
+      
+      <StepList>
+        {steps.map((step, index) => (
+          <Step
+            key={index}
+            $active={index === currentStep}
+            $completed={index < currentStep || (index === steps.length - 1 && progress >= 100)}
+          >
+            <StepIcon
               $completed={index < currentStep || (index === steps.length - 1 && progress >= 100)}
+              $active={index === currentStep}
             >
-              <StepIcon
-                $completed={index < currentStep || (index === steps.length - 1 && progress >= 100)}
-                $active={index === currentStep}
-              >
-                {index < currentStep || (index === steps.length - 1 && progress >= 100) ? '✓' : index + 1}
-              </StepIcon>
-              <StepText>
-                <StepTitle>{step.title}</StepTitle>
-                <StepDescription>{step.description}</StepDescription>
-              </StepText>
-            </Step>
-          ))}
-        </StepList>
-      </InstallerContainer>
-    </Card>
+              {index < currentStep || (index === steps.length - 1 && progress >= 100) ? '✓' : index + 1}
+            </StepIcon>
+            <StepText>
+              <StepTitle>{step.title}</StepTitle>
+              <StepDescription>{step.description}</StepDescription>
+            </StepText>
+          </Step>
+        ))}
+      </StepList>
+    </PageContainer>
   );
 };
 
