@@ -30,32 +30,6 @@ const ContentCard = styled.div`
   margin: 0 auto;
 `;
 
-const LogoContainer = styled.div`
-  margin-bottom: ${props => props.theme.space.xl};
-  text-align: center;
-  display: flex;
-  justify-content: center;
-
-  svg {
-    width: 300px;
-    height: auto;
-  }
-`;
-
-const LogoCircle = styled.div`
-  width: 120px;
-  height: 120px;
-  background-color: ${props => props.theme.colors.primary || '#FFD700'}; // Ensure gold color
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: ${props => props.theme.fontWeights.bold};
-  font-size: 2rem;
-  margin-bottom: ${props => props.theme.space.md};
-`;
-
 const Title = styled.h1`
   font-size: ${props => props.theme.fontSizes['3xl']};
   color: ${props => props.theme.colors.text};
