@@ -37,7 +37,7 @@ const LogoContainer = styled.div`
   justify-content: center;
 
   svg {
-    width: 120px;
+    width: 300px;
     height: auto;
   }
 `;

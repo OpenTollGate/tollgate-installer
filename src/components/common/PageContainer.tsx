@@ -26,12 +26,13 @@ const ContentCard = styled.div`
   padding: ${props => props.theme.space.xl};
   border-radius: ${props => props.theme.radii.lg};
   text-align: center;
-  max-width: 600px;
+  width: 600px;
+  max-width: 90%;
   margin: 0 auto;
 `;
 
 const Logo = styled.img`
-  width: 150px;
+  width: 300px;
   height: auto;
   margin: 2rem auto;
 `;
