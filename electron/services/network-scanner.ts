@@ -1,6 +1,6 @@
 import * as ip from 'ip';
 import * as net from 'net';
-// default-gateway is now imported dynamically to handle ESM compatibility
+// default-gateway is imported dynamically in detectDefaultGateway()
 
 export interface ScanResult {
   ip: string;
@@ -14,7 +14,7 @@ export class NetworkScanner {
 
   constructor(config?: { timeoutMs?: number; subnetRanges?: string[] }) {
     this.timeoutMs = config?.timeoutMs || 1000; // Default timeout: 1 second
-    this.subnetRanges = config?.subnetRanges || ['192.168.0.0/24', "192.168.8.0/24", '192.168.1.0/24', '10.0.0.0/24'];
+    this.subnetRanges = config?.subnetRanges || ['192.168.0.0/24', "192.168.8.0/24", '192.168.1.0/24', '10.0.0.0/24']; // 192.168.0.0/16 (last resort)
   }
 
   /**
@@ -28,11 +28,15 @@ export class NetworkScanner {
       // First, try to find the default gateway (most likely a router)
       const gatewayIp = await this.detectDefaultGateway();
       if (gatewayIp) {
+        console.log(`Default gateway detected: ${gatewayIp}`);
         const isSshOpen = await this.checkSshPort(gatewayIp);
         results.push({
           ip: gatewayIp,
           sshOpen: isSshOpen,
-          meta: { isGateway: true }
+          meta: {
+            isGateway: true,
+            status: isSshOpen ? 'ready' : 'no-ssh'
+          }
         });
       }
 
@@ -61,9 +65,11 @@ export class NetworkScanner {
    */
   private async detectDefaultGateway(): Promise<string | null> {
     try {
-      // Dynamically import the ES Module
+      // Dynamic import using the native JavaScript import() function
+      // This syntax will be preserved in the output JavaScript
       const defaultGateway = await import('default-gateway');
-      // Try to get the default gateway for IPv4
+      
+      // Access the v4 function from the imported module
       const { gateway } = await defaultGateway.v4();
       return gateway;
     } catch (error) {
@@ -87,7 +93,12 @@ export class NetworkScanner {
       for (const ipAddress of ips) {
         const scanPromise = this.checkSshPort(ipAddress).then(sshOpen => {
           if (sshOpen) {
-            results.push({ ip: ipAddress, sshOpen: true });
+            console.log(`Found router with SSH enabled: ${ipAddress}`);
+            results.push({
+              ip: ipAddress,
+              sshOpen: true,
+              meta: { status: 'ready' }
+            });
           }
         }).catch(() => {
           // Ignore errors for individual IP scans

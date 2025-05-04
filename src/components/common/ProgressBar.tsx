@@ -1,5 +1,5 @@
 import React from 'react';
-import styled from 'styled-components';
+import styled, { useTheme } from 'styled-components';
 
 interface ProgressBarProps {
   progress: number; // 0-100
@@ -50,20 +50,23 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
   // Ensure progress is between 0-100
   const clampedProgress = Math.min(Math.max(progress, 0), 100);
   
+  // Access theme using the useTheme hook
+  const theme = useTheme();
+  
   // Get color from theme based on color prop
-  const getColor = (colorName: string) => {
+  const getThemeColor = (colorName: string) => {
     switch (colorName) {
       case 'success':
-        return 'colors.success';
+        return theme.colors.success;
       case 'error':
-        return 'colors.error';
+        return theme.colors.error;
       case 'warning':
-        return 'colors.warning';
+        return theme.colors.warning;
       case 'info':
-        return 'colors.info';
+        return theme.colors.info;
       case 'primary':
       default:
-        return 'colors.primary';
+        return theme.colors.primary;
     }
   };
 
@@ -71,7 +74,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
     <ProgressBarContainer className={className}>
       <ProgressBarFill
         progress={clampedProgress}
-        color={getColor(color)}
+        color={getThemeColor(color)}
         height={height}
       >
         {showPercentage && clampedProgress > 10 && (

@@ -148,12 +148,14 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
               <RouterIP>{router.ip}</RouterIP>
               <RouterDetail>
                 {router.meta?.isGateway ? 'Default Gateway' : 'OpenWRT Router'}
+                {router.meta?.status === 'no-ssh' && ' (SSH Not Active)'}
               </RouterDetail>
             </RouterInfo>
             <Button
               variant="primary"
               size="small"
               onClick={() => onSelectRouter(router.ip)}
+              disabled={router.meta?.status === 'no-ssh'}
             >
               Connect
             </Button>

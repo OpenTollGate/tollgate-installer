@@ -54,9 +54,28 @@ export class SshConnector {
    */
   public async getRouterInfo(ip: string): Promise<RouterInfo> {
     try {
-      const client = this.connections.get(ip);
+      let client = this.connections.get(ip);
+      
+      // If no connection exists, try to establish one before proceeding
       if (!client) {
-        throw new Error(`No SSH connection to ${ip}`);
+        console.log(`No existing SSH connection to ${ip}, attempting to reconnect...`);
+        const reconnectResult = await this.connect(ip, '');
+        
+        if (!reconnectResult.success) {
+          console.error(`Failed to reconnect to ${ip}: ${reconnectResult.error}`);
+          // Return placeholder data but mark as incompatible
+          return {
+            boardName: 'disconnected',
+            architecture: 'unknown',
+            compatible: false
+          };
+        }
+        
+        // Get the newly established connection
+        client = this.connections.get(ip);
+        if (!client) {
+          throw new Error(`Connection established but client not found for ${ip}`);
+        }
       }
 
       // Get the board name from /proc/cmdline
@@ -84,7 +103,7 @@ export class SshConnector {
     } catch (error) {
       console.error(`Error getting router info for ${ip}:`, error);
       return {
-        boardName: 'unknown',
+        boardName: 'error',
         architecture: 'unknown',
         compatible: false
       };

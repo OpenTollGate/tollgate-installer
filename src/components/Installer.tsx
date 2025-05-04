@@ -73,18 +73,18 @@ const StepList = styled.div`
   margin-top: 1.5rem;
 `;
 
-const Step = styled.div<{ active: boolean; completed: boolean }>`
+const Step = styled.div<{ $active: boolean; $completed: boolean }>`
   display: flex;
   align-items: center;
   margin-bottom: 1rem;
-  opacity: ${props => (props.active || props.completed ? 1 : 0.5)};
+  opacity: ${props => (props.$active || props.$completed ? 1 : 0.5)};
   
   &:last-child {
     margin-bottom: 0;
   }
 `;
 
-const StepIcon = styled.div<{ completed: boolean; active: boolean }>`
+const StepIcon = styled.div<{ $completed: boolean; $active: boolean }>`
   width: 24px;
   height: 24px;
   border-radius: 50%;
@@ -93,8 +93,8 @@ const StepIcon = styled.div<{ completed: boolean; active: boolean }>`
   justify-content: center;
   margin-right: 1rem;
   background-color: ${props => {
-    if (props.completed) return props.theme.colors.success;
-    if (props.active) return props.theme.colors.primary;
+    if (props.$completed) return props.theme.colors.success;
+    if (props.$active) return props.theme.colors.primary;
     return props.theme.colors.border;
   }};
   color: white;
@@ -221,14 +221,14 @@ const Installer: React.FC<InstallerProps> = ({
         
         <StepList>
           {steps.map((step, index) => (
-            <Step 
+            <Step
               key={index}
-              active={index === currentStep}
-              completed={index < currentStep || (index === steps.length - 1 && progress >= 100)}
+              $active={index === currentStep}
+              $completed={index < currentStep || (index === steps.length - 1 && progress >= 100)}
             >
-              <StepIcon 
-                completed={index < currentStep || (index === steps.length - 1 && progress >= 100)} 
-                active={index === currentStep}
+              <StepIcon
+                $completed={index < currentStep || (index === steps.length - 1 && progress >= 100)}
+                $active={index === currentStep}
               >
                 {index < currentStep || (index === steps.length - 1 && progress >= 100) ? '✓' : index + 1}
               </StepIcon>

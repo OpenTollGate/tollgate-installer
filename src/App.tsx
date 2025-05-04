@@ -111,7 +111,13 @@ const App: React.FC = () => {
         setStage(Stage.SCANNING);
       }
     } catch (err) {
-      setError('Error getting router info: ' + (err instanceof Error ? err.message : String(err)));
+      if (err instanceof Error && err.message.includes('No SSH connection')) {
+        setError('Lost connection to router. Please try connecting again or check that the router is powered on and accessible.');
+      } else {
+        setError('Error getting router info: ' + (err instanceof Error ? err.message : String(err)));
+      }
+      // Return to scanning stage on error
+      setStage(Stage.SCANNING);
     }
   };
 
@@ -126,10 +132,16 @@ const App: React.FC = () => {
       if (connection.success) {
         await getRouterInfo(selectedRouter.ip);
       } else {
-        setError('Failed to connect: ' + (connection.error || 'Invalid password'));
+        setError('Failed to connect: ' + (connection.error || 'Invalid password. Please try again.'));
       }
     } catch (err) {
-      setError('Error connecting to router: ' + (err instanceof Error ? err.message : String(err)));
+      if (err instanceof Error && err.message.includes('Connection to') && err.message.includes('timed out')) {
+        setError('Connection timed out. Please check that your router is powered on and accessible.');
+      } else if (err instanceof Error && err.message.includes('Authentication failed')) {
+        setError('Authentication failed. Please check your password and try again.');
+      } else {
+        setError('Error connecting to router: ' + (err instanceof Error ? err.message : String(err)));
+      }
     }
   };
 
