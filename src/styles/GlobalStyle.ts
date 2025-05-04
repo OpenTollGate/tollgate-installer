@@ -17,9 +17,9 @@ export const GlobalStyle = createGlobalStyle`
   body {
     font-family: ${theme.fonts.body};
     font-size: ${theme.fontSizes.md};
-    line-height: 1.5;
+    line-height: 1.6;
     color: ${theme.colors.text};
-    background-color: ${theme.colors.background};
+    background-color: ${theme.colors.backgroundAlt};
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -30,6 +30,7 @@ export const GlobalStyle = createGlobalStyle`
     line-height: 1.2;
     margin-bottom: ${theme.space.md};
     color: ${theme.colors.text};
+    letter-spacing: -0.01em;
   }
 
   h1 {
@@ -55,7 +56,8 @@ export const GlobalStyle = createGlobalStyle`
   a {
     color: ${theme.colors.primary};
     text-decoration: none;
-    transition: color ${theme.transitions.fast};
+    transition: all ${theme.transitions.fast};
+    font-weight: ${theme.fontWeights.medium};
 
     &:hover {
       color: ${theme.colors.primaryDark};

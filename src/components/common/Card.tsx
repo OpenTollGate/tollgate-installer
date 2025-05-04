@@ -16,38 +16,45 @@ const CardContainer = styled.div<{ fullWidth?: boolean }>`
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  width: ${props => props.fullWidth ? '100%' : '500px'};
+  width: ${props => props.fullWidth ? '100%' : '550px'};
   max-width: 100%;
   margin: 0 auto;
+  border: 1px solid ${props => props.theme.colors.border};
 `;
 
 const CardHeader = styled.div`
-  padding: ${props => props.theme.space.lg} ${props => props.theme.space.lg} ${props => props.theme.space.md};
-  border-bottom: 1px solid ${props => props.theme.colors.border};
+  padding: ${props => props.theme.space.xl} ${props => props.theme.space.xl} ${props => props.theme.space.md};
+  text-align: center;
 `;
 
 const CardTitle = styled.h2`
   margin-bottom: ${props => props.theme.space.xs};
   color: ${props => props.theme.colors.text};
-  font-size: ${props => props.theme.fontSizes.xl};
+  font-size: ${props => props.theme.fontSizes['2xl']};
+  font-weight: ${props => props.theme.fontWeights.bold};
 `;
 
 const CardSubtitle = styled.p`
   color: ${props => props.theme.colors.textSecondary};
-  font-size: ${props => props.theme.fontSizes.md};
-  margin-bottom: 0;
+  font-size: ${props => props.theme.fontSizes.lg};
+  margin-bottom: ${props => props.theme.space.md};
+  max-width: 80%;
+  margin-left: auto;
+  margin-right: auto;
 `;
 
 const CardContent = styled.div`
-  padding: ${props => props.theme.space.lg};
+  padding: ${props => props.theme.space.xl};
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 `;
 
 const CardFooter = styled.div`
-  padding: ${props => props.theme.space.md} ${props => props.theme.space.lg};
-  border-top: 1px solid ${props => props.theme.colors.border};
+  padding: ${props => props.theme.space.lg} ${props => props.theme.space.xl};
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: ${props => props.theme.space.md};
 `;
 

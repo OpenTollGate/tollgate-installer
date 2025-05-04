@@ -14,17 +14,34 @@ const WelcomeContainer = styled.div`
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: ${props => props.theme.space.lg};
+  padding: ${props => props.theme.space.xl};
+  background-color: ${props => props.theme.colors.backgroundAlt};
 `;
 
 const LogoContainer = styled.div`
   margin-bottom: ${props => props.theme.space.xl};
   text-align: center;
+  display: flex;
+  justify-content: center;
 
   svg {
     width: 120px;
     height: auto;
   }
+`;
+
+const LogoCircle = styled.div`
+  width: 120px;
+  height: 120px;
+  background-color: ${props => props.theme.colors.primary};
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: ${props => props.theme.fontWeights.bold};
+  font-size: 2rem;
+  margin-bottom: ${props => props.theme.space.md};
 `;
 
 const Title = styled.h1`
@@ -46,54 +63,63 @@ const Features = styled.ul`
   margin-bottom: ${props => props.theme.space.xl};
   padding: 0;
   list-style-type: none;
+  width: 100%;
+  max-width: 450px;
 `;
 
 const Feature = styled.li`
   display: flex;
-  align-items: center;
-  margin-bottom: ${props => props.theme.space.md};
-  
-  &:before {
-    content: '✓';
-    color: ${props => props.theme.colors.primary};
-    font-weight: bold;
-    margin-right: ${props => props.theme.space.sm};
-  }
+  align-items: flex-start;
+  margin-bottom: ${props => props.theme.space.lg};
+  font-size: ${props => props.theme.fontSizes.md};
+  color: ${props => props.theme.colors.text};
+`;
+
+const CheckIcon = styled.span`
+  color: ${props => props.theme.colors.primary};
+  margin-right: ${props => props.theme.space.md};
+  font-size: 1.2em;
+  flex-shrink: 0;
 `;
 
 const ActionButton = styled(Button)`
-  margin-top: ${props => props.theme.space.lg};
+  margin-top: ${props => props.theme.space.xl};
+  margin-bottom: ${props => props.theme.space.lg};
 `;
 
 const VersionsContainer = styled.div`
-  margin-top: ${props => props.theme.space.lg};
+  margin-top: ${props => props.theme.space.xl};
   border-top: 1px solid ${props => props.theme.colors.border};
   padding-top: ${props => props.theme.space.md};
+  width: 100%;
 `;
 
 const VersionTitle = styled.h3`
-  font-size: ${props => props.theme.fontSizes.md};
+  font-size: ${props => props.theme.fontSizes.lg};
   color: ${props => props.theme.colors.text};
-  margin-bottom: ${props => props.theme.space.sm};
+  margin-bottom: ${props => props.theme.space.md};
+  font-weight: ${props => props.theme.fontWeights.semibold};
 `;
 
 const VersionsList = styled.ul`
   margin: 0;
   padding: 0;
   list-style-type: none;
+  width: 100%;
 `;
 
 const VersionItem = styled.li`
-  font-size: ${props => props.theme.fontSizes.sm};
+  font-size: ${props => props.theme.fontSizes.md};
   color: ${props => props.theme.colors.textSecondary};
-  padding: ${props => props.theme.space.xs} 0;
+  padding: ${props => props.theme.space.sm} 0;
   display: flex;
   align-items: center;
   
   &:before {
     content: '•';
     color: ${props => props.theme.colors.primary};
-    margin-right: ${props => props.theme.space.xs};
+    margin-right: ${props => props.theme.space.sm};
+    font-size: 1.2em;
   }
 `;
 
@@ -134,22 +160,9 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
     <WelcomeContainer>
       <Card>
         <LogoContainer>
-          {/* We'll create a placeholder for the logo since we don't have the SVG */}
-          <div style={{ 
-            width: '120px', 
-            height: '120px', 
-            backgroundColor: '#F97316', 
-            borderRadius: '50%',
-            margin: '0 auto',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'white',
-            fontWeight: 'bold',
-            fontSize: '24px'
-          }}>
+          <LogoCircle>
             TG
-          </div>
+          </LogoCircle>
         </LogoContainer>
         
         <Title>TollGate Installer</Title>
@@ -158,10 +171,22 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
         </Description>
         
         <Features>
-          <Feature>Automatically detects routers on your network</Feature>
-          <Feature>Simple guided installation process</Feature>
-          <Feature>Securely transfers and installs TollGate OS</Feature>
-          <Feature>Optimized for consecutive router installs</Feature>
+          <Feature>
+            <CheckIcon>✓</CheckIcon>
+            Automatically detects routers on your network
+          </Feature>
+          <Feature>
+            <CheckIcon>✓</CheckIcon>
+            Simple guided installation process
+          </Feature>
+          <Feature>
+            <CheckIcon>✓</CheckIcon>
+            Securely transfers and installs TollGate OS
+          </Feature>
+          <Feature>
+            <CheckIcon>✓</CheckIcon>
+            Optimized for consecutive router installs
+          </Feature>
         </Features>
         
         <ActionButton 

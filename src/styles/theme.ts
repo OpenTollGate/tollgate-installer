@@ -4,18 +4,18 @@
 export const theme = {
   colors: {
     // Primary colors
-    primary: '#F97316', // Orange
-    primaryDark: '#EA580C',
-    primaryLight: '#FFEDD5',
+    primary: '#E76F51', // Updated to match the reference image (coral orange)
+    primaryDark: '#D65F40',
+    primaryLight: '#FFEDE8',
     
     // Text colors
-    text: '#1F2937', // Dark gray for main text
+    text: '#293241', // Darker navy for main text
     textSecondary: '#6B7280', // Medium gray for secondary text
     textLight: '#FFFFFF', // White text for buttons, etc.
     
     // Background colors
     background: '#FFFFFF',
-    backgroundAlt: '#F3F4F6',
+    backgroundAlt: '#F8F9FA',
     
     // Status colors
     success: '#10B981', // Green
@@ -25,7 +25,7 @@ export const theme = {
     
     // Border colors
     border: '#E5E7EB',
-    borderFocus: '#F97316'
+    borderFocus: '#E76F51'
   },
   
   // Typography
@@ -68,16 +68,16 @@ export const theme = {
   // Border radius
   radii: {
     sm: '0.25rem',
-    md: '0.375rem',
-    lg: '0.5rem',
+    md: '0.5rem',
+    lg: '0.75rem',
     full: '9999px'
   },
   
   // Shadows
   shadows: {
     sm: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-    md: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-    lg: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'
+    md: '0 4px 10px rgba(0, 0, 0, 0.08)',
+    lg: '0 10px 20px rgba(0, 0, 0, 0.1)'
   },
   
   // Animations

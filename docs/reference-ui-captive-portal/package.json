@@ -1,0 +1,38 @@
+{
+  "name": "tollgate-captive-portal-site",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "nostr-tools": "^1.17.0",
+    "@cashu/cashu-ts": "^2.2.2",
+    "styled-components": "^6.1.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build && npm run rename-html",
+    "rename-html": "node -e \"const fs = require('fs'); const path = require('path'); const buildDir = path.join(__dirname, 'build'); fs.renameSync(path.join(buildDir, 'index.html'), path.join(buildDir, 'splash.html'));\"",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+} 

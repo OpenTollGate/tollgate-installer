@@ -17,11 +17,13 @@ const StyledButton = styled.button<Omit<ButtonProps, 'children'>>`
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  font-weight: ${props => props.theme.fontWeights.medium};
+  font-weight: ${props => props.theme.fontWeights.semibold};
   cursor: pointer;
   transition: all ${props => props.theme.transitions.fast};
   border-radius: ${props => props.theme.radii.md};
   white-space: nowrap;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   
   ${props => props.fullWidth && css`
     width: 100%;
@@ -37,13 +39,13 @@ const StyledButton = styled.button<Omit<ButtonProps, 'children'>>`
         `;
       case 'large':
         return css`
-          padding: 0.75rem 1.5rem;
+          padding: 0.875rem 1.75rem;
           font-size: ${props.theme.fontSizes.lg};
         `;
       case 'medium':
       default:
         return css`
-          padding: 0.625rem 1.25rem;
+          padding: 0.75rem 1.5rem;
           font-size: ${props.theme.fontSizes.md};
         `;
     }
@@ -105,15 +107,25 @@ const StyledButton = styled.button<Omit<ButtonProps, 'children'>>`
         return css`
           background-color: ${props.theme.colors.primary};
           color: ${props.theme.colors.textLight};
+          border: none;
           
           &:hover, &:focus {
             background-color: ${props.theme.colors.primaryDark};
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.12);
+          }
+          
+          &:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
           }
           
           &:disabled {
             background-color: ${props.theme.colors.border};
             color: ${props.theme.colors.textSecondary};
             cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
           }
         `;
     }

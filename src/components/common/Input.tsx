@@ -26,17 +26,26 @@ const InputLabel = styled.label`
 `;
 
 const StyledInput = styled.input<{ hasError?: boolean }>`
-  padding: 0.625rem 1rem;
+  padding: 0.75rem 1rem;
   font-size: ${props => props.theme.fontSizes.md};
   border: 1px solid ${props => props.hasError ? props.theme.colors.error : props.theme.colors.border};
   border-radius: ${props => props.theme.radii.md};
   transition: all ${props => props.theme.transitions.fast};
   width: 100%;
+  background-color: ${props => props.theme.colors.background};
   
   &:focus {
     outline: none;
     border-color: ${props => props.hasError ? props.theme.colors.error : props.theme.colors.primary};
-    box-shadow: 0 0 0 1px ${props => props.hasError ? props.theme.colors.error : props.theme.colors.primary};
+    box-shadow: 0 0 0 2px ${props => props.hasError
+      ? `${props.theme.colors.error}33`
+      : `${props.theme.colors.primary}33`};
+  }
+  
+  &:hover:not(:disabled):not(:focus) {
+    border-color: ${props => props.hasError
+      ? props.theme.colors.error
+      : props.theme.colors.textSecondary};
   }
   
   &:disabled {
