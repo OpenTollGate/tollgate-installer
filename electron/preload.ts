@@ -31,13 +31,4 @@ contextBridge.exposeInMainWorld('electron', {
     return await ipcRenderer.invoke('install-tollgate', ip);
   },
 
-  // Updates
-  checkForUpdates: async (): Promise<{
-    latest: string;
-    installed: string;
-    canUpgrade: boolean;
-    nip94Event?: any;
-  }> => {
-    return await ipcRenderer.invoke('check-for-updates');
-  },
 });

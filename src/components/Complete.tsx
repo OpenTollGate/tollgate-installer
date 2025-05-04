@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNostrVersions } from './NostrVersionProvider';
 import styled from 'styled-components';
 import Card from './common/Card';
 import Button from './common/Button';
@@ -19,7 +20,6 @@ interface UpdateInfo {
 
 interface CompleteProps {
   router: RouterInfo | null;
-  updateInfo: UpdateInfo | null;
   onFlashNext: () => void;
 }
 
@@ -133,10 +133,30 @@ const FlashNextDescription = styled.p`
 
 const Complete: React.FC<CompleteProps> = ({
   router,
-  updateInfo,
   onFlashNext
 }) => {
+  const { versions, loading, error } = useNostrVersions();
+  
+  // Create updateInfo from versions data
+  const updateInfo = versions.length > 0 ? {
+    latest: getVersionFromEvent(versions[0]) || 'unknown',
+    installed: 'v0.0.0', // Placeholder for installed version
+    canUpgrade: true, // Simplified logic, assumes newer version is available
+  } : null;
+  
   const hasUpdate = updateInfo?.canUpgrade || false;
+  
+  // Helper function to get version from event
+  function getVersionFromEvent(event: any): string | null {
+    try {
+      const versionTag = event.tags.find(
+        (tag: any[]) => tag[0] === 'tollgate_os_version'
+      );
+      return versionTag && versionTag[1] ? versionTag[1] : null;
+    } catch (err) {
+      return null;
+    }
+  }
   
   return (
     <Card title="Installation Complete">
@@ -170,7 +190,23 @@ const Complete: React.FC<CompleteProps> = ({
           </InfoCard>
         )}
         
-        {updateInfo && (
+        {loading ? (
+          <InfoCard>
+            <InfoTitle>TollGateOS Version</InfoTitle>
+            <InfoItem>
+              <InfoLabel>Status:</InfoLabel>
+              <InfoValue>Loading version information...</InfoValue>
+            </InfoItem>
+          </InfoCard>
+        ) : error ? (
+          <InfoCard>
+            <InfoTitle>TollGateOS Version</InfoTitle>
+            <InfoItem>
+              <InfoLabel>Error:</InfoLabel>
+              <InfoValue>{error}</InfoValue>
+            </InfoItem>
+          </InfoCard>
+        ) : updateInfo && (
           <>
             <InfoCard>
               <InfoTitle>TollGateOS Version</InfoTitle>

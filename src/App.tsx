@@ -7,6 +7,7 @@ import RouterScanner from './components/RouterScanner';
 import PasswordEntry from './components/PasswordEntry';
 import Installer from './components/Installer';
 import Complete from './components/Complete';
+import NostrVersionProvider from './components/NostrVersionProvider';
 
 // App stages
 enum Stage {
@@ -33,7 +34,6 @@ declare global {
       connectSsh: (ip: string, password?: string) => Promise<{ success: boolean; error?: string }>;
       getRouterInfo: (ip: string) => Promise<{ boardName: string; architecture: string; compatible: boolean }>;
       installTollgate: (ip: string) => Promise<{ success: boolean; step: string; progress: number; error?: string }>;
-      checkForUpdates: () => Promise<{ latest: string; installed: string; canUpgrade: boolean; nip94Event?: any }>;
     };
   }
 }
@@ -54,12 +54,6 @@ const App: React.FC = () => {
   const [password, setPassword] = useState<string>('');
   const [installProgress, setInstallProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<{ latest: string; installed: string; canUpgrade: boolean } | null>(null);
-
-  // Effect to check for updates when the app loads
-  useEffect(() => {
-    checkForUpdates();
-  }, []);
 
   // Scan for routers
   const scanForRouters = async () => {
@@ -154,7 +148,6 @@ const App: React.FC = () => {
       
       if (result.success) {
         setStage(Stage.COMPLETE);
-        await checkForUpdates();
       } else {
         setError('Installation failed: ' + (result.error || 'Unknown error'));
         setStage(Stage.SCANNING);
@@ -165,15 +158,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Check for updates
-  const checkForUpdates = async () => {
-    try {
-      const updates = await window.electron.checkForUpdates();
-      setUpdateInfo(updates);
-    } catch (err) {
-      console.error('Error checking for updates:', err);
-    }
-  };
 
   // Reset to start a new installation
   const startNewInstall = () => {
@@ -188,10 +172,11 @@ const App: React.FC = () => {
   return (
     <ThemeProvider theme={theme}>
       <GlobalStyle />
-      <AppContainer>
-        {stage === Stage.WELCOME && (
-          <Welcome onStart={scanForRouters} />
-        )}
+      <NostrVersionProvider>
+        <AppContainer>
+          {stage === Stage.WELCOME && (
+            <Welcome onStart={scanForRouters} />
+          )}
         
         {stage === Stage.SCANNING && (
           <RouterScanner 
@@ -222,13 +207,13 @@ const App: React.FC = () => {
         )}
         
         {stage === Stage.COMPLETE && (
-          <Complete 
-            router={selectedRouter} 
-            updateInfo={updateInfo} 
-            onFlashNext={startNewInstall} 
+          <Complete
+            router={selectedRouter}
+            onFlashNext={startNewInstall}
           />
         )}
-      </AppContainer>
+        </AppContainer>
+      </NostrVersionProvider>
     </ThemeProvider>
   );
 };

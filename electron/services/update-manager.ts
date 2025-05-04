@@ -7,6 +7,7 @@ export interface UpdateInfo {
   installed: string;
   canUpgrade: boolean;
   nip94Event?: NDKEvent;
+  allVersions?: NDKEvent[];
 }
 
 export class UpdateManager {
@@ -15,14 +16,17 @@ export class UpdateManager {
   private readonly UPDATE_KIND = 1063; // NIP-94 kind for file metadata
 
   constructor() {
+    console.log("DEBUG - UpdateManager: Constructor called");
     // Initialize NDK with default relays
     this.ndk = new NDK({
       explicitRelayUrls: [
         'wss://relay.damus.io',
-        'wss://relay.nostr.band',
-        'wss://nos.lol'
+        'wss://relay.tollgate.me',
+        'wss://nos.lol',
+        'wss://nostr.mom',
       ]
     });
+    console.log("DEBUG - UpdateManager: NDK initialized with relays");
   }
 
   /**
@@ -30,37 +34,58 @@ export class UpdateManager {
    */
   public async checkForUpdates(): Promise<UpdateInfo> {
     try {
+      console.log("DEBUG - UpdateManager: checkForUpdates called");
+      
       // Connect to relays
-      await this.ndk.connect();
+      console.log("DEBUG - UpdateManager: Attempting to connect to NDK relays");
+      try {
+        await this.ndk.connect(2000);
+        console.log("DEBUG - UpdateManager: Successfully connected to NDK relays");
+      } catch (connectError) {
+        console.error("DEBUG - UpdateManager: Error connecting to NDK relays", connectError);
+        throw connectError;
+      }
 
       // Get currently installed version (placeholder)
       const installedVersion = this.getInstalledVersion();
+      console.log("DEBUG - UpdateManager: Installed version:", installedVersion);
 
       // Fetch NIP-94 events for TollGateOS releases
-      const latestReleaseEvent = await this.fetchLatestReleaseEvent();
-
-      if (!latestReleaseEvent) {
+      const releaseEvents = await this.fetchReleaseEvents();
+      
+      console.log("DEBUG - fetchReleaseEvents result:", releaseEvents);
+      console.log("DEBUG - fetchReleaseEvents count:", releaseEvents.length);
+      
+      if (!releaseEvents || releaseEvents.length === 0) {
         return {
           latest: 'unknown',
           installed: installedVersion || 'not installed',
-          canUpgrade: false
+          canUpgrade: false,
+          allVersions: []
         };
       }
+
+      // Latest release is the first one (they're sorted by created_at)
+      const latestReleaseEvent = releaseEvents[0];
 
       // Extract version from the event
       const latestVersion = this.getVersionFromEvent(latestReleaseEvent);
 
       // Determine if upgrade is available
-      const canUpgrade = installedVersion && latestVersion 
+      const canUpgrade = installedVersion && latestVersion
         ? this.compareVersions(latestVersion, installedVersion) > 0
         : false;
 
-      return {
+      const result = {
         latest: latestVersion || 'unknown',
         installed: installedVersion || 'not installed',
         canUpgrade,
-        nip94Event: latestReleaseEvent
+        nip94Event: latestReleaseEvent,
+        allVersions: releaseEvents
       };
+      
+      console.log("DEBUG - checkForUpdates returning:", result);
+      return result;
     } catch (error) {
       console.error('Error checking for updates:', error);
       return {
@@ -75,36 +100,41 @@ export class UpdateManager {
   }
 
   /**
-   * Fetches the latest TollGateOS release event from Nostr
+   * Fetches TollGateOS release events from Nostr
    */
-  private async fetchLatestReleaseEvent(): Promise<NDKEvent | null> {
+  private async fetchReleaseEvents(): Promise<NDKEvent[]> {
     try {
       // Create a filter for NIP-94 events from the TollGateOS publisher
       const filter: NDKFilter = {
         kinds: [this.UPDATE_KIND],
         authors: [this.TOLLGATE_OS_PUBKEY],
-        limit: 10 // Get several recent events to find the latest version
+        since: 1746359982,
+        // limit: 10 // Get several recent events
       };
 
       // Fetch events from relays
+      console.log("DEBUG - Fetching events with filter:", filter);
       const events = await this.ndk.fetchEvents(filter);
       
+      console.log("DEBUG - Raw events fetched:", events);
+      
       if (!events || events.size === 0) {
-        console.log('No release events found');
-        return null;
+        console.log('DEBUG - No release events found');
+        return [];
       }
+
+      console.log(`events: ${events}`)
 
       // Convert to array and sort by created_at (newest first)
       const eventsArray = Array.from(events.values()).sort(
         (a, b) => b.created_at! - a.created_at!
       );
 
-      // Process events to find the latest compatible release
-      // In a real implementation, you'd filter for specific router models/architectures
-      return eventsArray[0]; // Just return the newest for this prototype
+      console.log("DEBUG - Sorted events array:", eventsArray);
+      return eventsArray;
     } catch (error) {
       console.error('Error fetching release events:', error);
-      return null;
+      return [];
     }
   }
 
@@ -147,6 +177,41 @@ export class UpdateManager {
    * - negative number if v1 < v2
    * - 0 if v1 === v2
    */
+  /**
+   * Returns mock events for testing when Nostr connection fails
+   */
+  private getMockEvents(): NDKEvent[] {
+    console.log("DEBUG - UpdateManager: Creating mock events");
+    
+    // Create a few mock events based on the example JSON structure
+    const mockEvents = [];
+    
+    for (let i = 0; i < 3; i++) {
+      const event = new NDKEvent(this.ndk);
+      event.kind = this.UPDATE_KIND;
+      event.pubkey = this.TOLLGATE_OS_PUBKEY;
+      event.created_at = Math.floor(Date.now() / 1000) - (i * 86400); // Today, yesterday, etc.
+      
+      // Add tags similar to the example
+      event.tags = [
+        ["url", `https://example.com/firmware${i}.bin`],
+        ["m", "application/octet-stream"],
+        ["filename", `openwrt-23.05.${3-i}-gl-mt600${i}-squashfs-sysupgrade.bin`],
+        ["architecture", "aarch64_cortex-a53"],
+        ["model", `gl-mt600${i}`],
+        ["openwrt_version", `23.05.${3-i}`],
+        ["tollgate_os_version", `v0.0.${i}`]
+      ];
+      
+      event.content = `TollGate OS Firmware for gl-mt600${i}`;
+      
+      mockEvents.push(event);
+    }
+    
+    console.log("DEBUG - UpdateManager: Created mock events:", mockEvents);
+    return mockEvents;
+  }
+
   private compareVersions(v1: string, v2: string): number {
     // Remove 'v' prefix if present
     const v1Clean = v1.startsWith('v') ? v1.substring(1) : v1;

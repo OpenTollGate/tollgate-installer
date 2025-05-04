@@ -5,7 +5,6 @@ import { autoUpdater } from 'electron-updater';
 import { NetworkScanner } from './services/network-scanner';
 import { SshConnector } from './services/ssh-connector';
 import { InstallerEngine } from './services/installer-engine';
-import { UpdateManager } from './services/update-manager';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -55,10 +54,9 @@ app.whenReady().then(() => {
   const networkScanner = new NetworkScanner();
   const sshConnector = new SshConnector();
   const installerEngine = new InstallerEngine();
-  const updateManager = new UpdateManager();
 
   // Register IPC handlers
-  setupIpcHandlers(networkScanner, sshConnector, installerEngine, updateManager);
+  setupIpcHandlers(networkScanner, sshConnector, installerEngine);
 });
 
 app.on('window-all-closed', () => {
@@ -70,8 +68,7 @@ app.on('window-all-closed', () => {
 function setupIpcHandlers(
   networkScanner: NetworkScanner,
   sshConnector: SshConnector,
-  installerEngine: InstallerEngine,
-  updateManager: UpdateManager
+  installerEngine: InstallerEngine
 ) {
   // Network scanning
   ipcMain.handle('scan-network', async () => {
@@ -91,10 +88,5 @@ function setupIpcHandlers(
   // Installation
   ipcMain.handle('install-tollgate', async (_, ip: string) => {
     return await installerEngine.install(ip);
-  });
-
-  // Updates
-  ipcMain.handle('check-for-updates', async () => {
-    return await updateManager.checkForUpdates();
   });
 }
