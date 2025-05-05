@@ -22,6 +22,7 @@ enum Stage {
 // Router data structure
 interface RouterInfo {
   ip: string;
+  version?: string;
   boardName?: string;
   architecture?: string;
   compatible?: boolean;
@@ -74,8 +75,10 @@ const App: React.FC = () => {
   };
 
   // Select a router and attempt connection
-  const selectRouter = async (ip: string) => {
+  const selectRouter = async (ip: string, version?: string) => {
     try {
+      setSelectedRouter({ ip, version });
+      
       // First try connecting with no password
       const connection = await window.electron.connectSsh(ip, '');
       
@@ -84,7 +87,6 @@ const App: React.FC = () => {
         await getRouterInfo(ip);
       } else {
         // Connection failed, go to password entry
-        setSelectedRouter({ ip });
         setStage(Stage.PASSWORD_ENTRY);
       }
     } catch (err) {
@@ -182,19 +184,20 @@ const App: React.FC = () => {
         
         {stage === Stage.SCANNING && (
           <RouterScanner 
-            routers={routers} 
-            onSelectRouter={selectRouter} 
-            error={error} 
+            routers={routers}
+            onSelectRouter={(ip, version) => selectRouter(ip, version)}
+            error={error}
             onRescan={scanForRouters}
           />
         )}
         
         {stage === Stage.PASSWORD_ENTRY && (
-          <PasswordEntry 
-            routerIp={selectedRouter?.ip || ''} 
-            password={password} 
-            setPassword={setPassword} 
-            onSubmit={submitPassword} 
+          <PasswordEntry
+            router={selectedRouter}
+            routerIp={selectedRouter?.ip || ''}
+            password={password}
+            setPassword={setPassword}
+            onSubmit={submitPassword}
             error={error}
             onBack={() => setStage(Stage.SCANNING)}
           />

@@ -4,6 +4,7 @@ import NDK, { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
 // Define the context type
 interface NostrVersionContextType {
   versions: NDKEvent[];
+  compatibleVersions: NDKEvent[];
   loading: boolean;
   error: string | null;
 }
@@ -11,6 +12,7 @@ interface NostrVersionContextType {
 // Create context with default values
 const NostrVersionContext = createContext<NostrVersionContextType>({
   versions: [],
+  compatibleVersions: [],
   loading: true,
   error: null
 });
@@ -147,12 +149,23 @@ const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children })
       mockEvents.push(event);
     }
     
+    const compatibleEvents = mockEvents.filter(event =>
+      event.tags.some(tag => tag[0] === 'compatible' && tag[1] === 'true')
+    );
+    
     console.log("NostrVersionProvider: Created mock events:", mockEvents);
     return mockEvents;
   };
   
   return (
-    <NostrVersionContext.Provider value={{ versions, loading, error }}>
+    <NostrVersionContext.Provider value={{
+      versions,
+      compatibleVersions: versions.filter(event =>
+        event.tags.some(tag => tag[0] === 'compatible' && tag[1] === 'true')
+      ),
+      loading,
+      error
+    }}>
       {children}
     </NostrVersionContext.Provider>
   );

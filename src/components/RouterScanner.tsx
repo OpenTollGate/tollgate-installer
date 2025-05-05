@@ -3,10 +3,12 @@ import styled from 'styled-components';
 import Button from './common/Button';
 import ProgressBar from './common/ProgressBar';
 import PageContainer from './common/PageContainer';
+import { useNostrVersions } from './NostrVersionProvider';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
 
 interface RouterScannerProps {
   routers: Array<{ ip: string; sshOpen: boolean; meta?: any }>;
-  onSelectRouter: (ip: string) => void;
+  onSelectRouter: (ip: string, version?: string) => void;
   error: string | null;
   onRescan: () => void;
 }
@@ -85,6 +87,54 @@ const FooterButtons = styled.div`
   margin-top: 2rem;
 `;
 
+const VersionSelectorContainer = styled.div`
+  margin-bottom: 1rem;
+  position: relative;
+`;
+
+const VersionSelectorButton = styled(Button)`
+  width: 100%;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+`;
+
+const VersionList = styled.ul`
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  background: white;
+  border: 1px solid ${props => props.theme.colors.border};
+  border-radius: ${props => props.theme.radii.md};
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  z-index: 2;
+  max-height: 200px;
+  overflow-y: auto;
+`;
+
+interface VersionItemProps {
+  $isSelected: boolean;
+  $isCompatible: boolean;
+}
+
+const VersionItem = styled.li<VersionItemProps>`
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  background-color: ${props => props.$isSelected ? props.theme.colors.primaryLight : 'transparent'};
+  color: ${props => props.$isCompatible ? props.theme.colors.text : props.theme.colors.textSecondary};
+  opacity: ${props => props.$isCompatible ? 1 : 0.6};
+  
+  &:hover {
+    background-color: ${props => props.theme.colors.primaryLight};
+  }
+`;
+
+const VersionText = styled.span`
+  font-size: ${props => props.theme.fontSizes.md};
+`;
+
 const RouterScanner: React.FC<RouterScannerProps> = ({
   routers,
   onSelectRouter,
@@ -93,7 +143,10 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
 }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
-  
+  const [showVersionSelector, setShowVersionSelector] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const { versions, loading, compatibleVersions } = useNostrVersions();
+
   useEffect(() => {
     if (routers.length === 0 && !error) {
       setIsScanning(true);
@@ -121,6 +174,11 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     setScanProgress(0);
     setIsScanning(true);
     onRescan();
+  };
+
+  const handleVersionSelect = (version: string) => {
+    setSelectedVersion(version);
+    setShowVersionSelector(false);
   };
 
   const renderContent = () => {
@@ -157,8 +215,8 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
             <Button
               variant="primary"
               size="small"
-              onClick={() => onSelectRouter(router.ip)}
-              disabled={router.meta?.status === 'no-ssh'}
+              onClick={() => onSelectRouter(router.ip, selectedVersion || undefined)}
+              disabled={router.meta?.status === 'no-ssh' || !selectedVersion}
             >
               Connect
             </Button>
@@ -175,6 +233,47 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     >
       {error && <ErrorMessage>{error}</ErrorMessage>}
       {renderContent()}
+      
+      <VersionSelectorContainer>
+        <VersionSelectorButton
+          variant="outline"
+          onClick={() => setShowVersionSelector(!showVersionSelector)}
+        >
+          <span>{selectedVersion || 'Select TollGateOS Version'}</span>
+          <span>▼</span>
+        </VersionSelectorButton>
+        {showVersionSelector && (
+          <VersionList>
+            {compatibleVersions.map((version: NDKEvent) => (
+              <VersionItem 
+                key={version.id} 
+                onClick={() => handleVersionSelect(version.id)}
+                $isSelected={selectedVersion === version.id}
+                $isCompatible={true}
+              >
+                <VersionText>
+                  {version.id.substring(0, 8)} (Compatible)
+                </VersionText>
+              </VersionItem>
+            ))}
+            {versions
+              .filter((version: NDKEvent) => !compatibleVersions.some(v => v.id === version.id))
+              .map((version: NDKEvent) => (
+                <VersionItem 
+                  key={version.id} 
+                  onClick={() => handleVersionSelect(version.id)}
+                  $isSelected={selectedVersion === version.id}
+                  $isCompatible={compatibleVersions.some(v => v.id === version.id)}
+                >
+                  <VersionText>
+                    {version.id.substring(0, 8)} (Incompatible)
+                  </VersionText>
+                </VersionItem>
+              ))}
+          </VersionList>
+        )}
+      </VersionSelectorContainer>
+
       <FooterButtons>
         <Button
           variant="outline"
