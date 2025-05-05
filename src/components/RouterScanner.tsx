@@ -18,9 +18,9 @@ const RouterList = styled.div`
 `;
 
 const RouterItem = styled.div`
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   padding: 1rem;
   border: 1px solid ${props => props.theme.colors.border};
   border-radius: ${props => props.theme.radii.md};
@@ -31,6 +31,18 @@ const RouterItem = styled.div`
     border-color: ${props => props.theme.colors.primary};
     box-shadow: ${props => props.theme.shadows.sm};
   }
+`;
+
+const RouterHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+`;
+
+const RouterActions = styled.div`
+  display: flex;
+  gap: 0.5rem;
 `;
 
 const RouterInfo = styled.div`
@@ -179,12 +191,14 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
   error,
   onRescan
 }) => {
+  // State
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
-  const [showVersionSelector, setShowVersionSelector] = useState(false);
-  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [openDropdownRouter, setOpenDropdownRouter] = useState<string | null>(null);
+  const [selectedVersions, setSelectedVersions] = useState<Record<string, { id: string, version: string }>>({});
   const { versions, loading, compatibleVersions } = useNostrVersions();
 
+  // Scanning progress effect
   useEffect(() => {
     if (routers.length === 0 && !error) {
       setIsScanning(true);
@@ -208,15 +222,30 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     }
   }, [routers, error]);
 
+  // Event handlers
   const handleRescan = () => {
     setScanProgress(0);
     setIsScanning(true);
     onRescan();
   };
 
-  const handleVersionSelect = (version: string) => {
-    setSelectedVersion(version);
-    setShowVersionSelector(false);
+  const handleVersionSelect = (routerIp: string, version: NDKEvent) => {
+    // Get the version number from the event
+    const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
+    
+    // Store both the ID and the version number
+    setSelectedVersions(prev => ({
+      ...prev,
+      [routerIp]: { id: version.id, version: versionNumber }
+    }));
+    
+    setOpenDropdownRouter(null);
+  };
+  
+  const toggleRouterDropdown = (routerIp: string) => {
+    setOpenDropdownRouter(current =>
+      current === routerIp ? null : routerIp
+    );
   };
 
   const renderContent = () => {
@@ -243,21 +272,124 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       <RouterList>
         {routers.map((router) => (
           <RouterItem key={router.ip}>
-            <RouterInfo>
-              <RouterIP>{router.ip}</RouterIP>
-              <RouterDetail>
-                {router.meta?.isGateway ? 'Default Gateway' : 'OpenWRT Router'}
-                {router.meta?.status === 'no-ssh' && ' (SSH Not Active)'}
-              </RouterDetail>
-            </RouterInfo>
-            <Button
-              variant="primary"
-              size="small"
-              onClick={() => onSelectRouter(router.ip, selectedVersion || undefined)}
-              disabled={router.meta?.status === 'no-ssh' || !selectedVersion}
-            >
-              Connect
-            </Button>
+            <RouterHeader>
+              <RouterInfo>
+                <RouterIP>{router.ip}</RouterIP>
+                <RouterDetail>
+                  {router.meta?.isGateway ? 'Default Gateway' : 'OpenWRT Router'}
+                  {router.meta?.status === 'no-ssh' && ' (SSH Not Active)'}
+                </RouterDetail>
+              </RouterInfo>
+              <RouterActions>
+                <Button
+                  variant="outline"
+                  size="small"
+                  onClick={() => {
+                    console.log("Toggling dropdown for router:", router.ip);
+                    console.log("Current selectedVersions:", selectedVersions);
+                    console.log("This router's selected version:", selectedVersions[router.ip]);
+                    toggleRouterDropdown(router.ip);
+                  }}
+                  disabled={router.meta?.status === 'no-ssh'}
+                >
+                  {selectedVersions[router.ip]
+                    ? `Version ${selectedVersions[router.ip].version} ▼`
+                    : 'Select Version ▼'}
+                </Button>
+                <Button
+                  variant="primary"
+                  size="small"
+                  onClick={() => onSelectRouter(router.ip, selectedVersions[router.ip]?.id)}
+                  disabled={router.meta?.status === 'no-ssh' || !selectedVersions[router.ip]}
+                >
+                  Install
+                </Button>
+              </RouterActions>
+            </RouterHeader>
+            
+            {openDropdownRouter === router.ip && (
+              <VersionSelectorContainer key={`dropdown-${router.ip}`} style={{ margin: '0.75rem 0 0 0' }}>
+                <VersionList style={{ position: 'relative', maxHeight: '200px' }}>
+                  {compatibleVersions.map((version: NDKEvent) => {
+                    const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
+                    const architecture = version.getMatchingTags("architecture")?.[0]?.[1] || "Unknown";
+                    const openwrtVersion = version.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
+                    const modelName = version.getMatchingTags("model")?.[0]?.[1] || "Unknown";
+                    const releaseDate = version.created_at
+                      ? `${new Date(version.created_at * 1000).toLocaleDateString()} ${new Date(version.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : "Unknown";
+                    
+                    return (
+                      <VersionItem
+                        key={version.id}
+                        onClick={() => handleVersionSelect(router.ip, version)}
+                        $isSelected={selectedVersions[router.ip]?.id === version.id && version.id !== ""}
+                        $isCompatible={true}
+                      >
+                        <VersionItemContent>
+                          <VersionHeader>
+                            <VersionName>
+                              {versionNumber} (Compatible)
+                            </VersionName>
+                            <VersionDate>
+                              {releaseDate}
+                            </VersionDate>
+                          </VersionHeader>
+                          <VersionDetails>
+                            <VersionModelInfo>
+                              {modelName}
+                            </VersionModelInfo>
+                            <VersionTechInfo>
+                              {architecture} • OpenWRT {openwrtVersion}
+                            </VersionTechInfo>
+                          </VersionDetails>
+                        </VersionItemContent>
+                      </VersionItem>
+                    );
+                  })}
+                  
+                  {versions
+                    .filter((version: NDKEvent) => !compatibleVersions.some(v => v.id === version.id))
+                    .map((version: NDKEvent) => {
+                      const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
+                      const architecture = version.getMatchingTags("architecture")?.[0]?.[1] || "Unknown";
+                      const openwrtVersion = version.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
+                      const modelName = version.getMatchingTags("model")?.[0]?.[1] || "Unknown";
+                      const releaseDate = version.created_at
+                        ? `${new Date(version.created_at * 1000).toLocaleDateString()} ${new Date(version.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                        : "Unknown";
+                      
+                      return (
+                        <VersionItem
+                          key={version.id}
+                          onClick={() => handleVersionSelect(router.ip, version)}
+                          $isSelected={selectedVersions[router.ip]?.id === version.id && version.id !== ""}
+                          $isCompatible={false}
+                        >
+                          <VersionItemContent>
+                            <VersionHeader>
+                              <VersionName>
+                                {versionNumber} (Incompatible)
+                              </VersionName>
+                              <VersionDate>
+                                {releaseDate}
+                              </VersionDate>
+                            </VersionHeader>
+                            <VersionDetails>
+                              <VersionModelInfo>
+                                {modelName}
+                              </VersionModelInfo>
+                              <VersionTechInfo>
+                                {architecture} • OpenWRT {openwrtVersion}
+                              </VersionTechInfo>
+                            </VersionDetails>
+                          </VersionItemContent>
+                        </VersionItem>
+                      );
+                    })}
+                </VersionList>
+              </VersionSelectorContainer>
+            )}
           </RouterItem>
         ))}
       </RouterList>
@@ -272,96 +404,6 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       {error && <ErrorMessage>{error}</ErrorMessage>}
       {renderContent()}
       
-      <VersionSelectorContainer>
-        <VersionSelectorButton
-          variant="outline"
-          onClick={() => setShowVersionSelector(!showVersionSelector)}
-        >
-          <span>{selectedVersion || 'Select TollGateOS Version'}</span>
-          <span>▼</span>
-        </VersionSelectorButton>
-        {showVersionSelector && (
-          <VersionList>
-            {compatibleVersions.map((version: NDKEvent) => {
-              const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
-              const architecture = version.getMatchingTags("architecture")?.[0]?.[1] || "Unknown";
-              const openwrtVersion = version.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
-              const modelName = version.getMatchingTags("model")?.[0]?.[1] || "Unknown";
-              const releaseDate = version.created_at
-                ? new Date(version.created_at * 1000).toLocaleDateString()
-                : "Unknown";
-              
-              return (
-                <VersionItem
-                  key={version.id}
-                  onClick={() => handleVersionSelect(version.id)}
-                  $isSelected={selectedVersion === version.id}
-                  $isCompatible={true}
-                >
-                  <VersionItemContent>
-                    <VersionHeader>
-                      <VersionName>
-                        {versionNumber} (Compatible)
-                      </VersionName>
-                      <VersionDate>
-                        {releaseDate}
-                      </VersionDate>
-                    </VersionHeader>
-                    <VersionDetails>
-                      <VersionModelInfo>
-                        {modelName}
-                      </VersionModelInfo>
-                      <VersionTechInfo>
-                        {architecture} • OpenWRT {openwrtVersion}
-                      </VersionTechInfo>
-                    </VersionDetails>
-                  </VersionItemContent>
-                </VersionItem>
-              );
-            })}
-            
-            {versions
-              .filter((version: NDKEvent) => !compatibleVersions.some(v => v.id === version.id))
-              .map((version: NDKEvent) => {
-                const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
-                const architecture = version.getMatchingTags("architecture")?.[0]?.[1] || "Unknown";
-                const openwrtVersion = version.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
-                const modelName = version.getMatchingTags("model")?.[0]?.[1] || "Unknown";
-                const releaseDate = version.created_at
-                  ? new Date(version.created_at * 1000).toLocaleDateString()
-                  : "Unknown";
-                
-                return (
-                  <VersionItem
-                    key={version.id}
-                    onClick={() => handleVersionSelect(version.id)}
-                    $isSelected={selectedVersion === version.id}
-                    $isCompatible={false}
-                  >
-                    <VersionItemContent>
-                      <VersionHeader>
-                        <VersionName>
-                          {versionNumber} (Incompatible)
-                        </VersionName>
-                        <VersionDate>
-                          {releaseDate}
-                        </VersionDate>
-                      </VersionHeader>
-                      <VersionDetails>
-                        <VersionModelInfo>
-                          {modelName}
-                        </VersionModelInfo>
-                        <VersionTechInfo>
-                          {architecture} • OpenWRT {openwrtVersion}
-                        </VersionTechInfo>
-                      </VersionDetails>
-                    </VersionItemContent>
-                  </VersionItem>
-                );
-              })}
-          </VersionList>
-        )}
-      </VersionSelectorContainer>
 
       <FooterButtons>
         <Button
