@@ -1,6 +1,8 @@
 import React from 'react';
-import { useNostrVersions } from './NostrVersionProvider';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
+import { useNostrReleases } from './NostrReleaseProvider';
 import styled from 'styled-components';
+import { getReleaseVersion, getReleaseModel, getReleaseOpenWrtVersion } from '../utils/releaseUtils';
 import Button from './common/Button';
 import PageContainer from './common/PageContainer';
 
@@ -117,31 +119,8 @@ const LoadingText = styled.div`
 `;
 
 const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
-  const { versions, loading, error } = useNostrVersions();
+  const { releases, loading, error } = useNostrReleases();
   
-  // Function to extract version and model from an event
-  const getVersionDetails = (event: any) => {
-    const getTollgateVersion = () => {
-      const versionTag = event.tags.find((tag: any[]) => tag[0] === 'tollgate_os_version');
-      return versionTag && versionTag[1] ? versionTag[1] : 'Unknown';
-    };
-    
-    const getModel = () => {
-      const modelTag = event.tags.find((tag: any[]) => tag[0] === 'model');
-      return modelTag && modelTag[1] ? modelTag[1] : 'Unknown';
-    };
-    
-    const getOpenWrtVersion = () => {
-      const versionTag = event.tags.find((tag: any[]) => tag[0] === 'openwrt_version');
-      return versionTag && versionTag[1] ? versionTag[1] : 'Unknown';
-    };
-    
-    return {
-      tollgateVersion: getTollgateVersion(),
-      model: getModel(),
-      openWrtVersion: getOpenWrtVersion()
-    };
-  };
   return (
     <PageContainer
       title="TollGate Installer"
@@ -180,16 +159,15 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
         {error ? (
           <LoadingText>Error loading versions: {error}</LoadingText>
         ) : loading ? (
-          <LoadingText>Searching for available OS versions...</LoadingText>
-        ) : versions.length === 0 ? (
-          <LoadingText>No OS versions found.</LoadingText>
+          <LoadingText>Searching for available OS releases...</LoadingText>
+        ) : releases.length === 0 ? (
+          <LoadingText>No OS releases found.</LoadingText>
         ) : (
           <VersionsList>
-            {versions.map((event: any, index: number) => {
-              const { tollgateVersion, model, openWrtVersion } = getVersionDetails(event);
+            {releases.map((release: NDKEvent, index: number) => {
               return (
                 <VersionItem key={index}>
-                  TollGate OS {tollgateVersion} for {model} (OpenWrt {openWrtVersion})
+                  TollGate OS {getReleaseVersion(release)} for {getReleaseModel(release)} (OpenWrt {getReleaseOpenWrtVersion(release)})
                 </VersionItem>
               );
             })}

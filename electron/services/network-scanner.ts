@@ -1,20 +1,38 @@
 import * as ip from 'ip';
 import * as net from 'net';
+import { SshConnector, RouterInfo } from './ssh-connector';
 // default-gateway is imported dynamically in detectDefaultGateway()
 
 export interface ScanResult {
   ip: string;
   sshOpen: boolean;
-  meta?: any;
+  meta?: {
+    isGateway?: boolean;
+    status?: string;
+    isOpenwrt?: boolean;
+    boardInfo?: {
+      board_name?: string;
+      model?: string;
+      hostname?: string;
+      release?: {
+        distribution?: string;
+        version?: string;
+        revision?: string;
+      }
+    }
+    routerInfo?: RouterInfo;
+  };
 }
 
 export class NetworkScanner {
   private readonly timeoutMs: number;
   private readonly subnetRanges: string[];
+  private readonly sshConnector: SshConnector;
 
   constructor(config?: { timeoutMs?: number; subnetRanges?: string[] }) {
     this.timeoutMs = config?.timeoutMs || 1000; // Default timeout: 1 second
     this.subnetRanges = config?.subnetRanges || ['192.168.0.0/24', "192.168.8.0/24", '192.168.1.0/24', '10.0.0.0/24']; // 192.168.0.0/16 (last resort)
+    this.sshConnector = new SshConnector();
   }
 
   /**
@@ -30,13 +48,22 @@ export class NetworkScanner {
       if (gatewayIp) {
         console.log(`Default gateway detected: ${gatewayIp}`);
         const isSshOpen = await this.checkSshPort(gatewayIp);
+        
+        let meta: ScanResult['meta'] = {
+          isGateway: true,
+          status: isSshOpen ? 'ready' : 'no-ssh'
+        };
+        
+        // If SSH is open, enrich the device information
+        if (isSshOpen) {
+          const deviceInfo = await this.enrichDeviceWithSSHInfo(gatewayIp);
+          meta = { ...meta, ...deviceInfo };
+        }
+        
         results.push({
           ip: gatewayIp,
           sshOpen: isSshOpen,
-          meta: {
-            isGateway: true,
-            status: isSshOpen ? 'ready' : 'no-ssh'
-          }
+          meta
         });
       }
 
@@ -91,13 +118,20 @@ export class NetworkScanner {
       
       // Scan each IP
       for (const ipAddress of ips) {
-        const scanPromise = this.checkSshPort(ipAddress).then(sshOpen => {
+        const scanPromise = this.checkSshPort(ipAddress).then(async sshOpen => {
           if (sshOpen) {
             console.log(`Found router with SSH enabled: ${ipAddress}`);
+            
+            let meta: ScanResult['meta'] = { status: 'ready' };
+            
+            // If SSH is open, enrich the device information
+            const deviceInfo = await this.enrichDeviceWithSSHInfo(ipAddress);
+            meta = { ...meta, ...deviceInfo };
+            
             results.push({
               ip: ipAddress,
               sshOpen: true,
-              meta: { status: 'ready' }
+              meta
             });
           }
         }).catch(() => {
@@ -170,5 +204,98 @@ export class NetworkScanner {
     }
     
     return ips;
+  }
+  
+  /**
+   * Checks if a device is running OpenWrt
+   */
+  private async checkIfOpenwrt(ipAddress: string): Promise<boolean> {
+    try {
+      // We can indirectly check if it's OpenWrt by using getRouterInfo
+      // which already connects and gets information from the device
+      const routerInfo = await this.sshConnector.getRouterInfo(ipAddress);
+      
+      // If we successfully got board info, check if it looks like OpenWrt
+      if (routerInfo && routerInfo.boardName && routerInfo.boardName !== 'error') {
+        // OpenWrt typically has a board name, so this is a good indicator
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error(`Error checking if ${ipAddress} is OpenWrt:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Gets OpenWrt board information
+   *
+   * This is a simplified version. Since we can't directly execute commands
+   * (executeCommand is private in SshConnector), we use the information
+   * we can get from getRouterInfo.
+   */
+  private async getOpenWrtBoardInfo(ipAddress: string): Promise<any> {
+    try {
+      // Get basic router information using the public method
+      const routerInfo = await this.sshConnector.getRouterInfo(ipAddress);
+      
+      if (!routerInfo || routerInfo.boardName === 'error') {
+        return {};
+      }
+      
+      // Convert RouterInfo to the format we want
+      return {
+        board_name: routerInfo.boardName,
+        model: routerInfo.boardName,
+        release: {
+          distribution: 'OpenWrt',
+          architecture: routerInfo.architecture
+        }
+      };
+    } catch (error) {
+      console.error(`Error getting board info from ${ipAddress}:`, error);
+      return {};
+    }
+  }
+  
+  /**
+   * Gets router information using the SshConnector
+   */
+  private async getRouterInfo(ipAddress: string): Promise<RouterInfo | undefined> {
+    try {
+      return await this.sshConnector.getRouterInfo(ipAddress);
+    } catch (error) {
+      console.error(`Error getting router info from ${ipAddress}:`, error);
+      return undefined;
+    }
+  }
+  
+  /**
+   * Enriches a device with SSH information, including OpenWrt detection and board info
+   * This extracts the common logic used for both gateway and subnet scanning
+   */
+  private async enrichDeviceWithSSHInfo(ipAddress: string): Promise<Partial<ScanResult['meta']>> {
+    try {
+      // First get router info which also checks connectivity
+      const routerInfo = await this.getRouterInfo(ipAddress);
+      
+      // If we got router info, use it to determine if it's OpenWrt and get board info
+      if (routerInfo) {
+        const isOpenwrt = routerInfo.boardName !== 'error' && routerInfo.boardName !== 'disconnected';
+        const boardInfo = isOpenwrt ? await this.getOpenWrtBoardInfo(ipAddress) : {};
+        
+        return {
+          isOpenwrt,
+          boardInfo,
+          routerInfo
+        };
+      }
+      
+      return {};
+    } catch (error) {
+      console.error(`Error getting router details for ${ipAddress}:`, error);
+      return {};
+    }
   }
 }

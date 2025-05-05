@@ -7,7 +7,7 @@ import RouterScanner from './components/RouterScanner';
 import PasswordEntry from './components/PasswordEntry';
 import Installer from './components/Installer';
 import Complete from './components/Complete';
-import NostrVersionProvider from './components/NostrVersionProvider';
+import NostrReleaseProvider from './components/NostrReleaseProvider';
 import Background from './components/Background';
 
 // App stages
@@ -175,7 +175,7 @@ const App: React.FC = () => {
   return (
     <ThemeProvider theme={theme}>
       <GlobalStyle />
-      <NostrVersionProvider>
+      <NostrReleaseProvider>
         <AppContainer>
           <Background />
           {stage === Stage.WELCOME && (
@@ -218,7 +218,7 @@ const App: React.FC = () => {
           />
         )}
         </AppContainer>
-      </NostrVersionProvider>
+      </NostrReleaseProvider>
     </ThemeProvider>
   );
 };

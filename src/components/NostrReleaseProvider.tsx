@@ -1,31 +1,30 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import NDK, { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
+import { isReleaseCompatible } from '../utils/releaseUtils';
 
 // Define the context type
-interface NostrVersionContextType {
-  versions: NDKEvent[];
-  compatibleVersions: NDKEvent[];
+interface NostrReleaseContextType {
+  releases: NDKEvent[];
   loading: boolean;
   error: string | null;
 }
 
 // Create context with default values
-const NostrVersionContext = createContext<NostrVersionContextType>({
-  versions: [],
-  compatibleVersions: [],
+const NostrReleaseContext = createContext<NostrReleaseContextType>({
+  releases: [],
   loading: true,
   error: null
 });
 
 // Custom hook to use the context
-export const useNostrVersions = () => useContext(NostrVersionContext);
+export const useNostrReleases = () => useContext(NostrReleaseContext);
 
-interface NostrVersionProviderProps {
+interface NostrReleaseProviderProps {
   children: React.ReactNode;
 }
 
-const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children }) => {
-  const [versions, setVersions] = useState<NDKEvent[]>([]);
+const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children }) => {
+  const [releases, setReleases] = useState<NDKEvent[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -35,10 +34,11 @@ const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children })
   
   useEffect(() => {
     let ndk: NDK;
+    let hasReceivedEvents = false;
     
     const connectToNostr = async () => {
       try {
-        console.log("NostrVersionProvider: Initializing NDK");
+        console.log("NostrReleaseProvider: Initializing NDK");
         
         // Initialize NDK with default relays
         ndk = new NDK({
@@ -50,9 +50,9 @@ const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children })
         });
         
         // Connect to relays
-        console.log("NostrVersionProvider: Connecting to relays");
+        console.log("NostrReleaseProvider: Connecting to relays");
         await ndk.connect();
-        console.log("NostrVersionProvider: Connected to relays");
+        console.log("NostrReleaseProvider: Connected to relays");
         
         // Create a filter for NIP-94 events from the TollGateOS publisher
         const filter: NDKFilter = {
@@ -61,48 +61,50 @@ const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children })
           limit: 10 // Get several recent events
         };
         
-        console.log("NostrVersionProvider: Creating subscription with filter:", filter);
+        console.log("NostrReleaseProvider: Creating subscription with filter:", filter);
         
         // Subscribe to events
         const subscription = ndk.subscribe(filter, { closeOnEose: false });
         
         // Handle events as they arrive
         subscription.on('event', (event: NDKEvent) => {
-          console.log("NostrVersionProvider: Received new event:", event);
+          console.log("NostrReleaseProvider: Received new release:", event);
+          hasReceivedEvents = true; // Mark that we've received at least one event
+          
           // Add event to state if it's not already there
-          setVersions(prevVersions => {
+          setReleases(prevReleases => {
             // Check if event already exists in array
-            const eventExists = prevVersions.some(e => e.id === event.id);
+            const eventExists = prevReleases.some(e => e.id === event.id);
             if (!eventExists) {
               // Sort by created_at (newest first)
-              const newVersions = [...prevVersions, event].sort(
+              const newReleases = [...prevReleases, event].sort(
                 (a, b) => (b.created_at || 0) - (a.created_at || 0)
               );
-              console.log("NostrVersionProvider: Updated versions array:", newVersions);
-              return newVersions;
+              console.log("NostrReleaseProvider: Updated releases array:", newReleases);
+              return newReleases;
             }
-            return prevVersions;
+            return prevReleases;
           });
           setLoading(false);
         });
         
         subscription.on('eose', () => {
-          console.log("NostrVersionProvider: End of stored events");
-          // If we didn't get any events, provide mock data for testing
-          if (versions.length === 0) {
-            console.log("NostrVersionProvider: No events received, using mock data");
-            setVersions(getMockEvents(ndk));
+          console.log("NostrReleaseProvider: End of stored events");
+          // Only use mock data if we haven't received any events
+          if (!hasReceivedEvents) {
+            console.log("NostrReleaseProvider: No events received, using mock data");
+            setReleases(getMockReleases(ndk));
           }
           setLoading(false);
         });
         
       } catch (err) {
-        console.error("NostrVersionProvider: Error connecting to Nostr:", err);
+        console.error("NostrReleaseProvider: Error connecting to Nostr:", err);
         setError(`Failed to connect to Nostr: ${err instanceof Error ? err.message : String(err)}`);
         setLoading(false);
         
         // Provide mock data for testing
-        setVersions(getMockEvents(ndk!));
+        setReleases(getMockReleases(ndk!));
       }
     };
     
@@ -112,20 +114,20 @@ const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children })
     return () => {
       // Disconnect NDK when component unmounts
       if (ndk) {
-        console.log("NostrVersionProvider: Disconnecting from relays");
+        console.log("NostrReleaseProvider: Disconnecting from relays");
         // ndk.pool.close(); // In newer versions of NDK
       }
     };
   }, []);
   
   /**
-   * Creates mock events for testing when Nostr connection fails
+   * Creates mock releases for testing when Nostr connection fails
    */
-  const getMockEvents = (ndk: NDK): NDKEvent[] => {
-    console.log("NostrVersionProvider: Creating mock events");
+  const getMockReleases = (ndk: NDK): NDKEvent[] => {
+    console.log("NostrReleaseProvider: Creating mock releases");
     
     // Create a few mock events based on the example JSON structure
-    const mockEvents = [];
+    const mockReleases = [];
     
     for (let i = 0; i < 3; i++) {
       const event = new NDKEvent(ndk);
@@ -146,29 +148,22 @@ const NostrVersionProvider: React.FC<NostrVersionProviderProps> = ({ children })
       
       event.content = `TollGate OS Firmware for gl-mt600${i}`;
       
-      mockEvents.push(event);
+      mockReleases.push(event);
     }
     
-    const compatibleEvents = mockEvents.filter(event =>
-      event.tags.some(tag => tag[0] === 'compatible' && tag[1] === 'true')
-    );
-    
-    console.log("NostrVersionProvider: Created mock events:", mockEvents);
-    return mockEvents;
+    console.log("NostrReleaseProvider: Created mock releases:", mockReleases);
+    return mockReleases;
   };
   
   return (
-    <NostrVersionContext.Provider value={{
-      versions,
-      compatibleVersions: versions.filter(event =>
-        event.tags.some(tag => tag[0] === 'compatible' && tag[1] === 'true')
-      ),
+    <NostrReleaseContext.Provider value={{
+      releases,
       loading,
       error
     }}>
       {children}
-    </NostrVersionContext.Provider>
+    </NostrReleaseContext.Provider>
   );
 };
 
-export default NostrVersionProvider;
+export default NostrReleaseProvider;

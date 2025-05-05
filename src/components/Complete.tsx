@@ -1,8 +1,9 @@
 import React from 'react';
-import { useNostrVersions } from './NostrVersionProvider';
+import { useNostrReleases } from './NostrReleaseProvider';
 import styled from 'styled-components';
 import PageContainer from './common/PageContainer';
 import Button from './common/Button';
+import { getReleaseVersion } from '../utils/releaseUtils';
 
 interface RouterInfo {
   ip: string;
@@ -93,28 +94,16 @@ const Complete: React.FC<CompleteProps> = ({
   router,
   onFlashNext
 }) => {
-  const { versions, loading, error } = useNostrVersions();
+  const { releases, loading, error } = useNostrReleases();
   
-  // Create updateInfo from versions data
-  const updateInfo = versions.length > 0 ? {
-    latest: getVersionFromEvent(versions[0]) || 'unknown',
+  // Create updateInfo from releases data
+  const updateInfo = releases.length > 0 ? {
+    latest: getReleaseVersion(releases[0]) || 'unknown',
     installed: 'v0.0.0', // Placeholder for installed version
     canUpgrade: true, // Simplified logic, assumes newer version is available
   } : null;
   
   const hasUpdate = updateInfo?.canUpgrade || false;
-  
-  // Helper function to get version from event
-  function getVersionFromEvent(event: any): string | null {
-    try {
-      const versionTag = event.tags.find(
-        (tag: any[]) => tag[0] === 'tollgate_os_version'
-      );
-      return versionTag && versionTag[1] ? versionTag[1] : null;
-    } catch (err) {
-      return null;
-    }
-  }
 
   return (
     <PageContainer 

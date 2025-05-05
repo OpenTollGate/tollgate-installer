@@ -108,7 +108,7 @@ export class UpdateManager {
       const filter: NDKFilter = {
         kinds: [this.UPDATE_KIND],
         authors: [this.TOLLGATE_OS_PUBKEY],
-        since: 1746359982,
+        since: 1736359982,
         // limit: 10 // Get several recent events
       };
 
