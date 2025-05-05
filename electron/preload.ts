@@ -16,7 +16,6 @@ contextBridge.exposeInMainWorld('electron', {
   getRouterInfo: async (ip: string): Promise<{
     boardName: string;
     architecture: string;
-    compatible: boolean;
   }> => {
     return await ipcRenderer.invoke('get-router-info', ip);
   },

@@ -110,7 +110,7 @@ const VersionList = styled.ul`
   padding: 0;
   margin: 0;
   z-index: 2;
-  max-height: 200px;
+  max-height: 250px;
   overflow-y: auto;
 `;
 
@@ -120,19 +120,57 @@ interface VersionItemProps {
 }
 
 const VersionItem = styled.li<VersionItemProps>`
-  padding: 0.5rem 1rem;
+  padding: 0.75rem 1rem;
   cursor: pointer;
   background-color: ${props => props.$isSelected ? props.theme.colors.primaryLight : 'transparent'};
   color: ${props => props.$isCompatible ? props.theme.colors.text : props.theme.colors.textSecondary};
   opacity: ${props => props.$isCompatible ? 1 : 0.6};
+  border-bottom: 1px solid ${props => props.theme.colors.border};
+  
+  &:last-child {
+    border-bottom: none;
+  }
   
   &:hover {
     background-color: ${props => props.theme.colors.primaryLight};
   }
 `;
 
-const VersionText = styled.span`
+const VersionHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+`;
+
+const VersionName = styled.div`
   font-size: ${props => props.theme.fontSizes.md};
+  font-weight: ${props => props.theme.fontWeights.medium};
+`;
+
+const VersionDate = styled.div`
+  font-size: ${props => props.theme.fontSizes.sm};
+  color: ${props => props.theme.colors.textSecondary};
+`;
+
+const VersionDetails = styled.div`
+  display: flex;
+  justify-content: space-between;
+  font-size: ${props => props.theme.fontSizes.sm};
+  color: ${props => props.theme.colors.textSecondary};
+  margin-top: 0.25rem;
+`;
+
+const VersionModelInfo = styled.div``;
+
+const VersionTechInfo = styled.div`
+  text-align: right;
+`;
+
+const VersionItemContent = styled.div`
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 `;
 
 const RouterScanner: React.FC<RouterScannerProps> = ({
@@ -244,32 +282,83 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
         </VersionSelectorButton>
         {showVersionSelector && (
           <VersionList>
-            {compatibleVersions.map((version: NDKEvent) => (
-              <VersionItem 
-                key={version.id} 
-                onClick={() => handleVersionSelect(version.id)}
-                $isSelected={selectedVersion === version.id}
-                $isCompatible={true}
-              >
-                <VersionText>
-                  {version.id.substring(0, 8)} (Compatible)
-                </VersionText>
-              </VersionItem>
-            ))}
-            {versions
-              .filter((version: NDKEvent) => !compatibleVersions.some(v => v.id === version.id))
-              .map((version: NDKEvent) => (
-                <VersionItem 
-                  key={version.id} 
+            {compatibleVersions.map((version: NDKEvent) => {
+              const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
+              const architecture = version.getMatchingTags("architecture")?.[0]?.[1] || "Unknown";
+              const openwrtVersion = version.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
+              const modelName = version.getMatchingTags("model")?.[0]?.[1] || "Unknown";
+              const releaseDate = version.created_at
+                ? new Date(version.created_at * 1000).toLocaleDateString()
+                : "Unknown";
+              
+              return (
+                <VersionItem
+                  key={version.id}
                   onClick={() => handleVersionSelect(version.id)}
                   $isSelected={selectedVersion === version.id}
-                  $isCompatible={compatibleVersions.some(v => v.id === version.id)}
+                  $isCompatible={true}
                 >
-                  <VersionText>
-                    {version.id.substring(0, 8)} (Incompatible)
-                  </VersionText>
+                  <VersionItemContent>
+                    <VersionHeader>
+                      <VersionName>
+                        {versionNumber} (Compatible)
+                      </VersionName>
+                      <VersionDate>
+                        {releaseDate}
+                      </VersionDate>
+                    </VersionHeader>
+                    <VersionDetails>
+                      <VersionModelInfo>
+                        {modelName}
+                      </VersionModelInfo>
+                      <VersionTechInfo>
+                        {architecture} • OpenWRT {openwrtVersion}
+                      </VersionTechInfo>
+                    </VersionDetails>
+                  </VersionItemContent>
                 </VersionItem>
-              ))}
+              );
+            })}
+            
+            {versions
+              .filter((version: NDKEvent) => !compatibleVersions.some(v => v.id === version.id))
+              .map((version: NDKEvent) => {
+                const versionNumber = version.getMatchingTags("tollgate_os_version")?.[0]?.[1] || version.id.substring(0, 8);
+                const architecture = version.getMatchingTags("architecture")?.[0]?.[1] || "Unknown";
+                const openwrtVersion = version.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
+                const modelName = version.getMatchingTags("model")?.[0]?.[1] || "Unknown";
+                const releaseDate = version.created_at
+                  ? new Date(version.created_at * 1000).toLocaleDateString()
+                  : "Unknown";
+                
+                return (
+                  <VersionItem
+                    key={version.id}
+                    onClick={() => handleVersionSelect(version.id)}
+                    $isSelected={selectedVersion === version.id}
+                    $isCompatible={false}
+                  >
+                    <VersionItemContent>
+                      <VersionHeader>
+                        <VersionName>
+                          {versionNumber} (Incompatible)
+                        </VersionName>
+                        <VersionDate>
+                          {releaseDate}
+                        </VersionDate>
+                      </VersionHeader>
+                      <VersionDetails>
+                        <VersionModelInfo>
+                          {modelName}
+                        </VersionModelInfo>
+                        <VersionTechInfo>
+                          {architecture} • OpenWRT {openwrtVersion}
+                        </VersionTechInfo>
+                      </VersionDetails>
+                    </VersionItemContent>
+                  </VersionItem>
+                );
+              })}
           </VersionList>
         )}
       </VersionSelectorContainer>

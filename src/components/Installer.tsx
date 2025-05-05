@@ -7,7 +7,6 @@ interface RouterInfo {
   ip: string;
   boardName?: string;
   architecture?: string;
-  compatible?: boolean;
 }
 
 interface InstallerProps {
