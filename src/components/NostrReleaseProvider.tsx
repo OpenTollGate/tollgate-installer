@@ -50,9 +50,7 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
         });
         
         // Connect to relays
-        console.log("NostrReleaseProvider: Connecting to relays");
         await ndk.connect();
-        console.log("NostrReleaseProvider: Connected to relays");
         
         // Create a filter for NIP-94 events from the TollGateOS publisher
         const filter: NDKFilter = {
@@ -61,14 +59,12 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
           limit: 10 // Get several recent events
         };
         
-        console.log("NostrReleaseProvider: Creating subscription with filter:", filter);
         
         // Subscribe to events
         const subscription = ndk.subscribe(filter, { closeOnEose: false });
         
         // Handle events as they arrive
         subscription.on('event', (event: NDKEvent) => {
-          console.log("NostrReleaseProvider: Received new release:", event);
           hasReceivedEvents = true; // Mark that we've received at least one event
           
           // Add event to state if it's not already there
@@ -80,7 +76,6 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
               const newReleases = [...prevReleases, event].sort(
                 (a, b) => (b.created_at || 0) - (a.created_at || 0)
               );
-              console.log("NostrReleaseProvider: Updated releases array:", newReleases);
               return newReleases;
             }
             return prevReleases;
@@ -89,7 +84,6 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
         });
         
         subscription.on('eose', () => {
-          console.log("NostrReleaseProvider: End of stored events");
           // Only use mock data if we haven't received any events
           if (!hasReceivedEvents) {
             console.log("NostrReleaseProvider: No events received, using mock data");

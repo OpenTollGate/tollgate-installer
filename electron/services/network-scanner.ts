@@ -1,28 +1,7 @@
 import * as ip from 'ip';
 import * as net from 'net';
 import { SshConnector, RouterInfo } from './ssh-connector';
-// default-gateway is imported dynamically in detectDefaultGateway()
-
-export interface ScanResult {
-  ip: string;
-  sshOpen: boolean;
-  meta?: {
-    isGateway?: boolean;
-    status?: string;
-    isOpenwrt?: boolean;
-    boardInfo?: {
-      board_name?: string;
-      model?: string;
-      hostname?: string;
-      release?: {
-        distribution?: string;
-        version?: string;
-        revision?: string;
-      }
-    }
-    routerInfo?: RouterInfo;
-  };
-}
+import { ScanResult } from '../../shared/types';
 
 export class NetworkScanner {
   private readonly timeoutMs: number;
@@ -44,28 +23,8 @@ export class NetworkScanner {
     
     try {
       // First, try to find the default gateway (most likely a router)
-      const gatewayIp = await this.detectDefaultGateway();
-      if (gatewayIp) {
-        console.log(`Default gateway detected: ${gatewayIp}`);
-        const isSshOpen = await this.checkSshPort(gatewayIp);
-        
-        let meta: ScanResult['meta'] = {
-          isGateway: true,
-          status: isSshOpen ? 'ready' : 'no-ssh'
-        };
-        
-        // If SSH is open, enrich the device information
-        if (isSshOpen) {
-          const deviceInfo = await this.enrichDeviceWithSSHInfo(gatewayIp);
-          meta = { ...meta, ...deviceInfo };
-        }
-        
-        results.push({
-          ip: gatewayIp,
-          sshOpen: isSshOpen,
-          meta
-        });
-      }
+      // Gateway detection completely disabled
+      console.log("Gateway detection disabled, proceeding with direct IP check");
 
       // Then scan subnets for other potential routers
       const subnetResults = await this.scanSubnetsForSsh();
@@ -88,62 +47,95 @@ export class NetworkScanner {
   }
 
   /**
-   * Attempts to detect the default gateway IP
-   */
-  private async detectDefaultGateway(): Promise<string | null> {
-    try {
-      // Dynamic import using the native JavaScript import() function
-      // This syntax will be preserved in the output JavaScript
-      const defaultGateway = await import('default-gateway');
-      
-      // Access the v4 function from the imported module
-      const { gateway } = await defaultGateway.v4();
-      return gateway;
-    } catch (error) {
-      console.error('Error detecting default gateway:', error);
-      return null;
-    }
-  }
-
-  /**
    * Scans configured subnets for devices with open SSH ports
    */
   private async scanSubnetsForSsh(): Promise<ScanResult[]> {
     const results: ScanResult[] = [];
-    const scanPromises: Promise<void>[] = [];
+    console.log("Starting subnet scan for SSH devices");
 
-    for (const subnetRange of this.subnetRanges) {
-      // Generate all IPs in the subnet
-      const ips = this.expandSubnet(subnetRange);
+    try {
+      // For debugging, let's add a more explicit IP address check
+      console.log("DEBUG: Directly checking 192.168.8.1");
       
-      // Scan each IP
-      for (const ipAddress of ips) {
-        const scanPromise = this.checkSshPort(ipAddress).then(async sshOpen => {
-          if (sshOpen) {
-            console.log(`Found router with SSH enabled: ${ipAddress}`);
-            
-            let meta: ScanResult['meta'] = { status: 'ready' };
-            
-            // If SSH is open, enrich the device information
-            const deviceInfo = await this.enrichDeviceWithSSHInfo(ipAddress);
-            meta = { ...meta, ...deviceInfo };
-            
-            results.push({
-              ip: ipAddress,
-              sshOpen: true,
-              meta
-            });
-          }
-        }).catch(() => {
-          // Ignore errors for individual IP scans
-        });
+      try {
+        const ipAddress = "192.168.8.1";
+        console.log(`Checking SSH port for ${ipAddress}...`);
+        const sshOpen = await this.checkSshPort(ipAddress);
+        console.log(`Is SSH open for ${ipAddress}?`, sshOpen);
         
-        scanPromises.push(scanPromise);
+        if (sshOpen) {
+          console.log(`Found router with SSH enabled: ${ipAddress}`);
+          
+          let meta: ScanResult['meta'] = { status: 'ready' };
+          console.log(`Initial meta for ${ipAddress}:`, meta);
+
+          meta = await this.enrichDeviceWithSSHInfo(ipAddress)
+
+          if(meta){
+            meta!.isOpenwrt = true;
+          }
+          
+          console.log(`Final meta object for ${ipAddress} (hardcoded):`, meta);
+          
+          results.push({
+            ip: ipAddress,
+            sshOpen: true,
+            meta
+          });
+        }
+      } catch (error) {
+        console.error("Error in direct IP check:", error);
       }
+      
+      // Now continue with normal subnet scanning
+      for (const subnetRange of this.subnetRanges) {
+        console.log(`Scanning subnet range: ${subnetRange}`);
+        // Generate all IPs in the subnet
+        const ips = this.expandSubnet(subnetRange);
+        console.log(`Found ${ips.length} IPs in subnet ${subnetRange}`);
+        
+        // Scan each IP
+        for (const ipAddress of ips) {
+          try {
+            if (ipAddress === "192.168.8.1") {
+              console.log("Skipping 192.168.8.1 as we already checked it directly");
+              continue;
+            }
+            
+            console.log(`Checking SSH port for ${ipAddress}...`);
+            const sshOpen = await this.checkSshPort(ipAddress);
+            
+            if (sshOpen) {
+              console.log(`Found router with SSH enabled: ${ipAddress}`);
+              
+              let meta: ScanResult['meta'] = { status: 'ready' };
+              console.log(`Initial meta for ${ipAddress}:`, meta);
+              
+              meta = await this.enrichDeviceWithSSHInfo(ipAddress)
+
+              if(meta){
+                meta!.isOpenwrt = true;
+              }
+              
+              console.log(`Final meta object for ${ipAddress} (hardcoded):`, meta);
+              
+              results.push({
+                ip: ipAddress,
+                sshOpen: true,
+                meta
+              });
+            }
+          } catch (error) {
+            console.error(`Error scanning ${ipAddress}:`, error);
+            // Continue with next IP
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error in subnet scanning:", error);
     }
 
-    // Wait for all scan operations to complete
-    await Promise.all(scanPromises);
+    console.log(`Scan complete, found ${results.length} routers`);
     return results;
   }
 
@@ -277,21 +269,31 @@ export class NetworkScanner {
    */
   private async enrichDeviceWithSSHInfo(ipAddress: string): Promise<Partial<ScanResult['meta']>> {
     try {
+      console.log(`Enriching device ${ipAddress} with SSH info`);
+      
       // First get router info which also checks connectivity
       const routerInfo = await this.getRouterInfo(ipAddress);
+      console.log(`Router info for ${ipAddress}:`, routerInfo);
       
       // If we got router info, use it to determine if it's OpenWrt and get board info
       if (routerInfo) {
         const isOpenwrt = routerInfo.boardName !== 'error' && routerInfo.boardName !== 'disconnected';
-        const boardInfo = isOpenwrt ? await this.getOpenWrtBoardInfo(ipAddress) : {};
+        console.log(`Is ${ipAddress} an OpenWrt router?`, isOpenwrt);
         
-        return {
+        const boardInfo = isOpenwrt ? await this.getOpenWrtBoardInfo(ipAddress) : {};
+        console.log(`Board info for ${ipAddress}:`, boardInfo);
+        
+        const result = {
           isOpenwrt,
           boardInfo,
           routerInfo
         };
+        
+        console.log(`Enriched device info for ${ipAddress}:`, result);
+        return result;
       }
       
+      console.log(`No router info available for ${ipAddress}`);
       return {};
     } catch (error) {
       console.error(`Error getting router details for ${ipAddress}:`, error);

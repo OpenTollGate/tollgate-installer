@@ -6,9 +6,10 @@ import PageContainer from './common/PageContainer';
 import { useNostrReleases } from './NostrReleaseProvider';
 import RouterItem from './RouterItem';
 import { NDKEvent } from '@nostr-dev-kit/ndk';
+import { ScanResult } from '../../shared/types';
 
 interface RouterScannerProps {
-  routers: Array<{ ip: string; sshOpen: boolean; meta?: any }>;
+  routers: ScanResult[];
   onSelectRouter: (ip: string, releaseId?: string) => void;
   error: string | null;
   onRescan: () => void;
@@ -142,7 +143,6 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
             selectedReleaseId={selectedReleaseIds[router.ip]}
             onReleaseSelect={handleReleaseSelect}
             onConnect={handleConnect}
-            boardName={router.meta?.boardName}
           />
         ))}
       </RouterList>

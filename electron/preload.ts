@@ -1,23 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { ScanResult } from '../shared/types';
 
 // Expose protected IPC methods to the renderer process
 contextBridge.exposeInMainWorld('electron', {
   // Network scanning
-  scanNetwork: async (): Promise<Array<{ ip: string; sshOpen: boolean; meta?: any }>> => {
+  scanNetwork: async (): Promise<ScanResult[]> => {
     return await ipcRenderer.invoke('scan-network');
   },
 
   // SSH connection
   connectSsh: async (ip: string, password?: string): Promise<{ success: boolean; error?: string }> => {
     return await ipcRenderer.invoke('connect-ssh', ip, password);
-  },
-
-  // Get router information
-  getRouterInfo: async (ip: string): Promise<{
-    boardName: string;
-    architecture: string;
-  }> => {
-    return await ipcRenderer.invoke('get-router-info', ip);
   },
 
   // Installation

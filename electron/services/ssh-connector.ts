@@ -22,6 +22,7 @@ export class SshConnector {
    * First tries with no password, then with the provided password if specified
    */
   public async connect(ip: string, password?: string): Promise<LoginAttempt> {
+    console.log(`Attempting to connect to ${ip} via SSH with${password ? '' : 'out'} password`);
     try {
       // Close any existing connection to this IP
       await this.closeConnection(ip);
@@ -30,10 +31,12 @@ export class SshConnector {
       const client = new Client();
       
       // Connect to the router
+      console.log(`Connecting to router at ${ip}...`);
       await this.connectClient(client, ip, password);
       
       // Store the connection for later use
       this.connections.set(ip, client);
+      console.log(`Successfully connected to ${ip} via SSH`);
       
       return {
         ip,
@@ -54,12 +57,14 @@ export class SshConnector {
    */
   public async getRouterInfo(ip: string): Promise<RouterInfo> {
     try {
+      console.log(`Getting router info for ${ip} in SSH connector`);
       let client = this.connections.get(ip);
       
       // If no connection exists, try to establish one before proceeding
       if (!client) {
         console.log(`No existing SSH connection to ${ip}, attempting to reconnect...`);
         const reconnectResult = await this.connect(ip, '');
+        console.log(`Reconnect result for ${ip}:`, reconnectResult);
         
         if (!reconnectResult.success) {
           console.error(`Failed to reconnect to ${ip}: ${reconnectResult.error}`);
@@ -78,28 +83,34 @@ export class SshConnector {
         }
       }
 
+      console.log(`Executing commands to get board info for ${ip}`);
       // Get the board name from /proc/cmdline
       const boardName = await this.executeCommand(
         client,
         "cat /tmp/sysinfo/board_name"
       );
+      console.log(`Board name for ${ip}:`, boardName);
 
       // Get the architecture
       const architecture = await this.executeCommand(
         client,
         "uname -m"
       );
+      console.log(`Architecture for ${ip}:`, architecture);
 
       // Determine if the router is compatible with TollGateOS
       // This is a simplification - in a real implementation, you'd check against
       // a list of supported boards and architectures
       const compatible = Boolean(boardName && architecture);
+      console.log(`Router ${ip} compatible:`, compatible);
 
-      return {
+      const result = {
         boardName: boardName.trim(),
         architecture: architecture.trim(),
         compatible
       };
+      console.log(`Router info result for ${ip}:`, result);
+      return result;
     } catch (error) {
       console.error(`Error getting router info for ${ip}:`, error);
       return {
@@ -171,15 +182,19 @@ export class SshConnector {
    * Executes a command on the remote device via SSH
    */
   private executeCommand(client: Client, command: string): Promise<string> {
+    console.log(`Executing SSH command: ${command}`);
     return new Promise((resolve, reject) => {
       client.exec(command, (err, stream) => {
         if (err) {
+          console.error(`SSH exec error for command "${command}":`, err);
           return reject(err);
         }
 
         let output = '';
         stream.on('data', (data: Buffer) => {
-          output += data.toString();
+          const dataStr = data.toString();
+          console.log(`SSH stdout: ${dataStr}`);
+          output += dataStr;
         });
 
         stream.stderr.on('data', (data: Buffer) => {
@@ -187,6 +202,7 @@ export class SshConnector {
         });
 
         stream.on('close', () => {
+          console.log(`SSH command complete: "${command}", output: "${output}"`);
           resolve(output);
         });
 

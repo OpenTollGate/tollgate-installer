@@ -3,10 +3,11 @@ import styled from 'styled-components';
 import Button from './common/Button';
 import { NDKEvent } from '@nostr-dev-kit/ndk';
 import ReleaseSelector from './ReleaseSelector';
+import { ScanResult } from '../../shared/types';
 
 // Types
 interface RouterItemProps {
-  router: { ip: string; sshOpen: boolean; meta?: any };
+  router: ScanResult;
   releases: NDKEvent[];
   selectedReleaseId?: string;
   onReleaseSelect: (routerIp: string, release: NDKEvent) => void;
@@ -53,6 +54,32 @@ const RouterDetail = styled.div`
   margin-top: 0.25rem;
 `;
 
+const RouterDetailsList = styled.div`
+  margin-top: 0.5rem;
+  border-top: 1px solid ${props => props.theme.colors.border || '#eee'};
+  padding-top: 0.5rem;
+  font-size: ${props => props.theme.fontSizes.sm};
+`;
+
+const RouterDetailItem = styled.div`
+  display: flex;
+  margin-bottom: 0.25rem;
+  
+  &:last-child {
+    margin-bottom: 0;
+  }
+`;
+
+const DetailLabel = styled.div`
+  font-weight: ${props => props.theme.fontWeights.medium};
+  width: 100px;
+  flex-shrink: 0;
+`;
+
+const DetailValue = styled.div`
+  color: ${props => props.theme.colors.textSecondary};
+`;
+
 const RouterActions = styled.div`
   display: flex;
   gap: 0.5rem;
@@ -67,21 +94,43 @@ const RouterItem: React.FC<RouterItemProps> = ({
   onConnect,
   boardName
 }) => {
+  console.log('RouterItem props:', {
+    ip: router.ip,
+    sshOpen: router.sshOpen,
+    meta: router.meta,
+    boardName
+  });
+  
   return (
     <RouterItemContainer>
       <RouterHeader>
         <RouterInfo>
           <RouterIP>{router.ip}</RouterIP>
           <RouterDetail>
-            {router.meta?.isGateway ? 'Default Gateway' : 'OpenWRT Router'}
+            {router.meta?.isGateway ? 'Default Gateway' : 'Router'}
+            {router.meta?.isOpenwrt && ' (OpenWrt)'}
             {router.meta?.status === 'no-ssh' && ' (SSH Not Active)'}
-            {boardName && ` - ${boardName}`}
+            {router.meta?.isOpenwrt && router.meta.boardInfo?.board_name &&
+              ` - ${router.meta.boardInfo.board_name}`}
           </RouterDetail>
+          
+          {router.meta?.isOpenwrt && router.meta.boardInfo && router.meta.boardInfo.release && (
+            <RouterDetailsList>
+              <RouterDetailItem>
+                <DetailLabel>Distribution:</DetailLabel>
+                <DetailValue>{router.meta.boardInfo.release.distribution || 'Unknown'}</DetailValue>
+              </RouterDetailItem>
+              <RouterDetailItem>
+                <DetailLabel>Architecture:</DetailLabel>
+                <DetailValue>{router.meta.boardInfo.release.architecture || 'Unknown'}</DetailValue>
+              </RouterDetailItem>
+            </RouterDetailsList>
+          )}
         </RouterInfo>
         <RouterActions>
           <ReleaseSelector
             releases={releases}
-            routerBoardName={boardName}
+            routerBoardName={router.meta?.boardInfo?.board_name || boardName}
             selectedReleaseId={selectedReleaseId}
             onReleaseSelect={(release) => onReleaseSelect(router.ip, release)}
             buttonLabel="Select Release"

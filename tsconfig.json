@@ -20,6 +20,6 @@
     },
     "allowImportingTsExtensions": true
   },
-  "include": ["src"],
+  "include": ["src", "shared"],
   "references": [{ "path": "./tsconfig.electron.json" }]
 }

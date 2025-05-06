@@ -2,7 +2,7 @@
   "name": "tollgate-installer",
   "version": "0.1.0",
   "description": "Easily install TollGate on your fresh router with just a few clicks",
-  "main": "dist/main/main.js",
+  "main": "dist/main/electron/main.js",
   "author": "TollGate Team",
   "license": "MIT",
   "scripts": {

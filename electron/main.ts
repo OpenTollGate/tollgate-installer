@@ -80,11 +80,6 @@ function setupIpcHandlers(
     return await sshConnector.connect(ip, password);
   });
 
-  // Get router information
-  ipcMain.handle('get-router-info', async (_, ip: string) => {
-    return await sshConnector.getRouterInfo(ip);
-  });
-
   // Installation
   ipcMain.handle('install-tollgate', async (_, ip: string) => {
     return await installerEngine.install(ip);

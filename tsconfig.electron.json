@@ -15,5 +15,5 @@
     "outDir": "dist/main",
     "noEmit": false
   },
-  "include": ["electron"]
+  "include": ["electron", "shared"]
 }
