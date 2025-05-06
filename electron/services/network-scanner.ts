@@ -9,8 +9,8 @@ export class NetworkScanner {
   private readonly sshConnector: SshConnector;
 
   constructor(config?: { timeoutMs?: number; subnetRanges?: string[] }) {
-    this.timeoutMs = config?.timeoutMs || 1000; // Default timeout: 1 second
-    this.subnetRanges = config?.subnetRanges || ['192.168.0.0/24', "192.168.8.0/24", '192.168.1.0/24', '10.0.0.0/24']; // 192.168.0.0/16 (last resort)
+    this.timeoutMs = config?.timeoutMs || 300; // Default timeout: 1 second
+    this.subnetRanges = config?.subnetRanges || ["192.168.8.0/24", '192.168.0.0/24', '192.168.1.0/24', '10.0.0.0/24']; // 192.168.0.0/16 (last resort)
     this.sshConnector = new SshConnector();
   }
 
@@ -54,42 +54,10 @@ export class NetworkScanner {
     console.log("Starting subnet scan for SSH devices");
 
     try {
-      // For debugging, let's add a more explicit IP address check
-      console.log("DEBUG: Directly checking 192.168.8.1");
-      
-      try {
-        const ipAddress = "192.168.8.1";
-        console.log(`Checking SSH port for ${ipAddress}...`);
-        const sshOpen = await this.checkSshPort(ipAddress);
-        console.log(`Is SSH open for ${ipAddress}?`, sshOpen);
-        
-        if (sshOpen) {
-          console.log(`Found router with SSH enabled: ${ipAddress}`);
-          
-          let meta: ScanResult['meta'] = { status: 'ready' };
-          console.log(`Initial meta for ${ipAddress}:`, meta);
-
-          meta = await this.enrichDeviceWithSSHInfo(ipAddress)
-
-          if(meta){
-            meta!.isOpenwrt = true;
-          }
-          
-          console.log(`Final meta object for ${ipAddress} (hardcoded):`, meta);
-          
-          results.push({
-            ip: ipAddress,
-            sshOpen: true,
-            meta
-          });
-        }
-      } catch (error) {
-        console.error("Error in direct IP check:", error);
-      }
-      
-      // Now continue with normal subnet scanning
+      // Scan all subnets
       for (const subnetRange of this.subnetRanges) {
         console.log(`Scanning subnet range: ${subnetRange}`);
+        
         // Generate all IPs in the subnet
         const ips = this.expandSubnet(subnetRange);
         console.log(`Found ${ips.length} IPs in subnet ${subnetRange}`);
@@ -97,33 +65,12 @@ export class NetworkScanner {
         // Scan each IP
         for (const ipAddress of ips) {
           try {
-            if (ipAddress === "192.168.8.1") {
-              console.log("Skipping 192.168.8.1 as we already checked it directly");
-              continue;
-            }
-            
-            console.log(`Checking SSH port for ${ipAddress}...`);
-            const sshOpen = await this.checkSshPort(ipAddress);
-            
-            if (sshOpen) {
-              console.log(`Found router with SSH enabled: ${ipAddress}`);
-              
-              let meta: ScanResult['meta'] = { status: 'ready' };
-              console.log(`Initial meta for ${ipAddress}:`, meta);
-              
-              meta = await this.enrichDeviceWithSSHInfo(ipAddress)
+            // Check each IP and add to results if it has SSH open
+            const deviceResult = await this.checkAndEnrichDevice(ipAddress);
+            if (deviceResult) {
+              results.push(deviceResult);
 
-              if(meta){
-                meta!.isOpenwrt = true;
-              }
-              
-              console.log(`Final meta object for ${ipAddress} (hardcoded):`, meta);
-              
-              results.push({
-                ip: ipAddress,
-                sshOpen: true,
-                meta
-              });
+              return results; // TODO: stream results to support mutiple router detection
             }
           } catch (error) {
             console.error(`Error scanning ${ipAddress}:`, error);
@@ -298,6 +245,41 @@ export class NetworkScanner {
     } catch (error) {
       console.error(`Error getting router details for ${ipAddress}:`, error);
       return {};
+    }
+  }
+  
+  /**
+   * Helper method to check if a device has SSH open and enrich it with device info
+   * Returns a ScanResult if SSH is open, or null if not
+   */
+  private async checkAndEnrichDevice(ipAddress: string): Promise<ScanResult | null> {
+    try {
+      console.log(`Checking SSH port for ${ipAddress}...`);
+      const sshOpen = await this.checkSshPort(ipAddress);
+      
+      if (!sshOpen) {
+        return null;
+      }
+      
+      console.log(`Found router with SSH enabled: ${ipAddress}`);
+      
+      // Initialize meta with basic status
+      let meta: ScanResult['meta'] = { status: 'ready' };
+      
+      // Enrich with additional device information
+      const deviceInfo = await this.enrichDeviceWithSSHInfo(ipAddress);
+      meta = { ...meta, ...deviceInfo };
+      
+      console.log(`Final meta object for ${ipAddress}:`, meta);
+      
+      return {
+        ip: ipAddress,
+        sshOpen: true,
+        meta
+      };
+    } catch (error) {
+      console.error(`Error checking device ${ipAddress}:`, error);
+      return null;
     }
   }
 }
