@@ -57,6 +57,18 @@ app.whenReady().then(() => {
 
   // Register IPC handlers
   setupIpcHandlers(networkScanner, sshConnector, installerEngine);
+  
+  // Clean up resources when app is about to quit
+  app.on('before-quit', async () => {
+    console.log('Application shutting down, cleaning up resources...');
+    try {
+      // Close all SSH connections
+      await sshConnector.closeAllConnections();
+      console.log('All SSH connections closed successfully');
+    } catch (err) {
+      console.error('Error closing SSH connections:', err);
+    }
+  });
 });
 
 app.on('window-all-closed', () => {

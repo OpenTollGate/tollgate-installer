@@ -301,7 +301,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       {renderContent()}
 
       <ManualIpSection>
-        <ManualIpTitle>Connect to router by IP address</ManualIpTitle>
+        <ManualIpTitle>Add router by IP address</ManualIpTitle>
         <ManualIpForm>
           <Input
             label="Router IP Address"
@@ -316,7 +316,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
             onClick={handleManualConnect}
             disabled={isScanning}
           >
-            Connect
+            Add Router
           </Button>
         </ManualIpForm>
       </ManualIpSection>

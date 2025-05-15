@@ -80,9 +80,17 @@ const App: React.FC = () => {
     }
   };
 
-  // Select a router and attempt connection
+  // Select a router and prepare for installation or password entry
   const selectRouter = async (ip: string, version?: string, manualEntry?: boolean, releaseEvent?: NDKEvent) => {
     try {
+      console.log(`Starting router selection for IP: ${ip}, with release:`, releaseEvent);
+      
+      // Important: First store any provided release event to ensure it's available
+      if (releaseEvent) {
+        console.log(`Storing release event for ${ip}:`, releaseEvent);
+        setSelectedRelease(releaseEvent);
+      }
+      
       // Find the selected router from our scan results
       let selectedScanResult = routers.find(router => router.ip === ip);
       
@@ -95,7 +103,7 @@ const App: React.FC = () => {
         if (deviceResult) {
           console.log(`Found device info for manual IP: ${ip}`, deviceResult);
           // Add to routers state for future reference
-          setRouters([...routers, deviceResult]);
+          setRouters(prevRouters => [...prevRouters, deviceResult]);
           selectedScanResult = deviceResult;
         } else {
           throw new Error(`Could not connect to router at ${ip}`);
@@ -109,36 +117,43 @@ const App: React.FC = () => {
       const boardName = selectedScanResult.meta?.boardInfo?.board_name || '';
       const architecture = selectedScanResult.meta?.boardInfo?.release?.architecture || '';
       
-      // Save the release event if provided
-      if (releaseEvent) {
-        console.log(`Selected release event for ${ip}:`, releaseEvent);
-        setSelectedRelease(releaseEvent);
-      }
-      
-      // Set the selected router with information we already have
-      setSelectedRouter({
+      // Create the router info object
+      const routerInfo = {
         ip,
         version,
         boardName,
         architecture,
         compatible: isOpenwrt // Consider OpenWrt routers as compatible
-      });
+      };
       
-      // First try connecting with no password if SSH is open
+      // Set the selected router
+      console.log('Setting selected router to:', routerInfo);
+      setSelectedRouter(routerInfo);
+      
+      // Check if the release is selected before proceeding
+      if (!releaseEvent) {
+        console.log('No release provided. Router was selected but installation cannot proceed without a release');
+        return;
+      }
+      
+      // Only try to connect if SSH is open
       if (selectedScanResult.sshOpen) {
+        console.log(`Attempting SSH connection to ${ip}`);
         const connection = await window.electron.connectSsh(ip, '');
         
         if (connection.success) {
-          // Connection successful, proceed to installation
+          // Connection successful
           if (isOpenwrt) {
-            setStage(Stage.INSTALLING);
-            await installTollgate(ip);
+            // Use a function to proceed to installation that takes all required params directly
+            // This avoids issues with state updates not being immediately available
+            proceedToInstallation(ip, routerInfo, releaseEvent);
           } else {
             setError(`Router does not appear to be running OpenWrt, which is required for TollGateOS.`);
             setStage(Stage.SCANNING);
           }
         } else {
           // Connection failed, go to password entry
+          console.log('SSH connection failed, proceeding to password entry');
           setStage(Stage.PASSWORD_ENTRY);
         }
       } else {
@@ -151,10 +166,74 @@ const App: React.FC = () => {
     }
   };
 
+  // New function to handle the installation process with all required parameters
+  const proceedToInstallation = async (ip: string, router: RouterInfo, release: NDKEvent) => {
+    console.log(`Proceeding to installation for IP: ${ip}`);
+    console.log('Router info:', router);
+    console.log('Release:', release);
+    
+    // Make sure states are set (even if we already have the values as params)
+    setSelectedRouter(router);
+    setSelectedRelease(release);
+    
+    // Change the stage to installing
+    setStage(Stage.INSTALLING);
+    
+    // Wait a tiny bit to ensure React has updated the UI
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Start the installation using the parameters directly
+    try {
+      await installTollgateWithParams(ip, release);
+    } catch (err) {
+      console.error('Installation error:', err);
+      setError('Error during installation: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  };
+  
+  // Direct installation function that takes the release as a parameter
+  const installTollgateWithParams = async (ip: string, release: NDKEvent) => {
+    try {
+      // Reset installation state
+      setError(null);
+      setInstallProgress(0);
+      setCurrentInstallStep('');
+      setFailedStep(null);
+      
+      console.log(`Installing TollGate OS directly on ${ip} with release:`, release);
+      
+      // Start the installation process using the provided release
+      const result = await window.electron.installTollgate(ip, release.serialize());
+      
+      // Update based on final result
+      if (result.success) {
+        setStage(Stage.COMPLETE);
+      } else {
+        setError(`Installation failed at step "${result.step}": ${result.error || 'Unknown error'}`);
+        setFailedStep(result.step);
+        // Stay on the installer page
+      }
+    } catch (err) {
+      console.error('Error in direct installation:', err);
+      setError('Error during installation: ' + (err instanceof Error ? err.message : String(err)));
+      setFailedStep('unknown');
+    }
+  };
+
   // Submit password and retry connection
   const submitPassword = async () => {
     try {
-      if (!selectedRouter) return;
+      if (!selectedRouter) {
+        console.error('No router selected in password entry');
+        return;
+      }
+      
+      if (!selectedRelease) {
+        console.error('No release selected in password entry');
+        setError('No release selected. Please select a release before installing.');
+        setStage(Stage.SCANNING);
+        return;
+      }
       
       setError(null);
       const connection = await window.electron.connectSsh(selectedRouter.ip, password);
@@ -162,8 +241,8 @@ const App: React.FC = () => {
       if (connection.success) {
         // Connection successful with password, proceed to installation if it's OpenWrt
         if (selectedRouter.compatible) {
-          setStage(Stage.INSTALLING);
-          await installTollgate(selectedRouter.ip);
+          // Use the direct proceed function with the current state values
+          proceedToInstallation(selectedRouter.ip, selectedRouter, selectedRelease);
         } else {
           setError(`Router does not appear to be running OpenWrt, which is required for TollGateOS.`);
           setStage(Stage.SCANNING);

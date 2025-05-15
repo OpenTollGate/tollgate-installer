@@ -196,7 +196,7 @@ export class InstallerEngine {
       await this.updateStatus('verifying-installation', 90);
       try {
         // Verify that the router is running TollGate OS
-        const versionInfo = await this.sshConnector.executeRemoteCommand(ip, 'cat /etc/tollgate-version 2>/dev/null || echo "Not TollGate OS"');
+        const versionInfo = await this.sshConnector.executeRemoteCommand(ip, 'cat etc/tollgate/release.json 2>/dev/null || echo "Not TollGate OS"');
         
         if (versionInfo.includes('Not TollGate OS')) {
           return {
@@ -219,6 +219,15 @@ export class InstallerEngine {
       
       // Complete!
       console.log('Installation completed successfully!');
+      
+      // Ensure all SSH connections are properly closed
+      try {
+        await this.sshConnector.closeAllConnections();
+      } catch (cleanupError) {
+        console.warn('Error while cleaning up SSH connections:', cleanupError);
+        // Don't fail the installation because of cleanup errors
+      }
+      
       return {
         success: true,
         step: 'complete',
@@ -226,6 +235,15 @@ export class InstallerEngine {
       };
     } catch (error) {
       console.error(`Installation error for ${ip}:`, error);
+      
+      // Ensure all SSH connections are properly closed even on error
+      try {
+        await this.sshConnector.closeAllConnections();
+      } catch (cleanupError) {
+        console.warn('Error while cleaning up SSH connections after error:', cleanupError);
+        // Don't add this to the returned error
+      }
+      
       return {
         success: false,
         step: 'error',

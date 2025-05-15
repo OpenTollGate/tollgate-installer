@@ -205,8 +205,11 @@ export class SshConnector {
           username: this.username,
           password: password || '',
           readyTimeout: this.connectionTimeout,
-          // For development or testing, this allows connecting to routers with changed host keys
-          // For production, this should be replaced with proper host key verification
+          // Disable host key checking - required for routers that change keys after firmware updates
+          hostHash: 'none',
+          // Hash the hostname to avoid issues with known_hosts file
+          hostVerifier: () => true, // Always accept host keys
+          // Support multiple key algorithms
           algorithms: {
             serverHostKey: ['ssh-rsa', 'ecdsa-sha2-nistp256', 'ssh-ed25519']
           }
@@ -272,7 +275,11 @@ export class SshConnector {
       
       // Use the native scp command for file transfer with -O for older protocol
       // The -O option uses the old SCP protocol which doesn't require sftp-server
-      let scpCommand = `scp -O -o StrictHostKeyChecking=no "${localPath}" "${username}@${ip}:${remotePath}"`;
+      // Additional options to handle host key changes that occur during router firmware updates:
+      // - StrictHostKeyChecking=no: Don't verify the host key against known_hosts
+      // - UserKnownHostsFile=/dev/null: Don't use or update the known_hosts file
+      // - LogLevel=error: Only show errors, not warnings
+      let scpCommand = `scp -O -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=error "${localPath}" "${username}@${ip}:${remotePath}"`;
       
       // Add password handling if needed
       // In a real application, you'd want to use a more secure approach than passing password via env

@@ -139,7 +139,7 @@ const RouterItem: React.FC<RouterItemProps> = ({
             onClick={() => onConnect(router.ip, selectedReleaseId)}
             disabled={router.meta?.status === 'no-ssh' || !selectedReleaseId}
           >
-            Connect
+            Install
           </Button>
         </RouterActions>
       </RouterHeader>
