@@ -10,7 +10,14 @@ export class NetworkScanner {
 
   constructor(config?: { timeoutMs?: number; subnetRanges?: string[] }) {
     this.timeoutMs = config?.timeoutMs || 300; // Default timeout: 1 second
-    this.subnetRanges = config?.subnetRanges || ["192.168.8.0/24", '192.168.0.0/24', '192.168.1.0/24', '10.0.0.0/24']; // 192.168.0.0/16 (last resort)
+    this.subnetRanges = config?.subnetRanges || [
+      "192.168.8.1/32",
+      "192.168.1.1/32",
+      "192.168.8.0/24",
+      '192.168.0.0/24',
+      '192.168.1.0/24',
+      '10.0.0.0/24'
+    ]; // 192.168.0.0/16 (last resort)
     this.sshConnector = new SshConnector();
   }
 
@@ -72,7 +79,14 @@ export class NetworkScanner {
         console.log(`Scanning subnet range: ${subnetRange}`);
         
         // Generate all IPs in the subnet
-        const ips = this.expandSubnet(subnetRange);
+        let ips: string[]
+
+        if(subnetRange.endsWith("/32")){
+          ips = [subnetRange.split('/', 1)[0]]
+        } else{
+          ips = this.expandSubnet(subnetRange);
+        }
+        
         console.log(`Found ${ips.length} IPs in subnet ${subnetRange}`);
         
         // Scan each IP
