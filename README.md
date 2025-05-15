@@ -1,5 +1,7 @@
 # TollGate Installer
 
+![](docs/tollgate-installer.png)
+
 Easily install TollGate OS on your fresh router with just a few clicks using this desktop app.
 
 ## Overview
