@@ -199,11 +199,12 @@ const App: React.FC = () => {
           )}
         
         {stage === Stage.SCANNING && (
-          <RouterScanner 
+          <RouterScanner
             routers={routers}
             onSelectRouter={(ip, version) => selectRouter(ip, version)}
             error={error}
             onRescan={scanForRouters}
+            setRouters={setRouters}
           />
         )}
         

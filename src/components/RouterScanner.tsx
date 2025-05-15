@@ -14,6 +14,7 @@ interface RouterScannerProps {
   onSelectRouter: (ip: string, releaseId?: string) => void;
   error: string | null;
   onRescan: () => void;
+  setRouters?: (routers: ScanResult[]) => void;
 }
 
 const RouterList = styled.div`
@@ -52,6 +53,30 @@ const LoadingText = styled.div`
   color: ${props => props.theme.colors.textSecondary};
 `;
 
+const ManualIpSection = styled.div`
+  background-color: #FFFFFF;
+  border-radius: ${props => props.theme.radii.md};
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+`;
+
+const ManualIpTitle = styled.h3`
+  font-size: ${props => props.theme.fontSizes.lg};
+  margin-bottom: 1rem;
+  color: ${props => props.theme.colors.text};
+`;
+
+const ManualIpForm = styled.div`
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+
+  @media (max-width: 600px) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+`;
+
 const FooterButtons = styled.div`
   display: flex;
   justify-content: center;
@@ -63,12 +88,15 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
   routers,
   onSelectRouter,
   error,
-  onRescan
+  onRescan,
+  setRouters
 }) => {
   // State
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Record<string, string>>({});
+  const [manualIp, setManualIp] = useState('');
+  const [manualIpError, setManualIpError] = useState<string | undefined>(undefined);
   const { releases, loading } = useNostrReleases();
 
   // Scanning progress effect
@@ -114,6 +142,63 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     onSelectRouter(routerIp, releaseId);
   };
 
+  // Validate IP address format
+  const validateIpAddress = (ip: string): boolean => {
+    // Regular expression for IPv4 validation
+    const ipRegex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    return ipRegex.test(ip);
+  };
+
+  // Handle manual IP input
+  const handleManualIpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setManualIp(value);
+    setManualIpError(undefined); // Clear any existing errors when the input changes
+  };
+
+  // Handle connect to manual IP
+  const handleManualConnect = () => {
+    if (!manualIp) {
+      setManualIpError('Please enter an IP address');
+      return;
+    }
+
+    if (!validateIpAddress(manualIp)) {
+      setManualIpError('Please enter a valid IP address');
+      return;
+    }
+
+    // Check if this IP already exists in the routers list
+    const existingRouter = routers.find(router => router.ip === manualIp);
+    
+    if (existingRouter) {
+      // If it exists, just select it
+      onSelectRouter(manualIp);
+    } else if (setRouters) {
+      // Create a new scan result for the manual IP
+      const manualRouter: ScanResult = {
+        ip: manualIp,
+        sshOpen: true, // Assume SSH is open since we're trying to connect
+        meta: {
+          isOpenwrt: true, // Assume it's compatible
+          boardInfo: {
+            board_name: 'Unknown', // We don't know the board name yet
+          }
+        }
+      };
+      
+      // Add the manual router to the existing routers
+      const updatedRouters = [...routers, manualRouter];
+      setRouters(updatedRouters);
+      
+      // Now select the router
+      onSelectRouter(manualIp);
+    } else {
+      // If setRouters is not available, just try to connect
+      onSelectRouter(manualIp);
+    }
+  };
+
   const renderContent = () => {
     if (isScanning) {
       return (
@@ -157,6 +242,27 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     >
       {error && <ErrorMessage>{error}</ErrorMessage>}
       {renderContent()}
+
+      <ManualIpSection>
+        <ManualIpTitle>Connect to router by IP address</ManualIpTitle>
+        <ManualIpForm>
+          <Input
+            label="Router IP Address"
+            placeholder="192.168.1.1"
+            value={manualIp}
+            onChange={handleManualIpChange}
+            error={manualIpError}
+            fullWidth
+          />
+          <Button
+            variant="primary"
+            onClick={handleManualConnect}
+            disabled={isScanning}
+          >
+            Connect
+          </Button>
+        </ManualIpForm>
+      </ManualIpSection>
 
       <FooterButtons>
         <Button
