@@ -59,9 +59,9 @@ const StyledInput = styled.input<{ hasError?: boolean }>`
   }
 `;
 
-const ErrorText = styled.span`
+const ErrorText = styled.span<{ $isSuccess?: boolean }>`
   font-size: ${props => props.theme.fontSizes.sm};
-  color: ${props => props.theme.colors.error};
+  color: ${props => props.$isSuccess ? props.theme.colors.success : props.theme.colors.error};
   margin-top: ${props => props.theme.space.xs};
 `;
 

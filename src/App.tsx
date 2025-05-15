@@ -77,12 +77,26 @@ const App: React.FC = () => {
   };
 
   // Select a router and attempt connection
-  const selectRouter = async (ip: string, version?: string) => {
+  const selectRouter = async (ip: string, version?: string, manualEntry?: boolean) => {
     try {
       // Find the selected router from our scan results
-      const selectedScanResult = routers.find(router => router.ip === ip);
+      let selectedScanResult = routers.find(router => router.ip === ip);
       
-      if (!selectedScanResult) {
+      // If this is a manual entry and we don't have it in scan results yet,
+      // try to check the device directly
+      if (!selectedScanResult && manualEntry) {
+        console.log(`Manual entry for ${ip}, checking device directly...`);
+        const deviceResult = await window.electron.checkDevice(ip);
+        
+        if (deviceResult) {
+          console.log(`Found device info for manual IP: ${ip}`, deviceResult);
+          // Add to routers state for future reference
+          setRouters([...routers, deviceResult]);
+          selectedScanResult = deviceResult;
+        } else {
+          throw new Error(`Could not connect to router at ${ip}`);
+        }
+      } else if (!selectedScanResult) {
         throw new Error(`Router with IP ${ip} not found in scan results`);
       }
       
@@ -201,7 +215,7 @@ const App: React.FC = () => {
         {stage === Stage.SCANNING && (
           <RouterScanner
             routers={routers}
-            onSelectRouter={(ip, version) => selectRouter(ip, version)}
+            onSelectRouter={(ip, version, manualEntry) => selectRouter(ip, version, manualEntry)}
             error={error}
             onRescan={scanForRouters}
             setRouters={setRouters}

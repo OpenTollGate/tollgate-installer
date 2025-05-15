@@ -56,7 +56,7 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
         const filter: NDKFilter = {
           kinds: [UPDATE_KIND],
           authors: [TOLLGATE_OS_PUBKEY],
-          since: 1747302016,
+          since: 1747216016,
         };
         
         

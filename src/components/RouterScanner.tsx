@@ -11,7 +11,7 @@ import { ScanResult } from '../../shared/types';
 
 interface RouterScannerProps {
   routers: ScanResult[];
-  onSelectRouter: (ip: string, releaseId?: string) => void;
+  onSelectRouter: (ip: string, releaseId?: string, manualEntry?: boolean) => void;
   error: string | null;
   onRescan: () => void;
   setRouters?: (routers: ScanResult[]) => void;
@@ -51,6 +51,22 @@ const LoadingText = styled.div`
   margin-top: 1rem;
   font-size: ${props => props.theme.fontSizes.md};
   color: ${props => props.theme.colors.textSecondary};
+`;
+
+const SuccessMessage = styled.div`
+  color: ${props => props.theme.colors.success};
+  background-color: rgba(16, 185, 129, 0.1); /* Lighter version of success color */
+  padding: 1rem;
+  border-radius: ${props => props.theme.radii.md};
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  
+  &:before {
+    content: "✓";
+    margin-right: 0.5rem;
+    font-weight: bold;
+  }
 `;
 
 const ManualIpSection = styled.div`
@@ -97,6 +113,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Record<string, string>>({});
   const [manualIp, setManualIp] = useState('');
   const [manualIpError, setManualIpError] = useState<string | undefined>(undefined);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const { releases, loading } = useNostrReleases();
 
   // Scanning progress effect
@@ -154,17 +171,20 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     const value = e.target.value;
     setManualIp(value);
     setManualIpError(undefined); // Clear any existing errors when the input changes
+    setSuccessMessage(null); // Clear success message when user starts typing
   };
 
   // Handle connect to manual IP
   const handleManualConnect = async () => {
     if (!manualIp) {
       setManualIpError('Please enter an IP address');
+      setSuccessMessage(null);
       return;
     }
 
     if (!validateIpAddress(manualIp)) {
       setManualIpError('Please enter a valid IP address');
+      setSuccessMessage(null);
       return;
     }
 
@@ -172,13 +192,15 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     const existingRouter = routers.find(router => router.ip === manualIp);
     
     if (existingRouter) {
-      // If it exists, just select it
-      onSelectRouter(manualIp);
+      // If it exists, just show a message
+      setSuccessMessage(`Router ${manualIp} is already in the list. Please select a release version before connecting.`);
+      setManualIpError(undefined);
       return;
     }
     
     // Show connecting state
     setIsScanning(true);
+    setSuccessMessage(null);
     
     try {
       // Use the checkDevice function to get a properly enriched ScanResult
@@ -186,6 +208,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       
       if (!deviceResult) {
         setManualIpError('Could not connect to router: SSH port not accessible');
+        setSuccessMessage(null);
         setIsScanning(false);
         return;
       }
@@ -195,15 +218,26 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
         const updatedRouters = [...routers, deviceResult];
         setRouters(updatedRouters);
         
-        // Now select the router
-        onSelectRouter(manualIp);
+        // Clear the input field for better UX
+        setManualIp('');
+        
+        // Show success message and clear error
+        setManualIpError(undefined);
+        setSuccessMessage(`Router ${deviceResult.ip} added successfully! Please select a release version before connecting.`);
+        
+        // Don't automatically connect - user needs to select a release first
+        // The router will appear in the list, and they can select a release and
+        // then click Connect from there
       } else {
-        // If setRouters is not available, just try to connect
-        onSelectRouter(manualIp);
+        // If setRouters is not available (unlikely), just try to connect
+        // but we shouldn't get here in normal operation
+        onSelectRouter(manualIp, undefined, true);
       }
+      
     } catch (error) {
       // Show error if we couldn't get router info
       setManualIpError(`Could not connect to router: ${error instanceof Error ? error.message : String(error)}`);
+      setSuccessMessage(null);
     } finally {
       setIsScanning(false);
     }
@@ -251,6 +285,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       subtitle="Select a router to install TollGate OS"
     >
       {error && <ErrorMessage>{error}</ErrorMessage>}
+      {successMessage && <SuccessMessage>{successMessage}</SuccessMessage>}
       {renderContent()}
 
       <ManualIpSection>
