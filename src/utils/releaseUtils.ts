@@ -8,6 +8,8 @@ import { NDKEvent } from '@nostr-dev-kit/ndk';
  * @returns True if the release is compatible with the router, false otherwise
  */
 export const isReleaseCompatible = (release: NDKEvent, routerBoardName?: string): boolean => {
+
+  
   // If no board name is provided, assume incompatible
   if (!routerBoardName) return false;
   

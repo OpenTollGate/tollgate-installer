@@ -80,6 +80,12 @@ function setupIpcHandlers(
     return await sshConnector.connect(ip, password);
   });
 
+  // Check and enrich a manually entered device
+  ipcMain.handle('check-device', async (_, ip: string) => {
+    // Use our public method to check and enrich the manual device
+    return await networkScanner.checkManualDevice(ip);
+  });
+
   // Installation
   ipcMain.handle('install-tollgate', async (_, ip: string) => {
     return await installerEngine.install(ip);

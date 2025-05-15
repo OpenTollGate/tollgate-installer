@@ -35,7 +35,7 @@ declare global {
     electron: {
       scanNetwork: () => Promise<ScanResult[]>;
       connectSsh: (ip: string, password?: string) => Promise<{ success: boolean; error?: string }>;
-      getRouterInfo: (ip: string) => Promise<{ boardName: string; architecture: string; compatible: boolean }>;
+      checkDevice: (ip: string) => Promise<ScanResult | null>;
       installTollgate: (ip: string) => Promise<{ success: boolean; step: string; progress: number; error?: string }>;
     };
   }

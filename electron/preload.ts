@@ -23,4 +23,8 @@ contextBridge.exposeInMainWorld('electron', {
     return await ipcRenderer.invoke('install-tollgate', ip);
   },
 
+  // Check device
+  checkDevice: async (ip: string): Promise<ScanResult | null> => {
+    return await ipcRenderer.invoke('check-device', ip);
+  },
 });

@@ -125,9 +125,8 @@ const ReleaseSelector: React.FC<ReleaseSelectorProps> = ({
   const selectedRelease = releases.find(r => r.id === selectedReleaseId);
   
   // Group releases by compatibility
-  const routerBoardNameComparable = routerBoardName?.replace(",", "_")
-  const compatibleReleases = releases.filter(r => isReleaseCompatible(r, routerBoardNameComparable));
-  const incompatibleReleases = releases.filter(r => !isReleaseCompatible(r, routerBoardNameComparable));
+  const compatibleReleases = releases.filter(r => isReleaseCompatible(r, routerBoardName));
+  const incompatibleReleases = releases.filter(r => !isReleaseCompatible(r, routerBoardName));
   
   // Generate button label (limited to 16 characters)
   const displayLabel = selectedRelease

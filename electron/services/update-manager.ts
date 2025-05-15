@@ -12,7 +12,7 @@ export interface UpdateInfo {
 
 export class UpdateManager {
   private ndk: NDK;
-  private readonly TOLLGATE_OS_PUBKEY = 'a6c099cca43f9c5ed34a6df8212865aa63e76710a083ac7209152aadb4750da7';
+  private readonly TOLLGATE_OS_PUBKEY = '5075e61f0b048148b60105c1dd72bbeae1957336ae5824087e52efa374f8416a';
   private readonly UPDATE_KIND = 1063; // NIP-94 kind for file metadata
 
   constructor() {
@@ -108,7 +108,7 @@ export class UpdateManager {
       const filter: NDKFilter = {
         kinds: [this.UPDATE_KIND],
         authors: [this.TOLLGATE_OS_PUBKEY],
-        since: 1736359982,
+        since: 1747302016,
         // limit: 10 // Get several recent events
       };
 

@@ -45,6 +45,19 @@ export class NetworkScanner {
       return results.length > 0 ? results : [];
     }
   }
+  
+  /**
+   * Public method to check a manually entered device
+   * Returns a ScanResult if SSH is open, or null if not
+   */
+  public async checkManualDevice(ipAddress: string): Promise<ScanResult | null> {
+    try {
+      return await this.checkAndEnrichDevice(ipAddress);
+    } catch (error) {
+      console.error(`Error checking manual device ${ipAddress}:`, error);
+      return null;
+    }
+  }
 
   /**
    * Scans configured subnets for devices with open SSH ports

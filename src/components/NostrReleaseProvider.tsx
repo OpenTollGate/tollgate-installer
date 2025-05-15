@@ -29,7 +29,7 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
   const [error, setError] = useState<string | null>(null);
   
   // Nostr constants
-  const TOLLGATE_OS_PUBKEY = 'a6c099cca43f9c5ed34a6df8212865aa63e76710a083ac7209152aadb4750da7';
+  const TOLLGATE_OS_PUBKEY = '5075e61f0b048148b60105c1dd72bbeae1957336ae5824087e52efa374f8416a';
   const UPDATE_KIND = 1063; // NIP-94 kind for file metadata
   
   useEffect(() => {
@@ -56,7 +56,7 @@ const NostrReleaseProvider: React.FC<NostrReleaseProviderProps> = ({ children })
         const filter: NDKFilter = {
           kinds: [UPDATE_KIND],
           authors: [TOLLGATE_OS_PUBKEY],
-          limit: 100 // Get several recent events
+          since: 1747302016,
         };
         
         

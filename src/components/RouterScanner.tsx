@@ -157,7 +157,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
   };
 
   // Handle connect to manual IP
-  const handleManualConnect = () => {
+  const handleManualConnect = async () => {
     if (!manualIp) {
       setManualIpError('Please enter an IP address');
       return;
@@ -174,28 +174,38 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
     if (existingRouter) {
       // If it exists, just select it
       onSelectRouter(manualIp);
-    } else if (setRouters) {
-      // Create a new scan result for the manual IP
-      const manualRouter: ScanResult = {
-        ip: manualIp,
-        sshOpen: true, // Assume SSH is open since we're trying to connect
-        meta: {
-          isOpenwrt: true, // Assume it's compatible
-          boardInfo: {
-            board_name: 'Unknown', // We don't know the board name yet
-          }
-        }
-      };
+      return;
+    }
+    
+    // Show connecting state
+    setIsScanning(true);
+    
+    try {
+      // Use the checkDevice function to get a properly enriched ScanResult
+      const deviceResult = await window.electron.checkDevice(manualIp);
       
-      // Add the manual router to the existing routers
-      const updatedRouters = [...routers, manualRouter];
-      setRouters(updatedRouters);
+      if (!deviceResult) {
+        setManualIpError('Could not connect to router: SSH port not accessible');
+        setIsScanning(false);
+        return;
+      }
       
-      // Now select the router
-      onSelectRouter(manualIp);
-    } else {
-      // If setRouters is not available, just try to connect
-      onSelectRouter(manualIp);
+      if (setRouters) {
+        // Add the properly populated device to the scan results
+        const updatedRouters = [...routers, deviceResult];
+        setRouters(updatedRouters);
+        
+        // Now select the router
+        onSelectRouter(manualIp);
+      } else {
+        // If setRouters is not available, just try to connect
+        onSelectRouter(manualIp);
+      }
+    } catch (error) {
+      // Show error if we couldn't get router info
+      setManualIpError(`Could not connect to router: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsScanning(false);
     }
   };
 
