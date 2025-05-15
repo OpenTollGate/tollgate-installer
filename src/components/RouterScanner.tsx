@@ -11,7 +11,7 @@ import { ScanResult } from '../../shared/types';
 
 interface RouterScannerProps {
   routers: ScanResult[];
-  onSelectRouter: (ip: string, releaseId?: string, manualEntry?: boolean) => void;
+  onSelectRouter: (ip: string, releaseId?: string, manualEntry?: boolean, releaseEvent?: NDKEvent) => void;
   error: string | null;
   onRescan: () => void;
   setRouters?: (routers: ScanResult[]) => void;
@@ -111,6 +111,8 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Record<string, string>>({});
+  // Store the full NDKEvent objects for selected releases
+  const [selectedReleases, setSelectedReleases] = useState<Record<string, NDKEvent>>({});
   const [manualIp, setManualIp] = useState('');
   const [manualIpError, setManualIpError] = useState<string | undefined>(undefined);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -153,10 +155,20 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       ...prev,
       [routerIp]: release.id
     }));
+    
+    // Store the full release object
+    setSelectedReleases(prev => ({
+      ...prev,
+      [routerIp]: release
+    }));
   };
 
   const handleConnect = (routerIp: string, releaseId?: string) => {
-    onSelectRouter(routerIp, releaseId);
+    // Find the full release object if we have a releaseId
+    const releaseObject = releaseId ? selectedReleases[routerIp] : undefined;
+    
+    // Pass the router IP, releaseId, and the full release object
+    onSelectRouter(routerIp, releaseId, false, releaseObject);
   };
 
   // Validate IP address format
@@ -231,7 +243,7 @@ const RouterScanner: React.FC<RouterScannerProps> = ({
       } else {
         // If setRouters is not available (unlikely), just try to connect
         // but we shouldn't get here in normal operation
-        onSelectRouter(manualIp, undefined, true);
+        onSelectRouter(manualIp, undefined, true, undefined);
       }
       
     } catch (error) {

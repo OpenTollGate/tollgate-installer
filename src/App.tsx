@@ -10,6 +10,7 @@ import Complete from './components/Complete';
 import NostrReleaseProvider from './components/NostrReleaseProvider';
 import Background from './components/Background';
 import { ScanResult } from '../shared/types';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
 
 // App stages
 enum Stage {
@@ -36,7 +37,7 @@ declare global {
       scanNetwork: () => Promise<ScanResult[]>;
       connectSsh: (ip: string, password?: string) => Promise<{ success: boolean; error?: string }>;
       checkDevice: (ip: string) => Promise<ScanResult | null>;
-      installTollgate: (ip: string) => Promise<{ success: boolean; step: string; progress: number; error?: string }>;
+      installTollgate: (ip: string, releaseEvent: string) => Promise<{ success: boolean; step: string; progress: number; error?: string }>;
     };
   }
 }
@@ -54,9 +55,12 @@ const App: React.FC = () => {
   const [stage, setStage] = useState<Stage>(Stage.WELCOME);
   const [routers, setRouters] = useState<ScanResult[]>([]);
   const [selectedRouter, setSelectedRouter] = useState<RouterInfo | null>(null);
+  const [selectedRelease, setSelectedRelease] = useState<NDKEvent | null>(null);
   const [password, setPassword] = useState<string>('');
   const [installProgress, setInstallProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [currentInstallStep, setCurrentInstallStep] = useState<string>('');
+  const [failedStep, setFailedStep] = useState<string | null>(null);
 
   // Scan for routers
   const scanForRouters = async () => {
@@ -77,7 +81,7 @@ const App: React.FC = () => {
   };
 
   // Select a router and attempt connection
-  const selectRouter = async (ip: string, version?: string, manualEntry?: boolean) => {
+  const selectRouter = async (ip: string, version?: string, manualEntry?: boolean, releaseEvent?: NDKEvent) => {
     try {
       // Find the selected router from our scan results
       let selectedScanResult = routers.find(router => router.ip === ip);
@@ -104,6 +108,12 @@ const App: React.FC = () => {
       const isOpenwrt = selectedScanResult.meta?.isOpenwrt || false;
       const boardName = selectedScanResult.meta?.boardInfo?.board_name || '';
       const architecture = selectedScanResult.meta?.boardInfo?.release?.architecture || '';
+      
+      // Save the release event if provided
+      if (releaseEvent) {
+        console.log(`Selected release event for ${ip}:`, releaseEvent);
+        setSelectedRelease(releaseEvent);
+      }
       
       // Set the selected router with information we already have
       setSelectedRouter({
@@ -175,19 +185,68 @@ const App: React.FC = () => {
   // Install TollGate OS
   const installTollgate = async (ip: string) => {
     try {
+      // Reset installation state
       setError(null);
+      setInstallProgress(0);
+      setCurrentInstallStep('');
+      setFailedStep(null);
       
-      const result = await window.electron.installTollgate(ip);
+      if (!selectedRelease) {
+        // Log what's happening for debugging
+        console.log('No release selected for installation. Router IP:', ip);
+        console.log('Selected router info:', selectedRouter);
+        
+        // Check if the router was manually added
+        const routerInList = routers.find(router => router.ip === ip);
+        if (routerInList) {
+          // The router exists in our list, but no release was selected
+          setError('No release selected. Please select a release before installing.');
+          setStage(Stage.SCANNING);
+          return;
+        } else {
+          // Something went wrong with the router data
+          setError('Router information not found. Please try adding the router again.');
+          setStage(Stage.SCANNING);
+          return;
+        }
+      }
       
+      console.log(`Installing TollGate OS on ${ip} with release:`, selectedRelease);
+      
+      // Set up event listener for installation progress updates
+      const onInstallProgress = (result: { success: boolean; step: string; progress: number; error?: string }) => {
+        console.log('Installation progress:', result);
+        
+        // Update the current step
+        setCurrentInstallStep(result.step);
+        
+        // Update progress
+        setInstallProgress(result.progress);
+        
+        // If there's an error, update the error state and record which step failed
+        if (!result.success && result.error) {
+          setError(`Error during ${result.step}: ${result.error}`);
+          setFailedStep(result.step);
+        }
+      };
+      
+      // Start the installation process
+      const result = await window.electron.installTollgate(ip, selectedRelease.serialize());
+      
+      // Update based on final result
       if (result.success) {
         setStage(Stage.COMPLETE);
       } else {
-        setError('Installation failed: ' + (result.error || 'Unknown error'));
-        setStage(Stage.SCANNING);
+        setError(`Installation failed at step "${result.step}": ${result.error || 'Unknown error'}`);
+        setFailedStep(result.step);
+        // Stay on the installer page instead of returning to scanner
+        // setStage(Stage.SCANNING);
       }
     } catch (err) {
       setError('Error during installation: ' + (err instanceof Error ? err.message : String(err)));
-      setStage(Stage.SCANNING);
+      setFailedStep('unknown');
+      // Stay on the installer page instead of returning to scanner
+      // setStage(Stage.SCANNING);
     }
   };
 
@@ -215,7 +274,7 @@ const App: React.FC = () => {
         {stage === Stage.SCANNING && (
           <RouterScanner
             routers={routers}
-            onSelectRouter={(ip, version, manualEntry) => selectRouter(ip, version, manualEntry)}
+            onSelectRouter={(ip, version, manualEntry, releaseEvent) => selectRouter(ip, version, manualEntry, releaseEvent)}
             error={error}
             onRescan={scanForRouters}
             setRouters={setRouters}
@@ -235,10 +294,12 @@ const App: React.FC = () => {
         )}
         
         {stage === Stage.INSTALLING && (
-          <Installer 
-            router={selectedRouter} 
-            progress={installProgress} 
-            error={error} 
+          <Installer
+            router={selectedRouter}
+            progress={installProgress}
+            error={error}
+            currentStep={currentInstallStep}
+            failedStep={failedStep}
           />
         )}
         

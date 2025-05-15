@@ -14,13 +14,13 @@ contextBridge.exposeInMainWorld('electron', {
   },
 
   // Installation
-  installTollgate: async (ip: string): Promise<{
+  installTollgate: async (ip: string, releaseEvent: string): Promise<{
     success: boolean;
     step: string;
     progress: number;
     error?: string;
   }> => {
-    return await ipcRenderer.invoke('install-tollgate', ip);
+    return await ipcRenderer.invoke('install-tollgate', ip, releaseEvent);
   },
 
   // Check device

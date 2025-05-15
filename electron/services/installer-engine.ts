@@ -1,6 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { SshConnector } from './ssh-connector';
+import axios from 'axios';
+import { createWriteStream } from 'fs';
+import { promisify } from 'util';
+import { pipeline } from 'stream';
+import { tmpdir } from 'os';
+import NDK, { NDKEvent } from '@nostr-dev-kit/ndk';
 
 export interface InstallStatus {
   success: boolean;
@@ -11,17 +17,73 @@ export interface InstallStatus {
 
 export class InstallerEngine {
   private sshConnector: SshConnector;
+  private streamPipeline = promisify(pipeline);
+  private downloadDir: string;
   
   constructor() {
     this.sshConnector = new SshConnector();
+    // Create a dedicated directory for firmware downloads
+    this.downloadDir = path.join(tmpdir(), 'tollgate-firmware');
+    if (!fs.existsSync(this.downloadDir)) {
+      fs.mkdirSync(this.downloadDir, { recursive: true });
+    }
+  }
+  
+  /**
+   * Downloads a file from a URL to a local path
+   * @param url URL to download from
+   * @param outputPath Path to save the file
+   * @returns Promise that resolves to the path of the downloaded file
+   */
+  private async downloadFile(url: string, outputPath?: string): Promise<string> {
+    console.log(`Downloading file from ${url}`);
+    
+    // Generate a filename if outputPath is not provided
+    if (!outputPath) {
+      const urlParts = url.split('/');
+      const filename = urlParts[urlParts.length - 1];
+      outputPath = path.join(this.downloadDir, filename);
+    }
+    
+    try {
+      // Create output directory if it doesn't exist
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      
+      // Download the file
+      const response = await axios({
+        method: 'GET',
+        url: url,
+        responseType: 'stream',
+      });
+      
+      await this.streamPipeline(response.data, createWriteStream(outputPath));
+      
+      console.log(`File downloaded to ${outputPath}`);
+      return outputPath;
+    } catch (error) {
+      console.error(`Error downloading file from ${url}:`, error);
+      throw error;
+    }
   }
 
   /**
    * Installs TollGateOS on the router at the specified IP
    * Assumes an SSH connection has already been established
+   * @param ip IP address of the router
+   * @param releaseData The serialized Nostr event containing the release information
    */
-  public async install(ip: string): Promise<InstallStatus> {
+  public async install(ip: string, releaseData: any): Promise<InstallStatus> {
+    // Deserialize the data back to an NDKEvent object
+    const releaseEvent = NDKEvent.deserialize(new NDK(), releaseData);
+    
     try {
+      // Step 1: Preparation
+      console.log(`Starting installation on router ${ip}`);
+      await this.updateStatus('preparing', 10);
+      
       // Get router information to determine compatibility
       const routerInfo = await this.sshConnector.getRouterInfo(ip);
       
@@ -35,43 +97,128 @@ export class InstallerEngine {
         };
       }
       
-      // All OpenWrt routers with board_name are considered compatible
-      // In a real implementation, you'd check if the specific board/model is supported
-      const isCompatible = routerInfo.release?.distribution?.toLowerCase() === 'openwrt' &&
-                            Boolean(routerInfo.board_name);
-                            
-      if (!isCompatible) {
+      // Verify compatibility based on board_name
+      const isOpenwrt = routerInfo.release?.distribution?.toLowerCase() === 'openwrt';
+      if (!isOpenwrt || !routerInfo.board_name) {
         return {
           success: false,
           step: 'compatibility-check',
           progress: 0,
-          error: `Router model ${routerInfo.model || routerInfo.board_name} with system ${routerInfo.system || 'unknown'} is not compatible with TollGateOS`
+          error: `Router is not running OpenWrt or missing board info: ${routerInfo.system || 'unknown'}`
         };
       }
-
-      // In a real implementation, we would:
-      // 1. Find the appropriate TollGateOS image based on router model and system
-      // 2. Transfer the image to the router
-      // 3. Verify the image checksum
-      // 4. Execute the installation script
-      // 5. Monitor progress and report back
-
-      // For this prototype, we'll simulate these steps with delays
-      await this.updateStatus('preparing', 10);
       
-      // Download or locate the appropriate TollGateOS image
-      await this.updateStatus('downloading', 30);
+      console.log(`Router running OpenWrt: ${routerInfo.board_name}`);
       
-      // Simulated image transfer
-      await this.updateStatus('transferring', 50);
+      // Step 2: Extract release information
+      const firmwareUrl = releaseEvent.getMatchingTags('url')?.[0]?.[1];
+      if (!firmwareUrl) {
+        return {
+          success: false,
+          step: 'download-preparation',
+          progress: 15,
+          error: 'Firmware URL not found in release information'
+        };
+      }
       
-      // Verify checksum
-      await this.updateStatus('verifying', 70);
+      console.log(`Firmware URL: ${firmwareUrl}`);
       
-      // Install TollGateOS
-      await this.updateStatus('installing', 90);
+      // Step 3: Download the firmware
+      await this.updateStatus('downloading', 20);
+      let localFirmwarePath;
+      try {
+        localFirmwarePath = await this.downloadFile(firmwareUrl);
+      } catch (downloadError) {
+        return {
+          success: false,
+          step: 'downloading',
+          progress: 25,
+          error: `Failed to download firmware: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`
+        };
+      }
+      
+      // Step 4: Transfer the firmware to the router
+      await this.updateStatus('transferring', 40);
+      const remoteFilePath = `/tmp/firmware-update.bin`;
+      const transferSuccess = await this.sshConnector.transferFile(ip, localFirmwarePath, remoteFilePath);
+      
+      if (!transferSuccess) {
+        return {
+          success: false,
+          step: 'transferring',
+          progress: 50,
+          error: 'Failed to transfer firmware to router'
+        };
+      }
+      
+      console.log(`Firmware transferred to router at ${remoteFilePath}`);
+      
+      // Step 5: Verify the transfer
+      await this.updateStatus('verifying', 60);
+      try {
+        const verifyResult = await this.sshConnector.executeRemoteCommand(ip, `ls -l ${remoteFilePath}`);
+        console.log(`Verification result: ${verifyResult}`);
+      } catch (verifyError) {
+        return {
+          success: false,
+          step: 'verifying',
+          progress: 65,
+          error: `Failed to verify firmware on router: ${verifyError instanceof Error ? verifyError.message : String(verifyError)}`
+        };
+      }
+      
+      // Step 6: Execute the sysupgrade command
+      await this.updateStatus('installing', 70);
+      try {
+        console.log('Starting firmware upgrade with sysupgrade...');
+        // -n flag prevents preserving settings
+        await this.sshConnector.executeRemoteCommand(ip, `sysupgrade -n ${remoteFilePath}`);
+      } catch (upgradeError) {
+        // It's normal for the connection to drop during upgrade, so this is not necessarily an error
+        console.log(`SSH connection dropped during upgrade (expected): ${upgradeError}`);
+      }
+      
+      // Step 7: Wait for the router to come back online
+      await this.updateStatus('waiting-for-reboot', 80);
+      console.log('Waiting for router to reboot...');
+      
+      const routerReturned = await this.sshConnector.pollForAvailability(ip, 30, 5000);
+      if (!routerReturned) {
+        return {
+          success: false,
+          step: 'waiting-for-reboot',
+          progress: 85,
+          error: 'Router did not come back online after firmware upgrade'
+        };
+      }
+      
+      // Step 8: Verify the installation
+      await this.updateStatus('verifying-installation', 90);
+      try {
+        // Verify that the router is running TollGate OS
+        const versionInfo = await this.sshConnector.executeRemoteCommand(ip, 'cat /etc/tollgate-version 2>/dev/null || echo "Not TollGate OS"');
+        
+        if (versionInfo.includes('Not TollGate OS')) {
+          return {
+            success: false,
+            step: 'verifying-installation',
+            progress: 95,
+            error: 'Router did not boot into TollGate OS after upgrade'
+          };
+        }
+        
+        console.log(`TollGate OS version: ${versionInfo.trim()}`);
+      } catch (finalVerifyError) {
+        return {
+          success: false,
+          step: 'verifying-installation',
+          progress: 95,
+          error: `Failed to verify TollGate OS installation: ${finalVerifyError instanceof Error ? finalVerifyError.message : String(finalVerifyError)}`
+        };
+      }
       
       // Complete!
+      console.log('Installation completed successfully!');
       return {
         success: true,
         step: 'complete',

@@ -1,4 +1,8 @@
-import { Client } from 'ssh2';
+import { Client, SFTPWrapper } from 'ssh2';
+import * as fs from 'fs';
+import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
 export interface LoginAttempt {
   ip: string;
@@ -140,35 +144,232 @@ export class SshConnector {
    */
   private connectClient(client: Client, ip: string, password?: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      // Flag to track if this client has been cleaned up
+      let isCleanedUp = false;
+      
+      // Function to clean up resources
+      const cleanupClient = () => {
+        if (isCleanedUp) return;
+        isCleanedUp = true;
+        
+        // Remove all listeners
         client.removeAllListeners();
+        
+        // Destroy connection if needed
+        try {
+          // End the client connection if it's active
+          if (client) {
+            client.end();
+          }
+        } catch (cleanupErr) {
+          console.error(`Error cleaning up SSH client for ${ip}:`, cleanupErr);
+        }
+      };
+      
+      // Set connection timeout
+      const timeout = setTimeout(() => {
+        console.error(`SSH connection to ${ip} timed out after ${this.connectionTimeout}ms`);
+        cleanupClient();
         reject(new Error(`Connection to ${ip} timed out`));
       }, this.connectionTimeout);
 
+      // Setup success handler
       client.on('ready', () => {
         clearTimeout(timeout);
         resolve();
       });
 
+      // Setup error handler
       client.on('error', (err) => {
+        console.error(`SSH connection error to ${ip}:`, err);
         clearTimeout(timeout);
+        cleanupClient();
         reject(err);
+      });
+      
+      // Setup close handler for unexpected closures
+      client.on('close', () => {
+        if (!isCleanedUp) {
+          console.warn(`SSH connection to ${ip} closed unexpectedly`);
+          clearTimeout(timeout);
+          cleanupClient();
+          reject(new Error(`Connection to ${ip} closed unexpectedly`));
+        }
       });
 
       // Try to connect with the provided configuration
-      client.connect({
-        host: ip,
-        port: 22,
-        username: this.username,
-        password: password || '',
-        readyTimeout: this.connectionTimeout,
-        // For development or testing, this allows connecting to routers with changed host keys
-        // For production, this should be replaced with proper host key verification
-        algorithms: {
-          serverHostKey: ['ssh-rsa', 'ecdsa-sha2-nistp256', 'ssh-ed25519']
-        }
-      });
+      try {
+        client.connect({
+          host: ip,
+          port: 22,
+          username: this.username,
+          password: password || '',
+          readyTimeout: this.connectionTimeout,
+          // For development or testing, this allows connecting to routers with changed host keys
+          // For production, this should be replaced with proper host key verification
+          algorithms: {
+            serverHostKey: ['ssh-rsa', 'ecdsa-sha2-nistp256', 'ssh-ed25519']
+          }
+        });
+      } catch (connectErr) {
+        // Catch any immediate errors from connect()
+        console.error(`Immediate error connecting to ${ip}:`, connectErr);
+        clearTimeout(timeout);
+        cleanupClient();
+        reject(connectErr);
+      }
     });
+  }
+
+  /**
+   * Transfers a file to the router using scp command
+   * @param ip Router IP address
+   * @param localPath Path to the local file to transfer
+   * @param remotePath Path on the router where the file should be placed
+   * @param username Username for SSH connection (defaults to 'root')
+   * @param password Optional password for SSH connection
+   * @returns Promise that resolves to true if transfer was successful
+   */
+  public async transferFile(
+    ip: string,
+    localPath: string,
+    remotePath: string,
+    username: string = this.username,
+    password?: string
+  ): Promise<boolean> {
+    console.log(`Transferring file from ${localPath} to ${username}@${ip}:${remotePath}`);
+    
+    const execPromise = promisify(exec);
+    
+    try {
+      // First, ensure the target directory exists
+      // Extract the directory from the remote path
+      const remoteDir = path.dirname(remotePath);
+      
+      // Get an existing SSH client or establish a new connection
+      let client = this.connections.get(ip);
+      if (!client) {
+        const connectResult = await this.connect(ip, password);
+        if (!connectResult.success) {
+          console.error(`Failed to connect to ${ip} for directory creation`);
+          return false;
+        }
+        client = this.connections.get(ip);
+        if (!client) {
+          console.error(`Connection established but client not found for ${ip}`);
+          return false;
+        }
+      }
+      
+      // Create the directory structure first using SSH
+      try {
+        await this.executeCommand(client, `mkdir -p ${remoteDir}`);
+        console.log(`Created directory ${remoteDir} on router`);
+      } catch (dirError) {
+        console.error(`Error creating directory on router: ${dirError}`);
+        // Continue anyway since we're assuming /tmp exists
+      }
+      
+      // Use the native scp command for file transfer with -O for older protocol
+      // The -O option uses the old SCP protocol which doesn't require sftp-server
+      let scpCommand = `scp -O -o StrictHostKeyChecking=no "${localPath}" "${username}@${ip}:${remotePath}"`;
+      
+      // Add password handling if needed
+      // In a real application, you'd want to use a more secure approach than passing password via env
+      if (password) {
+        console.log('Using password for scp transfer');
+        // Use sshpass if a password is provided (might need to be installed)
+        scpCommand = `sshpass -p "${password}" ${scpCommand}`;
+      }
+      
+      console.log(`Executing SCP command (password hidden): ${scpCommand.replace(password || '', '****')}`);
+      const { stdout, stderr } = await execPromise(scpCommand);
+      
+      if (stderr && !stderr.includes('Warning')) {
+        console.error(`SCP error: ${stderr}`);
+        return false;
+      }
+      
+      console.log(`SCP output: ${stdout}`);
+      return true;
+    } catch (error) {
+      console.error(`Error transferring file to ${ip}:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Polls the router's SSH port until it becomes available
+   * This is used after a firmware update when the router reboots
+   * @param ip Router IP address
+   * @param maxAttempts Maximum number of reconnection attempts
+   * @param interval Interval between attempts in milliseconds
+   */
+  public async pollForAvailability(ip: string, maxAttempts: number = 30, interval: number = 5000): Promise<boolean> {
+    console.log(`Polling ${ip} for availability, max attempts: ${maxAttempts}, interval: ${interval}ms`);
+    
+    // Close any existing connection first
+    await this.closeConnection(ip);
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Track if we need to try again
+      let shouldRetry = true;
+      
+      try {
+        console.log(`Poll attempt ${attempt}/${maxAttempts} for ${ip}`);
+        const result = await this.connect(ip, '');
+        
+        if (result.success) {
+          console.log(`Successfully reconnected to ${ip} after ${attempt} attempts`);
+          return true;
+        } else {
+          // Not a thrown error, but still failed
+          console.log(`Connection attempt ${attempt} failed: ${result.error || 'Unknown reason'}`);
+        }
+      } catch (error) {
+        // Explicitly handle any uncaught errors from the connect method
+        console.error(`Exception during poll attempt ${attempt} for ${ip}:`, error);
+        
+        // Ensure any remaining connection resources are cleaned up
+        try {
+          await this.closeConnection(ip);
+        } catch (cleanupError) {
+          console.error(`Error cleaning up connection during polling:`, cleanupError);
+        }
+      }
+      
+      // Wait before next attempt
+      if (attempt < maxAttempts && shouldRetry) {
+        console.log(`Waiting ${interval}ms before next connection attempt to ${ip}`);
+        await new Promise(resolve => setTimeout(resolve, interval));
+      }
+    }
+    
+    console.error(`Failed to reconnect to ${ip} after ${maxAttempts} attempts`);
+    return false;
+  }
+  
+  /**
+   * Makes the executeCommand method public so it can be used by the InstallerEngine
+   */
+  public async executeRemoteCommand(ip: string, command: string): Promise<string> {
+    let client = this.connections.get(ip);
+    
+    if (!client) {
+      console.log(`No existing SSH connection to ${ip}, attempting to reconnect...`);
+      const reconnectResult = await this.connect(ip, '');
+      
+      if (!reconnectResult.success) {
+        throw new Error(`Failed to reconnect to ${ip}: ${reconnectResult.error}`);
+      }
+      
+      client = this.connections.get(ip);
+      if (!client) {
+        throw new Error(`Connection established but client not found for ${ip}`);
+      }
+    }
+    
+    return this.executeCommand(client, command);
   }
 
   /**

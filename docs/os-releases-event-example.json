@@ -1,46 +1,49 @@
 {
-    "id": "dd2bd2d9d68b48ea2255a9079070a06c223c3bf3cd6e03bcbdb3681196439494",
-    "pubkey": "a6c099cca43f9c5ed34a6df8212865aa63e76710a083ac7209152aadb4750da7",
-    "created_at": 1746200354,
-    "kind": 1063,
-    "tags": [
-      [
-        "url",
-        "https://blossom.swissdash.site/eaa4e6add01f1557daf8026637960d2c5895308d6d8e5661123ef524846278f8.bin"
-      ],
-      [
-        "m",
-        "application/octet-stream"
-      ],
-      [
-        "x",
-        "eaa4e6add01f1557daf8026637960d2c5895308d6d8e5661123ef524846278f8"
-      ],
-      [
-        "ox",
-        "eaa4e6add01f1557daf8026637960d2c5895308d6d8e5661123ef524846278f8"
-      ],
-      [
-        "filename",
-        "openwrt-23.05.3-mediatek-filogic-glinet_gl-mt6000-squashfs-sysupgrade.bin"
-      ],
-      [
-        "architecture",
-        "aarch64_cortex-a53"
-      ],
-      [
-        "model",
-        "gl-mt6000"
-      ],
-      [
-        "openwrt_version",
-        "23.05.3"
-      ],
-      [
-        "tollgate_os_version",
-        "v0.0.0"
-      ]
+  "id": "93dc3ec4c5985ebd5828a071b0ba9e7a3ff87053142f45f3ab3145d5c4c83191",
+  "pubkey": "***",
+  "created_at": 1747302116,
+  "kind": 1063,
+  "tags": [
+    [
+      "url",
+      "https://blossom.swissdash.site/a39078e106abe1488b2cd5fbe610ca894ba1b64ce5c58ed2db4b5e100f7bff7e.bin"
     ],
-    "content": "TollGate OS Firmware for gl-mt6000",
-    "sig": "e5ae8aba3dc2f72ce85772e0b7a5427d2194b66a27ad7ce0e7ff3dda838e93421c071483286a9568f63b0919ccf3ffac4db8d2dbb175f327e125139dcbc59a7b"
-  }
+    [
+      "m",
+      "application/octet-stream"
+    ],
+    [
+      "x",
+      "a39078e106abe1488b2cd5fbe610ca894ba1b64ce5c58ed2db4b5e100f7bff7e"
+    ],
+    [
+      "ox",
+      "a39078e106abe1488b2cd5fbe610ca894ba1b64ce5c58ed2db4b5e100f7bff7e"
+    ],
+    [
+      "architecture",
+      "aarch64_cortex-a53"
+    ],
+    [
+      "device_id",
+      "glinet_gl-mt3000"
+    ],
+    [
+      "supported_devices",
+      "glinet,gl-mt3000 glinet,mt3000-snand"
+    ],
+    [
+      "openwrt_version",
+      "24.10.1"
+    ],
+    [
+      "tollgate_os_version",
+      "develop.162.21324e8"
+    ],
+    [
+      "release_channel",
+      "dev"
+    ]
+  ],
+  "content": "TollGate OS Firmware for glinet_gl-mt3000"
+}

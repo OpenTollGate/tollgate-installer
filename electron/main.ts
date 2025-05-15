@@ -87,7 +87,7 @@ function setupIpcHandlers(
   });
 
   // Installation
-  ipcMain.handle('install-tollgate', async (_, ip: string) => {
-    return await installerEngine.install(ip);
+  ipcMain.handle('install-tollgate', async (_, ip: string, releaseEvent: string) => {
+    return await installerEngine.install(ip, releaseEvent);
   });
 }

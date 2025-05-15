@@ -19,8 +19,6 @@ export const isReleaseCompatible = (release: NDKEvent, routerBoardName?: string)
   // If no model name is specified in the release, assume incompatible
   if (!supportedDevices) return false;
 
-  console.log(`${supportedDevices} / ${routerBoardName}`)
-  
   // Check if the model name is a substring of the board name
   return supportedDevices.toLowerCase().includes(routerBoardName.toLowerCase());
 };
