@@ -2,7 +2,7 @@ import React from 'react';
 import { NDKEvent } from '@nostr-dev-kit/ndk';
 import { useNostrReleases } from './NostrReleaseProvider';
 import styled from 'styled-components';
-import { getReleaseVersion, getReleaseModel, getReleaseOpenWrtVersion } from '../utils/releaseUtils';
+import { getReleaseVersion, getReleaseDeviceId, getReleaseOpenWrtVersion } from '../utils/releaseUtils';
 import Button from './common/Button';
 import PageContainer from './common/PageContainer';
 
@@ -167,7 +167,7 @@ const Welcome: React.FC<WelcomeProps> = ({ onStart }) => {
             {releases.map((release: NDKEvent, index: number) => {
               return (
                 <VersionItem key={index}>
-                  TollGate OS {getReleaseVersion(release)} for {getReleaseModel(release)} (OpenWrt {getReleaseOpenWrtVersion(release)})
+                  TollGate OS {getReleaseVersion(release)} for {getReleaseDeviceId(release)} (OpenWrt {getReleaseOpenWrtVersion(release)})
                 </VersionItem>
               );
             })}

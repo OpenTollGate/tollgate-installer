@@ -146,25 +146,21 @@ export class NetworkScanner {
   }
   
   /**
-   * Checks if a device is running OpenWrt
+   * Determines if a router is running OpenWrt based on its information
    */
-  private async checkIfOpenwrt(ipAddress: string): Promise<boolean> {
-    try {
-      // We can indirectly check if it's OpenWrt by using getRouterInfo
-      // which already connects and gets information from the device
-      const routerInfo = await this.sshConnector.getRouterInfo(ipAddress);
-      
-      // If we successfully got board info, check if it looks like OpenWrt
-      if (routerInfo && routerInfo.boardName && routerInfo.boardName !== 'error') {
-        // OpenWrt typically has a board name, so this is a good indicator
-        return true;
-      }
-      
-      return false;
-    } catch (error) {
-      console.error(`Error checking if ${ipAddress} is OpenWrt:`, error);
+  private isOpenwrt(routerInfo: RouterInfo | undefined): boolean {
+    // No routerInfo means not OpenWrt
+    if (!routerInfo) {
       return false;
     }
+    
+    // If we have release info and it indicates OpenWrt, that's a strong signal
+    if (routerInfo.release?.distribution?.toLowerCase() === 'openwrt') {
+      return true;
+    }
+    
+    // Otherwise, having a board_name is a good indicator it might be OpenWrt
+    return true;
   }
   
   /**
@@ -176,22 +172,17 @@ export class NetworkScanner {
    */
   private async getOpenWrtBoardInfo(ipAddress: string): Promise<any> {
     try {
-      // Get basic router information using the public method
+      // Get router information using the public method
       const routerInfo = await this.sshConnector.getRouterInfo(ipAddress);
       
-      if (!routerInfo || routerInfo.boardName === 'error') {
+      // If no info is available, return empty object
+      if (!routerInfo) {
         return {};
       }
       
-      // Convert RouterInfo to the format we want
-      return {
-        board_name: routerInfo.boardName,
-        model: routerInfo.boardName,
-        release: {
-          distribution: 'OpenWrt',
-          architecture: routerInfo.architecture
-        }
-      };
+      // The router info from ubus call system board already has the format we want
+      // Just return it directly
+      return routerInfo;
     } catch (error) {
       console.error(`Error getting board info from ${ipAddress}:`, error);
       return {};
@@ -224,10 +215,13 @@ export class NetworkScanner {
       
       // If we got router info, use it to determine if it's OpenWrt and get board info
       if (routerInfo) {
-        const isOpenwrt = routerInfo.boardName !== 'error' && routerInfo.boardName !== 'disconnected';
+        // Use our helper function to determine if it's OpenWrt
+        const isOpenwrt = this.isOpenwrt(routerInfo);
         console.log(`Is ${ipAddress} an OpenWrt router?`, isOpenwrt);
         
-        const boardInfo = isOpenwrt ? await this.getOpenWrtBoardInfo(ipAddress) : {};
+        // For OpenWrt routers, we can use the routerInfo directly as boardInfo
+        // since it's already in the format we want from 'ubus call system board'
+        const boardInfo = isOpenwrt ? routerInfo : {};
         console.log(`Board info for ${ipAddress}:`, boardInfo);
         
         const result = {

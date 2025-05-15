@@ -6,10 +6,21 @@ export interface LoginAttempt {
   error?: string;
 }
 
+export interface RouterReleaseInfo {
+  distribution: string;
+  version: string;
+  revision: string;
+  target?: string;
+  description?: string;
+}
+
 export interface RouterInfo {
-  boardName: string;
-  architecture: string;
-  compatible: boolean;
+  kernel?: string;
+  hostname?: string;
+  system?: string;
+  model?: string;
+  board_name: string;
+  release?: RouterReleaseInfo;
 }
 
 export class SshConnector {
@@ -53,9 +64,9 @@ export class SshConnector {
   }
 
   /**
-   * Gets information about the connected router, including board name and architecture
+   * Gets information about the connected router using 'ubus call system board'
    */
-  public async getRouterInfo(ip: string): Promise<RouterInfo> {
+  public async getRouterInfo(ip: string): Promise<RouterInfo | undefined> {
     try {
       console.log(`Getting router info for ${ip} in SSH connector`);
       let client = this.connections.get(ip);
@@ -69,11 +80,7 @@ export class SshConnector {
         if (!reconnectResult.success) {
           console.error(`Failed to reconnect to ${ip}: ${reconnectResult.error}`);
           // Return placeholder data but mark as incompatible
-          return {
-            boardName: 'disconnected',
-            architecture: 'unknown',
-            compatible: false
-          };
+          return undefined;
         }
         
         // Get the newly established connection
@@ -83,41 +90,27 @@ export class SshConnector {
         }
       }
 
-      console.log(`Executing commands to get board info for ${ip}`);
-      // Get the board name from /proc/cmdline
-      const boardName = await this.executeCommand(
+      console.log(`Executing 'ubus call system board' for ${ip}`);
+      // Execute the ubus command to get board info
+      const ubusOutput = await this.executeCommand(
         client,
-        "cat /tmp/sysinfo/board_name"
+        "ubus call system board"
       );
-      console.log(`Board name for ${ip}:`, boardName);
-
-      // Get the architecture
-      const architecture = await this.executeCommand(
-        client,
-        "uname -m"
-      );
-      console.log(`Architecture for ${ip}:`, architecture);
-
-      // Determine if the router is compatible with TollGateOS
-      // This is a simplification - in a real implementation, you'd check against
-      // a list of supported boards and architectures
-      const compatible = Boolean(boardName && architecture);
-      console.log(`Router ${ip} compatible:`, compatible);
-
-      const result = {
-        boardName: boardName.trim(),
-        architecture: architecture.trim(),
-        compatible
-      };
-      console.log(`Router info result for ${ip}:`, result);
-      return result;
+      console.log(`ubus output for ${ip}:`, ubusOutput);
+      
+      // Try to parse the JSON output
+      try {
+        const boardInfo = JSON.parse(ubusOutput);
+        console.log(`Parsed board info for ${ip}:`, boardInfo);
+        return boardInfo;
+      } catch (jsonError) {
+        console.error(`Error parsing ubus output for ${ip}:`, jsonError);
+        // Return undefined if parsing fails
+        return undefined;
+      }
     } catch (error) {
       console.error(`Error getting router info for ${ip}:`, error);
-      return {
-        boardName: 'error',
-        architecture: 'unknown',
-        compatible: false
-      };
+      return undefined;
     }
   }
 

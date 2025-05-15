@@ -12,13 +12,15 @@ export const isReleaseCompatible = (release: NDKEvent, routerBoardName?: string)
   if (!routerBoardName) return false;
   
   // Get the model name from the release event
-  const modelName = release.getMatchingTags('model')?.[0]?.[1];
+  const supportedDevices = release.getMatchingTags('supported_devices')?.[0]?.[1];
   
   // If no model name is specified in the release, assume incompatible
-  if (!modelName) return false;
+  if (!supportedDevices) return false;
+
+  console.log(`${supportedDevices} / ${routerBoardName}`)
   
   // Check if the model name is a substring of the board name
-  return routerBoardName.toLowerCase().includes(modelName.toLowerCase());
+  return supportedDevices.toLowerCase().includes(routerBoardName.toLowerCase());
 };
 
 /**
@@ -71,4 +73,26 @@ export const getReleaseArchitecture = (release: NDKEvent): string => {
  */
 export const getReleaseOpenWrtVersion = (release: NDKEvent): string => {
   return release.getMatchingTags("openwrt_version")?.[0]?.[1] || "Unknown";
+};
+
+/**
+ * Get the device ID for a release
+ *
+ * @param release The Nostr event containing release information
+ * @returns The device ID or "Unknown"
+ */
+export const getReleaseDeviceId = (release: NDKEvent): string => {
+  return release.getMatchingTags("supported_devices")?.[0]?.[1] || "Unknown";
+};
+
+/**
+ * Truncate text to a specified maximum length, adding ellipsis if needed
+ *
+ * @param text The text to truncate
+ * @param maxLength The maximum allowed length (including ellipsis)
+ * @returns The truncated text with ellipsis if necessary
+ */
+export const truncateText = (text: string, maxLength: number): string => {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 3) + '...';
 };

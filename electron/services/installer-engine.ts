@@ -25,17 +25,32 @@ export class InstallerEngine {
       // Get router information to determine compatibility
       const routerInfo = await this.sshConnector.getRouterInfo(ip);
       
-      if (!routerInfo.compatible) {
+      // Check if router info is available
+      if (!routerInfo) {
         return {
           success: false,
           step: 'compatibility-check',
           progress: 0,
-          error: `Router model ${routerInfo.boardName} with architecture ${routerInfo.architecture} is not compatible with TollGateOS`
+          error: 'Unable to get router information'
+        };
+      }
+      
+      // All OpenWrt routers with board_name are considered compatible
+      // In a real implementation, you'd check if the specific board/model is supported
+      const isCompatible = routerInfo.release?.distribution?.toLowerCase() === 'openwrt' &&
+                            Boolean(routerInfo.board_name);
+                            
+      if (!isCompatible) {
+        return {
+          success: false,
+          step: 'compatibility-check',
+          progress: 0,
+          error: `Router model ${routerInfo.model || routerInfo.board_name} with system ${routerInfo.system || 'unknown'} is not compatible with TollGateOS`
         };
       }
 
       // In a real implementation, we would:
-      // 1. Find the appropriate TollGateOS image based on router model and architecture
+      // 1. Find the appropriate TollGateOS image based on router model and system
       // 2. Transfer the image to the router
       // 3. Verify the image checksum
       // 4. Execute the installation script
@@ -75,17 +90,17 @@ export class InstallerEngine {
 
   /**
    * In a real implementation, this would:
-   * 1. Find the appropriate image for the router model/architecture
+   * 1. Find the appropriate image for the router model/system
    * 2. Download it from a repository if not locally available
    * 3. Return the path to the image file
    */
-  private async getImageForRouter(boardName: string, architecture: string): Promise<string> {
+  private async getImageForRouter(board_name: string, system: string): Promise<string> {
     // This is a placeholder for the actual implementation
     // In a real app, you would have logic to determine the appropriate image
-    // based on the router's board name and architecture
+    // based on the router's board name and system
     
     // For this prototype, we'll just return a fake path
-    return path.join(__dirname, '..', '..', 'images', `tollgate-${boardName}-${architecture}.bin`);
+    return path.join(__dirname, '..', '..', 'images', `tollgate-${board_name}-${system}.bin`);
   }
 
   /**

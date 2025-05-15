@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import Button from './common/Button';
+import Input from './common/Input';
 import ProgressBar from './common/ProgressBar';
 import PageContainer from './common/PageContainer';
 import { useNostrReleases } from './NostrReleaseProvider';

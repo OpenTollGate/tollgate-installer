@@ -12,7 +12,6 @@ interface RouterItemProps {
   selectedReleaseId?: string;
   onReleaseSelect: (routerIp: string, release: NDKEvent) => void;
   onConnect: (routerIp: string, releaseId?: string) => void;
-  boardName?: string;
 }
 
 // Styled components
@@ -92,13 +91,11 @@ const RouterItem: React.FC<RouterItemProps> = ({
   selectedReleaseId,
   onReleaseSelect,
   onConnect,
-  boardName
 }) => {
   console.log('RouterItem props:', {
     ip: router.ip,
     sshOpen: router.sshOpen,
-    meta: router.meta,
-    boardName
+    meta: router.meta
   });
   
   return (
@@ -130,7 +127,7 @@ const RouterItem: React.FC<RouterItemProps> = ({
         <RouterActions>
           <ReleaseSelector
             releases={releases}
-            routerBoardName={router.meta?.boardInfo?.board_name || boardName}
+            routerBoardName={router.meta?.boardInfo?.board_name}
             selectedReleaseId={selectedReleaseId}
             onReleaseSelect={(release) => onReleaseSelect(router.ip, release)}
             buttonLabel="Select Release"

@@ -8,7 +8,8 @@ import {
   getReleaseDate,
   getReleaseModel,
   getReleaseArchitecture,
-  getReleaseOpenWrtVersion
+  getReleaseOpenWrtVersion,
+  truncateText
 } from '../utils/releaseUtils';
 
 interface ReleaseSelectorProps {
@@ -124,12 +125,13 @@ const ReleaseSelector: React.FC<ReleaseSelectorProps> = ({
   const selectedRelease = releases.find(r => r.id === selectedReleaseId);
   
   // Group releases by compatibility
-  const compatibleReleases = releases.filter(r => isReleaseCompatible(r, routerBoardName));
-  const incompatibleReleases = releases.filter(r => !isReleaseCompatible(r, routerBoardName));
+  const routerBoardNameComparable = routerBoardName?.replace(",", "_")
+  const compatibleReleases = releases.filter(r => isReleaseCompatible(r, routerBoardNameComparable));
+  const incompatibleReleases = releases.filter(r => !isReleaseCompatible(r, routerBoardNameComparable));
   
-  // Generate button label
-  const displayLabel = selectedRelease 
-    ? `Release ${getReleaseVersion(selectedRelease)} ▼`
+  // Generate button label (limited to 16 characters)
+  const displayLabel = selectedRelease
+    ? `Release ${truncateText(getReleaseVersion(selectedRelease), 24)} ▼`
     : `${buttonLabel} ▼`;
   
   const toggleDropdown = () => {
