@@ -171,11 +171,28 @@ export class InstallerEngine {
       await this.updateStatus('installing', 70);
       try {
         console.log('Starting firmware upgrade with sysupgrade...');
-        // -n flag prevents preserving settings
-        await this.sshConnector.executeRemoteCommand(ip, `sysupgrade -n ${remoteFilePath}`);
+        
+        // Use a background command that continues after SSH disconnects
+        // The '&' at the end makes it run in the background
+        // The 'sleep 1' gives it a moment before the upgrade starts
+        await this.sshConnector.executeRemoteCommand(ip, `(sleep 1 && sysupgrade -n ${remoteFilePath}) >/dev/null 2>&1 &`);
+        
+        // Give the command a moment to start
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Explicitly close all SSH connections - very important
+        console.log('Explicitly closing all SSH connections before router reboots');
+        await this.sshConnector.closeAllConnections();
       } catch (upgradeError) {
         // It's normal for the connection to drop during upgrade, so this is not necessarily an error
         console.log(`SSH connection dropped during upgrade (expected): ${upgradeError}`);
+        
+        // Make sure to close any remaining connections even if we got an error
+        try {
+          await this.sshConnector.closeAllConnections();
+        } catch (cleanupErr) {
+          console.log('Error closing connections:', cleanupErr);
+        }
       }
       
       // Step 7: Wait for the router to come back online
@@ -195,10 +212,17 @@ export class InstallerEngine {
       // Step 8: Verify the installation
       await this.updateStatus('verifying-installation', 90);
       try {
-        // Verify that the router is running TollGate OS
-        const versionInfo = await this.sshConnector.executeRemoteCommand(ip, 'cat etc/tollgate/release.json 2>/dev/null || echo "Not TollGate OS"');
+        // Make sure all connections are closed before trying to verify
+        // This ensures we start with a fresh connection
+        await this.sshConnector.closeAllConnections();
         
-        if (versionInfo.includes('Not TollGate OS')) {
+        // Add a short delay to ensure the router has fully initialized services
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Verify that the router is running TollGate OS
+        const isTollgateOS = await this.sshConnector.executeRemoteCommand(ip, 'cat /etc/banner | grep -q "tollgate.me" && echo true || echo false');
+        
+        if (isTollgateOS === "false") {
           return {
             success: false,
             step: 'verifying-installation',
@@ -207,7 +231,6 @@ export class InstallerEngine {
           };
         }
         
-        console.log(`TollGate OS version: ${versionInfo.trim()}`);
       } catch (finalVerifyError) {
         return {
           success: false,

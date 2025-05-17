@@ -54,6 +54,7 @@
     "directories": {
       "output": "release"
     },
+    "afterPack": "./electron/linux-sandbox-fix.js",
     "mac": {
       "category": "public.app-category.utilities"
     },
@@ -62,7 +63,11 @@
     },
     "linux": {
       "target": "AppImage",
-      "category": "Utility"
+      "category": "Utility",
+      "executableName": "tollgate-installer",
+      "asarUnpack": [
+        "node_modules/electron/dist/chrome-sandbox"
+      ]
     }
   }
 }

@@ -306,6 +306,117 @@ export class SshConnector {
   }
   
   /**
+   * Quick connection attempt with a short timeout
+   * This is suitable for checking if a router is back online after reboot
+   */
+  private async quickConnectAttempt(ip: string, timeoutMs: number = 1000): Promise<LoginAttempt> {
+    console.log(`Quick connect attempt to ${ip} with ${timeoutMs}ms timeout`);
+    try {
+      // Close any existing connection
+      await this.closeConnection(ip);
+      
+      // Create a new client
+      const client = new Client();
+      
+      // Custom connection promise with short timeout
+      const connectPromise = new Promise<void>((resolve, reject) => {
+        // Flag to track if this client has been cleaned up
+        let isCleanedUp = false;
+        
+        // Function to clean up resources
+        const cleanupClient = () => {
+          if (isCleanedUp) return;
+          isCleanedUp = true;
+          
+          // Remove all listeners
+          client.removeAllListeners();
+          
+          // Destroy connection if needed
+          try {
+            if (client) {
+              client.end();
+            }
+          } catch (cleanupErr) {
+            console.error(`Error cleaning up SSH client for ${ip}:`, cleanupErr);
+          }
+        };
+        
+        // Set a short connection timeout
+        const timeout = setTimeout(() => {
+          console.log(`Quick connection attempt to ${ip} timed out after ${timeoutMs}ms`);
+          cleanupClient();
+          reject(new Error(`Quick connection timed out`));
+        }, timeoutMs);
+        
+        // Setup handlers
+        client.once('ready', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        
+        client.once('error', (err) => {
+          clearTimeout(timeout);
+          cleanupClient();
+          reject(err);
+        });
+        
+        client.once('close', () => {
+          if (!isCleanedUp) {
+            clearTimeout(timeout);
+            cleanupClient();
+            reject(new Error('Connection closed'));
+          }
+        });
+        
+        // Try to connect with minimal options and short timeout
+        try {
+          client.connect({
+            host: ip,
+            port: 22,
+            username: this.username,
+            password: '',
+            readyTimeout: timeoutMs,
+            hostHash: 'none',
+            hostVerifier: () => true,
+            algorithms: {
+              serverHostKey: ['ssh-rsa', 'ecdsa-sha2-nistp256', 'ssh-ed25519']
+            }
+          });
+        } catch (connectErr) {
+          clearTimeout(timeout);
+          cleanupClient();
+          reject(connectErr);
+        }
+      });
+      
+      // Try to connect with the short timeout
+      await connectPromise;
+      
+      // If we got here, the connection was successful
+      // Store it for future use
+      this.connections.set(ip, client);
+      
+      return {
+        ip,
+        success: true
+      };
+    } catch (error) {
+      // Log but don't show stack trace for timeouts - they're expected during polling
+      if (error instanceof Error && error.message.includes('timed out')) {
+        console.log(`Quick connect to ${ip} timed out`);
+      } else {
+        console.error(`Quick connect error to ${ip}:`, error);
+      }
+      
+      return {
+        ip,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
    * Polls the router's SSH port until it becomes available
    * This is used after a firmware update when the router reboots
    * @param ip Router IP address
@@ -324,7 +435,10 @@ export class SshConnector {
       
       try {
         console.log(`Poll attempt ${attempt}/${maxAttempts} for ${ip}`);
-        const result = await this.connect(ip, '');
+        
+        // Use quick connect with 1000ms timeout to check if router is responding
+        // This prevents long hang times when the router is still rebooting
+        const result = await this.quickConnectAttempt(ip, 1000);
         
         if (result.success) {
           console.log(`Successfully reconnected to ${ip} after ${attempt} attempts`);

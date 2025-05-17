@@ -80,6 +80,32 @@ tollgate-installer/
 4. **Verification**: The app confirms successful installation
 5. **Updates**: The app checks for updates to TollGateOS using NOSTR
 
+## Troubleshooting
+
+### Linux Sandbox Issue
+
+On Linux, you might encounter the following error:
+
+```
+The SUID sandbox helper binary was found, but is not configured correctly. Rather than run without sandboxing I'm aborting now. You need to make sure that /path/to/chrome-sandbox is owned by root and has mode 4755.
+```
+
+This is related to the Chrome sandbox security feature. The application will now try to handle this automatically, but if you still encounter issues, you can fix it manually:
+
+1. **Fix permission issues** (recommended):
+   ```bash
+   sudo chown root:root /path/to/node_modules/electron/dist/chrome-sandbox
+   sudo chmod 4755 /path/to/node_modules/electron/dist/chrome-sandbox
+   ```
+   Replace `/path/to/` with the actual path to your installation.
+
+2. **Run without sandbox** (less secure, but works as a fallback):
+   ```bash
+   electron --no-sandbox .
+   # or
+   npm run dev:electron -- --no-sandbox
+   ```
+
 ## License
 
 [MIT License](LICENSE)

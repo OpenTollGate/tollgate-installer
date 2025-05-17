@@ -279,21 +279,31 @@ const Installer: React.FC<InstallerProps> = ({
           // Grey out steps after failure
           const isDisabled = failedStepIndex >= 0 && index > failedStepIndex;
           
+          // The last step should only be marked complete if progress is 100%
+          // But if it's the current step or if there's an error, it shouldn't be marked complete
+          const isLastStep = index === steps.length - 1;
+          const isCompleted = (index < currentStepIndex) ||
+                             (isLastStep && progress >= 100 && !error && currentStepName === 'complete');
+          
+          // Identify the current active step - if it's verifying-installation, the last step should be active
+          const isActive = (index === currentStepIndex) ||
+                           (isLastStep && currentStepName === 'verifying-installation');
+          
           return (
             <Step
               key={index}
-              $active={index === currentStepIndex}
-              $completed={index < currentStepIndex || (index === steps.length - 1 && progress >= 100)}
+              $active={isActive}
+              $completed={isCompleted}
               $failed={isFailedStep}
               $disabled={isDisabled}
             >
               <StepIcon
-                $completed={index < currentStepIndex || (index === steps.length - 1 && progress >= 100)}
-                $active={index === currentStepIndex}
+                $completed={isCompleted}
+                $active={isActive}
                 $failed={isFailedStep}
                 $disabled={isDisabled}
               >
-                {isFailedStep ? '!' : (index < currentStepIndex || (index === steps.length - 1 && progress >= 100) ? '✓' : index + 1)}
+                {isFailedStep ? '!' : (isCompleted ? '✓' : (isActive ? (index + 1) : (index + 1)))}
               </StepIcon>
               <StepText>
                 <StepTitle>{step.title}{isFailedStep ? ' - Failed' : ''}</StepTitle>
