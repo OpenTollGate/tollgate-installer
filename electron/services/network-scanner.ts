@@ -1,7 +1,12 @@
 import * as ip from 'ip';
 import * as net from 'net';
+import * as os from 'os';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { SshConnector, RouterInfo } from './ssh-connector';
 import { ScanResult } from '../../shared/types';
+
+const execPromise = promisify(exec);
 
 export class NetworkScanner {
   private readonly timeoutMs: number;
@@ -13,42 +18,181 @@ export class NetworkScanner {
     this.subnetRanges = config?.subnetRanges || [
       "192.168.8.1/32",
       "192.168.1.1/32",
-      "192.168.8.0/24",
-      '192.168.0.0/24',
-      '192.168.1.0/24',
-      '10.0.0.0/24'
+      // "192.168.8.0/24",
+      // '192.168.0.0/24',
+      // '192.168.1.0/24',
+      // '10.0.0.0/24'
     ]; // 192.168.0.0/16 (last resort)
     this.sshConnector = new SshConnector();
   }
 
   /**
+   * Gets directly connected devices using network interfaces
+   */
+  private async getDirectlyConnectedDevices(): Promise<string[]> {
+    try {
+      // Get default gateways and potential routers from network interfaces
+      const interfaceDevices = this.getNetworkInterfaceGateways();
+      console.log("Potential gateways from network interfaces:", interfaceDevices);
+      
+      // Get additional information using platform-specific commands
+      const commandDevices = await this.getDevicesFromNetworkCommand();
+      console.log("Potential devices from network commands:", commandDevices);
+      
+      // Combine and deduplicate
+      const allDevices = [...new Set([...interfaceDevices, ...commandDevices])];
+      console.log("All directly connected devices:", allDevices);
+      
+      return allDevices;
+    } catch (error) {
+      console.error("Error getting directly connected devices:", error);
+      return [];
+    }
+  }
+  
+  /**
+   * Gets potential default gateways from network interfaces
+   */
+  private getNetworkInterfaceGateways(): string[] {
+    const potentialRouters: string[] = [];
+    
+    // Get all network interfaces
+    const networkInterfaces = os.networkInterfaces();
+    
+    // Process each interface
+    for (const [interfaceName, interfaces] of Object.entries(networkInterfaces)) {
+      if (!interfaces) continue;
+      
+      // Skip loopback interfaces
+      if (interfaceName.startsWith('lo')) continue;
+      
+      for (const iface of interfaces) {
+        // Only consider IPv4 addresses
+        if (iface.family === 'IPv4' && !iface.internal) {
+          try {
+            // Add potential default gateway based on interface IP
+            const ipAddr = iface.address;
+            const netmask = iface.netmask;
+            
+            // Calculate potential default gateway (typically .1 or .254 in the subnet)
+            const ipLong = ip.toLong(ipAddr);
+            const maskLong = ip.toLong(netmask);
+            const networkAddr = ipLong & maskLong;
+            
+            // Common gateway pattern: first usable address (.1)
+            const gatewayAddr1 = ip.fromLong(networkAddr + 1);
+            potentialRouters.push(gatewayAddr1);
+            
+            // Last usable address often used too (like .254)
+            const broadcastAddr = (networkAddr | (~maskLong >>> 0));
+            const gatewayAddr2 = ip.fromLong(broadcastAddr - 1);
+            potentialRouters.push(gatewayAddr2);
+            
+            console.log(`Identified potential gateways ${gatewayAddr1} and ${gatewayAddr2} from interface ${interfaceName}`);
+          } catch (error) {
+            console.error(`Error processing interface ${interfaceName}:`, error);
+          }
+        }
+      }
+    }
+    
+    return potentialRouters;
+  }
+  
+  /**
+   * Gets additional network information using platform-specific commands
+   */
+  private async getDevicesFromNetworkCommand(): Promise<string[]> {
+    try {
+      let command: string;
+      
+      // Different commands for different platforms
+      if (process.platform === 'darwin') {
+        // macOS: use route command to get gateway
+        command = 'route -n get default | grep gateway';
+      } else {
+        // Linux: use ip route to get gateway
+        command = 'ip route | grep default';
+      }
+      
+      const { stdout } = await execPromise(command);
+      const ipAddresses: string[] = [];
+      
+      // Parse the output to find gateway IPs
+      const lines = stdout.split('\n');
+      for (const line of lines) {
+        const ipMatches = line.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g);
+        if (ipMatches) {
+          ipAddresses.push(...ipMatches);
+        }
+      }
+      
+      return ipAddresses;
+    } catch (error) {
+      console.error("Error getting devices from network command:", error);
+      return [];
+    }
+  }
+
+  /**
    * Scans the network for potential routers
-   * First tries to detect the default gateway, then scans subnet for SSH-enabled devices
+   * First scans devices directly connected to this computer, then proceeds with subnet scan
    */
   public async scan(): Promise<ScanResult[]> {
     const results: ScanResult[] = [];
+    const existingIps = new Set<string>();
     
     try {
-      // First, try to find the default gateway (most likely a router)
-      // Gateway detection completely disabled
-      console.log("Gateway detection disabled, proceeding with direct IP check");
-
-      // Then scan subnets for other potential routers
+      // Step 1: First scan directly connected devices (gateways and network interfaces)
+      console.log("Scanning directly connected devices first...");
+      const connectedDevices = await this.getDirectlyConnectedDevices();
+      
+      for (const ipAddress of connectedDevices) {
+        try {
+          console.log(`Checking directly connected device: ${ipAddress}`);
+          // Check each IP and add to results if it has SSH open
+          const deviceResult = await this.checkAndEnrichDevice(ipAddress);
+          if (deviceResult) {
+            // Mark device as a gateway since it's directly connected
+            deviceResult.meta = {
+              ...deviceResult.meta,
+              isGateway: true, // Use the existing isGateway property to mark directly connected devices
+            };
+            results.push(deviceResult);
+            existingIps.add(deviceResult.ip);
+            console.log(`Found router with SSH enabled: ${ipAddress} (directly connected)`);
+          }
+        } catch (error) {
+          console.error(`Error scanning directly connected device ${ipAddress}:`, error);
+          // Continue with next IP
+        }
+      }
+      
+      // Step 2: Then scan subnets for other potential routers
+      console.log("Proceeding with subnet scan for additional devices...");
       const subnetResults = await this.scanSubnetsForSsh();
       
-      // Filter out duplicate IPs (including the gateway if found)
-      const existingIps = new Set(results.map(r => r.ip));
+      // Filter out duplicate IPs
       for (const result of subnetResults) {
         if (!existingIps.has(result.ip)) {
           results.push(result);
           existingIps.add(result.ip);
+          console.log(`Added subnet router to results: ${result.ip}`);
+        } else {
+          console.log(`Skipping duplicate router: ${result.ip} (already in results)`);
         }
       }
 
+      // Log detailed information about what's being returned
+      console.log(`FINAL SCAN RESULTS: Found ${results.length} routers:`);
+      results.forEach((router, index) => {
+        console.log(`Router ${index + 1}: ${router.ip} (OpenWrt: ${router.meta?.isOpenwrt}, Gateway: ${router.meta?.isGateway})`);
+      });
+      
       return results;
     } catch (error) {
       console.error('Error scanning network:', error);
-      // If gateway detection fails, still return subnet scan results if available
+      // Return whatever results we have so far
       return results.length > 0 ? results : [];
     }
   }
@@ -96,8 +240,8 @@ export class NetworkScanner {
             const deviceResult = await this.checkAndEnrichDevice(ipAddress);
             if (deviceResult) {
               results.push(deviceResult);
-
-              return results; // TODO: stream results to support mutiple router detection
+              console.log(`Found router in subnet scan: ${ipAddress}`);
+              // Continue scanning other devices - don't return early
             }
           } catch (error) {
             console.error(`Error scanning ${ipAddress}:`, error);
