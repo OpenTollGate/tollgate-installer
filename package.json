@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:linux": "concurrently \"npm run dev:vite\" \"npm run dev:electron -- --no-sandbox\"",
     "dev:vite": "vite",
     "dev:electron": "tsc -p tsconfig.electron.json && electron .",
     "build": "npm run build:vite && npm run build:electron",
