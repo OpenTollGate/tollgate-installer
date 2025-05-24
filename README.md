@@ -2,7 +2,7 @@
 
 ![](docs/tollgate-installer.png)
 
-Easily install TollGate OS on your fresh router with just a few clicks using this desktop app.
+Easily install TollGate OS on a fresh router with just a few clicks using this desktop app.
 
 ## Overview
 
@@ -29,8 +29,8 @@ TollGate Installer is an Electron-based desktop application designed for fast, r
 ### Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/tollgate-installer.git
+# Clone the repository (on your laptop, not the router!)
+git clone https://github.com/OpenTollGate/tollgate-installer.git
 cd tollgate-installer
 
 # Install dependencies
