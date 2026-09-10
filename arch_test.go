@@ -44,61 +44,91 @@ func TestNormalizeBareArch(t *testing.T) {
 
 // TestSelectPkgURL verifies selectPkgURL returns the correct download URL and
 // extension for the requested package manager, and FAILS (ok=false) for an
-// unknown arch or an arch with no published asset in the requested format.
+// empty/undetectable arch. The URL is DERIVED generically from the tuple via
+// feedAssetURL, so ANY arch the feed publishes resolves — no hardcoded map.
 func TestSelectPkgURL(t *testing.T) {
-	// Every known arch resolves to a FEED URL (FreedomTechFeed/packages).
-	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64"} {
+	// Every known arch resolves to a FEED URL (FreedomTechFeed/packages),
+	// derived from the tuple — including arches NOT in the original 4-tuple map.
+	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7", "riscv64"} {
 		if url, ext, ok := selectPkgURL(arch, "opkg"); !ok {
 			t.Errorf("selectPkgURL(%q, opkg): ok=%v, want true", arch, ok)
 		} else if ext != ".ipk" {
 			t.Errorf("selectPkgURL(%q, opkg): ext=%q, want .ipk", arch, ext)
-		} else if url != tollgateArchAssets[arch].IPK {
-			t.Errorf("selectPkgURL(%q, opkg): url=%q, want %q", arch, url, tollgateArchAssets[arch].IPK)
+		} else if url != feedAssetURL(arch, ".ipk") {
+			t.Errorf("selectPkgURL(%q, opkg): url=%q, want %q", arch, url, feedAssetURL(arch, ".ipk"))
 		}
 
 		if url, ext, ok := selectPkgURL(arch, "apk"); !ok {
 			t.Errorf("selectPkgURL(%q, apk): ok=%v, want true", arch, ok)
 		} else if ext != ".apk" {
 			t.Errorf("selectPkgURL(%q, apk): ext=%q, want .apk", arch, ext)
-		} else if url != tollgateArchAssets[arch].APK {
-			t.Errorf("selectPkgURL(%q, apk): url=%q, want %q", arch, url, tollgateArchAssets[arch].APK)
+		} else if url != feedAssetURL(arch, ".apk") {
+			t.Errorf("selectPkgURL(%q, apk): url=%q, want %q", arch, url, feedAssetURL(arch, ".apk"))
 		}
 	}
 
-	// Unknown archs must fail, including the empty string.
-	for _, arch := range []string{"sparc", "riscv64", ""} {
-		if _, _, ok := selectPkgURL(arch, "opkg"); ok {
-			t.Errorf("selectPkgURL(%q, opkg) = ok=true, want false (unknown arch)", arch)
+	// Empty/undetectable arch must fail.
+	if _, _, ok := selectPkgURL("", "opkg"); ok {
+		t.Errorf("selectPkgURL(\"\", opkg) = ok=true, want false (undetectable arch)")
+	}
+}
+
+// TestFeedAssetURL verifies the generic feed URL builder produces the exact
+// deterministic URL for a canonical tuple, and that it is generic — the tuple
+// is interpolated, not looked up.
+func TestFeedAssetURL(t *testing.T) {
+	cases := map[string]struct{ ext, want string }{
+		"aarch64_cortex-a53": {".ipk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk"},
+		"mipsel_24kc":        {".ipk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_mipsel_24kc.ipk"},
+		"x86_64":             {".apk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_x86_64.apk"},
+		"arm_cortex-a7":      {".ipk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_arm_cortex-a7.ipk"},
+	}
+	for arch, tc := range cases {
+		if got := feedAssetURL(arch, tc.ext); got != tc.want {
+			t.Errorf("feedAssetURL(%q, %q) = %q, want %q", arch, tc.ext, got, tc.want)
+		}
+	}
+}
+
+// TestPkgCandidateURLs verifies the ordered download candidates: the generic
+// feed URL first, then the GitHub release fallback for aarch64 (the only arch
+// with published GitHub assets). Non-aarch64 arches get only the feed URL.
+func TestPkgCandidateURLs(t *testing.T) {
+	// aarch64: feed first, then GitHub fallback.
+	got := pkgCandidateURLs("aarch64_cortex-a53", ".ipk")
+	want := []string{
+		feedAssetURL("aarch64_cortex-a53", ".ipk"),
+		tollgateGithubFallback["aarch64_cortex-a53"].IPK,
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("pkgCandidateURLs(aarch64, .ipk) = %v, want %v", got, want)
+	}
+
+	// Non-aarch64: feed only (no GitHub fallback exists).
+	for _, arch := range []string{"mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
+		got := pkgCandidateURLs(arch, ".ipk")
+		if len(got) != 1 || got[0] != feedAssetURL(arch, ".ipk") {
+			t.Errorf("pkgCandidateURLs(%q, .ipk) = %v, want [%q]", arch, got, feedAssetURL(arch, ".ipk"))
 		}
 	}
 }
 
 // TestArchAssetsMatchDetectedArch ties arch detection to asset selection:
-// every key in tollgateArchAssets must be a canonical tuple (so a value
-// returned by detectArch's normalizeBareArch is always selectable), and every
-// known arch must carry BOTH the .ipk and .apk FEED URLs (FreedomTechFeed/
-// packages) for tollgate-wrt. The GitHub fallback map must also carry the
-// aarch64_cortex-a53 assets.
+// every canonical tuple that normalizeBareArch can produce must resolve to a
+// feed URL via selectPkgURL (the generic builder), and the GitHub fallback
+// must carry the aarch64_cortex-a53 assets.
 func TestArchAssetsMatchDetectedArch(t *testing.T) {
-	// Every map key must be a canonical tuple so selectPkgURL can look up any
-	// arch that detectArch might return.
-	for tuple := range tollgateArchAssets {
-		if normalizeBareArch(tuple) != tuple {
-			t.Errorf("tollgateArchAssets key %q is not a canonical tuple (normalizeBareArch(%q)=%q)", tuple, tuple, normalizeBareArch(tuple))
-		}
-	}
-
-	// Every known arch must carry both feed formats.
+	// Every canonical tuple must resolve to a feed URL (both formats).
 	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64"} {
-		ipk := tollgateArchAssets[arch].IPK
-		apk := tollgateArchAssets[arch].APK
-		if ipk == "" || !strings.HasPrefix(ipk, "https://github.com/FreedomTechFeed/packages/") || !strings.HasSuffix(ipk, ".ipk") {
+		ipk, _, ok := selectPkgURL(arch, "opkg")
+		if !ok || !strings.HasPrefix(ipk, "https://github.com/FreedomTechFeed/packages/") || !strings.HasSuffix(ipk, ".ipk") {
 			t.Errorf("%s .ipk feed URL missing or malformed: %q", arch, ipk)
 		}
 		if !strings.Contains(ipk, "tollgate-wrt") {
 			t.Errorf("%s .ipk must reference tollgate-wrt: %q", arch, ipk)
 		}
-		if apk == "" || !strings.HasPrefix(apk, "https://github.com/FreedomTechFeed/packages/") || !strings.HasSuffix(apk, ".apk") {
+		apk, _, ok := selectPkgURL(arch, "apk")
+		if !ok || !strings.HasPrefix(apk, "https://github.com/FreedomTechFeed/packages/") || !strings.HasSuffix(apk, ".apk") {
 			t.Errorf("%s .apk feed URL missing or malformed: %q", arch, apk)
 		}
 		if !strings.Contains(apk, "tollgate-wrt") {
@@ -242,11 +272,11 @@ func TestDownloadBaseURL(t *testing.T) {
 }
 
 // TestArchAssetsAreLive is the live HTTP 200 guard for the tollgate-wrt
-// assets in tollgateArchAssets (feed) AND tollgateGithubFallback (fallback) —
-// the per-arch replacement for the old tollgatePkgURL pin that was live-checked
-// in pins_test.go. Every asset a fresh deploy might download (feed primary or
-// GitHub fallback) is probed with a 1-byte Range request. Run with -short to
-// skip network access; the CI-parity command is plain `go test ./...`.
+// assets the deploy may download — the generic feed URLs for every canonical
+// tuple (via feedAssetURL) AND the GitHub fallback (tollgateGithubFallback).
+// Every asset a fresh deploy might download (feed primary or GitHub fallback)
+// is probed with a 1-byte Range request. Run with -short to skip network
+// access; the CI-parity command is plain `go test ./...`.
 func TestArchAssetsAreLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live URL check skipped: -short mode (CI-parity runs without -short)")
@@ -273,16 +303,16 @@ func TestArchAssetsAreLive(t *testing.T) {
 		}
 	}
 
-	for arch, asset := range tollgateArchAssets {
-		for name, url := range map[string]string{"IPK": asset.IPK, "APK": asset.APK} {
-			if url == "" {
-				continue // no published asset yet — not checked
-			}
+	// Feed URLs for every canonical tuple the feed publishes (both formats).
+	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64"} {
+		for name, ext := range map[string]string{"IPK": ".ipk", "APK": ".apk"} {
+			url := feedAssetURL(arch, ext)
 			t.Run("feed_"+arch+"_"+name, func(t *testing.T) {
 				probe("feed "+arch+" "+name, url)
 			})
 		}
 	}
+	// GitHub fallback assets.
 	for arch, asset := range tollgateGithubFallback {
 		for name, url := range map[string]string{"IPK": asset.IPK, "APK": asset.APK} {
 			if url == "" {

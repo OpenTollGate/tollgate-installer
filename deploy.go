@@ -21,6 +21,9 @@ const (
 	// tollgatePackage is the opkg/apk package name for the tollgate-wrt
 	// package (installed via the OpenWrt feed fallback path).
 	tollgatePackage = "tollgate-wrt"
+)
+
+var (
 	// tollgate-wrt .ipk download URL (OpenWrt <= 24.10 opkg back-compat).
 	//
 	// NOTE (v0.5.0 de-brand): the tollgate-wrt package now ships from the
@@ -28,15 +31,16 @@ const (
 	// enforcement rules (PR #283) ship INSIDE this ipk under
 	// ./etc/nftables.d/, so no separate overlay download is needed.
 	//
-	// NOTE (feat/feed-per-arch-urls): the per-arch selectable URLs live in the
-	// tollgateArchAssets map in arch.go (feed-primary, GitHub fallback). These
-	// two consts are the aarch64_cortex-a53 PRIMARY feed assets, used by the
-	// PreStage cache (stageAssetURLs) to pre-download the bench arch in both
-	// formats before arch detection runs at install time.
-	tollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk"
+	// NOTE (feat/feed-per-arch-urls): the per-arch selectable URLs are derived
+	// generically in arch.go via feedAssetURL (feed-primary, GitHub fallback).
+	// These two vars are the aarch64_cortex-a53 PRIMARY feed assets, used by
+	// the PreStage cache (stageAssetURLs) to pre-download the bench arch in both
+	// formats before arch detection runs at install time. They are DERIVED from
+	// feedAssetURL so they can never drift from the generic URL builder.
+	tollgatePkgURL = feedAssetURL("aarch64_cortex-a53", ".ipk")
 	// tollgate-wrt .apk download URL (OpenWrt 25+ with APK support).
 	// OpenWrt 25.12+ cannot install legacy .ipk (ar archive) packages.
-	tollgatePkgAPKURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.apk"
+	tollgatePkgAPKURL = feedAssetURL("aarch64_cortex-a53", ".apk")
 )
 
 // deploySteps returns the ordered deployment step definitions.
@@ -281,14 +285,17 @@ func runDeployment(job *Job, req deployRequest) {
 
 	// Select appropriate package URL based on package manager + arch.
 	// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages.
-	selectedPkgURL, pkgExtension, ok := selectPkgURL(routerArch, pkgMgr)
+	_, pkgExtension, ok := selectPkgURL(routerArch, pkgMgr)
 	if !ok {
-		// Unknown arch OR this arch has no published asset in this format —
-		// fail, never substitute aarch64.
+		// Undetectable arch — fail, never substitute aarch64.
 		jobFail(job, 6, "Unsupported CPU arch "+routerArch,
 			"Unsupported CPU arch "+routerArch)
 		return
 	}
+	// Candidate download URLs: the generic feed URL first, then the GitHub
+	// release fallback (aarch64 only) if one exists. The first that yields
+	// bytes wins.
+	pkgCandidates := pkgCandidateURLs(routerArch, pkgExtension)
 	if pkgExtension == ".apk" {
 		job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
 	} else {
@@ -307,8 +314,22 @@ func runDeployment(job *Job, req deployRequest) {
 	// from the critical path — a freshly STA-connected router often has no
 	// working DNS yet. A live-fetch failure falls through to the router-side
 	// wget (and then feed) paths below.
+	//
+	// pkgCandidates holds the ordered URLs to try (feed first, then the GitHub
+	// release fallback for aarch64). The first that yields bytes wins.
 	pkgOnRouter := false
-	pkgData, pkgFromCache, pkgErr := stagedOrLiveBytes(job, "tollgate-wrt "+pkgExtension, selectedPkgURL)
+	var pkgData []byte
+	var pkgFromCache bool
+	var pkgErr error
+	for _, candURL := range pkgCandidates {
+		pkgData, pkgFromCache, pkgErr = stagedOrLiveBytes(job, "tollgate-wrt "+pkgExtension, candURL)
+		if pkgErr == nil && len(pkgData) > 0 {
+			break
+		}
+		if pkgErr != nil {
+			job.addLog("Laptop download failed for " + candURL + ": " + truncate(pkgErr.Error(), 80))
+		}
+	}
 	if pkgErr == nil && len(pkgData) > 0 {
 		push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
 		if strings.Contains(push, "PUSH_OK") {
@@ -331,10 +352,13 @@ func runDeployment(job *Job, req deployRequest) {
 	if !pkgOnRouter {
 		probe := sshRun(client, "nslookup github.com 2>&1 | tail -n2")
 		job.addLog("Router DNS probe: " + truncate(probe, 60))
-		wgetOut := sshRun(client, "wget -O /tmp/tollgate-wrt"+pkgExtension+" '"+selectedPkgURL+"' 2>&1; [ -s /tmp/tollgate-wrt"+pkgExtension+"] ] && echo WGET_OK || echo WGET_FAIL")
-		job.addLog("wget: " + truncate(wgetOut, 120))
-		if strings.Contains(wgetOut, "WGET_OK") {
-			pkgOnRouter = true
+		for _, candURL := range pkgCandidates {
+			wgetOut := sshRun(client, "wget -O /tmp/tollgate-wrt"+pkgExtension+" '"+candURL+"' 2>&1; [ -s /tmp/tollgate-wrt"+pkgExtension+" ] && echo WGET_OK || echo WGET_FAIL")
+			job.addLog("wget: " + truncate(wgetOut, 120))
+			if strings.Contains(wgetOut, "WGET_OK") {
+				pkgOnRouter = true
+				break
+			}
 		}
 	}
 

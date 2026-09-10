@@ -53,6 +53,8 @@ var forbiddenDeployIdentifiers = []string{
 // wantTollgatePkgURL is the exact release asset pinned by the wizard.
 // The v0.6.0-alpha1 release of FreedomTechFeed/packages ships the
 // tollgate-wrt package for the aarch64_cortex-a53 target (feed-primary).
+// It is DERIVED from feedAssetURL so it can never drift from the generic
+// URL builder — this test pins the derivation, not a literal.
 const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk"
 
 // TestTollgatePkgURLPinsExistingAsset pins the package download URL to the
@@ -62,6 +64,16 @@ const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases
 func TestTollgatePkgURLPinsExistingAsset(t *testing.T) {
 	if tollgatePkgURL != wantTollgatePkgURL {
 		t.Errorf("tollgatePkgURL =\n  %q\nwant\n  %q", tollgatePkgURL, wantTollgatePkgURL)
+	}
+	// The value must be derived from the generic builder, not a hardcoded
+	// literal — otherwise the two sources of truth can drift.
+	if tollgatePkgURL != feedAssetURL("aarch64_cortex-a53", ".ipk") {
+		t.Errorf("tollgatePkgURL = %q, want feedAssetURL(aarch64_cortex-a53, .ipk) = %q",
+			tollgatePkgURL, feedAssetURL("aarch64_cortex-a53", ".ipk"))
+	}
+	if tollgatePkgAPKURL != feedAssetURL("aarch64_cortex-a53", ".apk") {
+		t.Errorf("tollgatePkgAPKURL = %q, want feedAssetURL(aarch64_cortex-a53, .apk) = %q",
+			tollgatePkgAPKURL, feedAssetURL("aarch64_cortex-a53", ".apk"))
 	}
 }
 
@@ -77,10 +89,12 @@ var liveCheckPins = map[string]string{
 // parsePinnedURLConsts parses deploy.go (real Go syntax via go/ast, not text
 // matching) and returns:
 //
-//   - pins: name → value for every string-literal constant whose name ends in
-//     "URL" and whose value starts with "https://" — the pinned-download-URL
-//     naming convention of this file. A pin named differently or served over
-//     plain http:// would escape the registry; keep the convention.
+//   - pins: name → value for every URL pin whose name ends in "URL" — declared
+//     as a string-literal constant OR a var derived from feedAssetURL (the
+//     pinned-download-URL naming convention of this file). A pin named
+//     differently would escape the registry; keep the convention. For a var
+//     derived from feedAssetURL the value is recorded as the resolved
+//     feedAssetURL call so the registry still knows the pin exists.
 //   - codeTokens: every identifier and string-literal value in the file.
 //     Comments are NOT part of the AST (the file is parsed without
 //     ParseComments), so documentation mentioning a removed pin cannot fail
@@ -97,7 +111,7 @@ func parsePinnedURLConsts(t *testing.T) (pins map[string]string, codeTokens []st
 	pins = map[string]string{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		decl, ok := n.(*ast.GenDecl)
-		if !ok || decl.Tok != token.CONST {
+		if !ok || (decl.Tok != token.CONST && decl.Tok != token.VAR) {
 			return true
 		}
 		for _, spec := range decl.Specs {
@@ -105,17 +119,23 @@ func parsePinnedURLConsts(t *testing.T) (pins map[string]string, codeTokens []st
 			if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
 				continue
 			}
-			lit, ok := vs.Values[0].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				continue
-			}
-			value, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				continue
-			}
 			name := vs.Names[0].Name
-			if strings.HasSuffix(name, "URL") && strings.HasPrefix(value, "https://") {
-				pins[name] = value
+			if !strings.HasSuffix(name, "URL") {
+				continue
+			}
+			// String-literal pin (const or var).
+			if lit, ok := vs.Values[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if value, err := strconv.Unquote(lit.Value); err == nil && strings.HasPrefix(value, "https://") {
+					pins[name] = value
+				}
+				continue
+			}
+			// Var derived from feedAssetURL(...) — record the call so the
+			// registry still knows the pin exists (value resolved at runtime).
+			if call, ok := vs.Values[0].(*ast.CallExpr); ok {
+				if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "feedAssetURL" {
+					pins[name] = "feedAssetURL(...)"
+				}
 			}
 		}
 		return true

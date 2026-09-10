@@ -38,9 +38,10 @@ var bareArchToTuple = map[string]string{
 
 // canonicalArchTuples is the set of canonical OpenWrt arch tuples that
 // normalizes to themselves. This lets canonical tuples pass through unchanged
-// and lets TestArchAssetsMatchDetectedArch assert every tollgateArchAssets key
-// is a selectable tuple. Add a tuple here only when it is a real OpenWrt feed
-// target; an unknown bare name maps to "" (never a guessed default).
+// and lets TestArchAssetsMatchDetectedArch assert every canonical tuple
+// resolves to a selectable feed URL. Add a tuple here only when it is a real
+// OpenWrt feed target; an unknown bare name maps to "" (never a guessed
+// default).
 var canonicalArchTuples = map[string]bool{
 	"aarch64_cortex-a53": true,
 	"mipsel_24kc":        true,
@@ -66,44 +67,27 @@ func normalizeBareArch(b string) string {
 	return ""
 }
 
-// tollgateArchAssets is the per-arch map of tollgate-wrt download assets, keyed
-// by the canonical OpenWrt arch tuple. IPK is used on OpenWrt <=24.x (opkg), APK
-// on OpenWrt 25+ (apk).
+// feedAssetURL builds the deterministic tollgate-wrt download URL for a
+// canonical OpenWrt arch tuple and file extension. The feed publishes every
+// arch it builds at a stable, predictable URL:
 //
-// Phase 3 (feat/feed-per-arch-urls): the PRIMARY source for every known arch is
-// the FreedomTechFeed/packages release assets — the feed publishes all four
-// canonical tuples (aarch64_cortex-a53, mipsel_24kc, mips_24kc, x86_64) in both
-// .apk and .ipk at deterministic stable URLs (see the feed's
-// docs/per-arch-release-assets.md). The GitHub tollgate-module-basic-go release
-// URLs are preserved as a FALLBACK in tollgateGithubFallback for arches the feed
-// does not publish yet (or a feed outage). selectPkgURL consults the feed first
-// and falls back to GitHub only when the feed has no asset for the requested
-// arch/format.
-var tollgateArchAssets = map[string]struct{ IPK, APK string }{
-	// Feed-published per-arch assets (FreedomTechFeed/packages release v0.6.0-alpha1).
-	"aarch64_cortex-a53": {
-		IPK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk",
-		APK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.apk",
-	},
-	"mipsel_24kc": {
-		IPK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_mipsel_24kc.ipk",
-		APK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_mipsel_24kc.apk",
-	},
-	"mips_24kc": {
-		IPK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_mips_24kc.ipk",
-		APK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_mips_24kc.apk",
-	},
-	"x86_64": {
-		IPK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_x86_64.ipk",
-		APK: "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_x86_64.apk",
-	},
+//	https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_<arch>.<ext>
+//
+// Because the URL is DERIVED from the tuple rather than looked up in a
+// hardcoded map, ANY arch the feed publishes resolves without a code change —
+// a new feed target (e.g. arm_cortex-a7) works the moment the feed ships it.
+// A detected-but-unpublished arch yields a URL that 404s at download time,
+// which is an honest, actionable failure rather than a hardcoded "unsupported"
+// list that must be maintained as the feed grows.
+func feedAssetURL(arch, ext string) string {
+	return "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_" + arch + ext
 }
 
 // tollgateGithubFallback is the GitHub tollgate-module-basic-go release assets,
 // kept as a FALLBACK for arches the feed does not publish yet (or a feed
 // outage). Only aarch64_cortex-a53 has published GitHub release assets today.
-// selectPkgURL consults this map only when tollgateArchAssets has no asset for
-// the requested arch/format.
+// pkgCandidateURLs consults this map only to append a second download attempt
+// after the feed URL.
 var tollgateGithubFallback = map[string]struct{ IPK, APK string }{
 	"aarch64_cortex-a53": {
 		IPK: "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.ipk",
@@ -111,34 +95,50 @@ var tollgateGithubFallback = map[string]struct{ IPK, APK string }{
 	},
 }
 
-// selectPkgURL returns the tollgate-wrt download URL and file extension for the
-// given canonical arch tuple and package manager. pkgMgr must be "opkg" or
+// githubFallbackURL returns the GitHub release fallback URL for a canonical
+// arch tuple and package extension, or "" if none exists. Only
+// aarch64_cortex-a53 has published GitHub release assets today; used as a
+// second download attempt when the feed URL 404s (feed outage).
+func githubFallbackURL(arch, ext string) string {
+	asset, ok := tollgateGithubFallback[arch]
+	if !ok {
+		return ""
+	}
+	if ext == ".apk" {
+		return asset.APK
+	}
+	return asset.IPK
+}
+
+// pkgCandidateURLs returns the ordered download URLs to try for a canonical
+// arch tuple and package extension: the feed URL (derived generically from the
+// tuple) first, then the GitHub release fallback (aarch64 only) if one exists.
+// The first URL that yields bytes wins.
+func pkgCandidateURLs(arch, ext string) []string {
+	urls := []string{feedAssetURL(arch, ext)}
+	if fb := githubFallbackURL(arch, ext); fb != "" && fb != urls[0] {
+		urls = append(urls, fb)
+	}
+	return urls
+}
+
+// selectPkgURL returns the tollgate-wrt download URL and file extension for
+// the given canonical arch tuple and package manager. pkgMgr must be "opkg" or
 // "apk".
 //
-// It returns ok=false when the arch is unknown OR neither the feed nor the
-// GitHub fallback has a published asset in the requested format. The caller
-// must treat ok=false as a hard deploy failure — NEVER silently substitute the
-// aarch64 fallback.
+// It is GENERIC: the feed URL is derived from the tuple via feedAssetURL, so
+// any arch the feed publishes resolves. It returns ok=false only for an
+// empty/undetectable arch — the caller must treat that as a hard deploy
+// failure and NEVER silently substitute the aarch64 fallback.
 func selectPkgURL(arch, pkgMgr string) (url, ext string, ok bool) {
-	// PRIMARY: the feed's per-arch stable URL.
-	if asset, exists := tollgateArchAssets[arch]; exists {
-		if pkgMgr == "apk" && asset.APK != "" {
-			return asset.APK, ".apk", true
-		}
-		if pkgMgr == "opkg" && asset.IPK != "" {
-			return asset.IPK, ".ipk", true
-		}
+	if arch == "" {
+		return "", "", false
 	}
-	// FALLBACK: GitHub release assets for arches the feed does not publish yet.
-	if asset, exists := tollgateGithubFallback[arch]; exists {
-		if pkgMgr == "apk" && asset.APK != "" {
-			return asset.APK, ".apk", true
-		}
-		if pkgMgr == "opkg" && asset.IPK != "" {
-			return asset.IPK, ".ipk", true
-		}
+	ext = ".ipk"
+	if pkgMgr == "apk" {
+		ext = ".apk"
 	}
-	return "", "", false
+	return feedAssetURL(arch, ext), ext, true
 }
 
 // distArchRe pulls DISTRIB_ARCH out of /etc/openwrt_release output. The file
