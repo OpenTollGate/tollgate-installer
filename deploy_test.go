@@ -33,15 +33,16 @@ func TestDownloadURLsPointToTollgateRepo(t *testing.T) {
 				t.Errorf("%s = %q: must be an https://github.com URL", name, url)
 			}
 
-			// 3. Must reference the tollgate-module-basic-go repo in the
-			//    upstream OpenTollGate org.
-			ownerOk := strings.Contains(url, "OpenTollGate/")
-			repoOk := strings.Contains(url, "tollgate-module-basic-go")
+			// 3. Must reference the feed repo (FreedomTechFeed/packages) — the
+			//    per-arch tollgate-wrt source (feat/feed-per-arch-urls). The
+			//    GitHub tollgate-module-basic-go release is the fallback only.
+			ownerOk := strings.Contains(url, "FreedomTechFeed/")
+			repoOk := strings.Contains(url, "packages")
 			if !ownerOk {
-				t.Errorf("%s = %q: owner must be OpenTollGate", name, url)
+				t.Errorf("%s = %q: owner must be FreedomTechFeed (feed-primary)", name, url)
 			}
 			if !repoOk {
-				t.Errorf("%s = %q: must reference tollgate-module-basic-go", name, url)
+				t.Errorf("%s = %q: must reference the feed packages repo", name, url)
 			}
 
 			// 4. Must be a release download URL, not e.g. a branch archive.

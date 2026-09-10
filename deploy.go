@@ -27,10 +27,16 @@ const (
 	// OpenTollGate org's tollgate-module-basic-go releases. The nftables
 	// enforcement rules (PR #283) ship INSIDE this ipk under
 	// ./etc/nftables.d/, so no separate overlay download is needed.
-	tollgatePkgURL = "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.ipk"
+	//
+	// NOTE (feat/feed-per-arch-urls): the per-arch selectable URLs live in the
+	// tollgateArchAssets map in arch.go (feed-primary, GitHub fallback). These
+	// two consts are the aarch64_cortex-a53 PRIMARY feed assets, used by the
+	// PreStage cache (stageAssetURLs) to pre-download the bench arch in both
+	// formats before arch detection runs at install time.
+	tollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk"
 	// tollgate-wrt .apk download URL (OpenWrt 25+ with APK support).
 	// OpenWrt 25.12+ cannot install legacy .ipk (ar archive) packages.
-	tollgatePkgAPKURL = "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.apk"
+	tollgatePkgAPKURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.apk"
 )
 
 // deploySteps returns the ordered deployment step definitions.
@@ -257,18 +263,36 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(6, "running", "")
 	pkgMgr := strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
 
-	// Select appropriate package URL based on package manager
-	// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages
-	var selectedPkgURL string
-	var pkgExtension string
-	if pkgMgr == "apk" {
-		selectedPkgURL = tollgatePkgAPKURL
-		pkgExtension = ".apk"
-		job.addLog("OpenWrt 25+ detected with APK package manager")
+	// Auto-detect the router's CPU architecture and select the matching
+	// tollgate-wrt asset per-arch. Previously the download URL was hardcoded
+	// to aarch64_cortex-a53 — on any other router the wrong-arch binary simply
+	// won't execute, which is the exact silent failure this removes.
+	routerArch := detectArch(client)
+	job.addLog("Detected router CPU arch: " + routerArch)
+	if routerArch == "" {
+		// FAIL LOUDLY on an undetectable arch. Never silently default to
+		// aarch64_cortex-a53 — that is the bug being fixed.
+		job.addLog("Could not determine router CPU architecture")
+		jobFail(job, 6,
+			"Could not determine router CPU architecture",
+			"Could not determine router CPU architecture")
+		return
+	}
+
+	// Select appropriate package URL based on package manager + arch.
+	// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages.
+	selectedPkgURL, pkgExtension, ok := selectPkgURL(routerArch, pkgMgr)
+	if !ok {
+		// Unknown arch OR this arch has no published asset in this format —
+		// fail, never substitute aarch64.
+		jobFail(job, 6, "Unsupported CPU arch "+routerArch,
+			"Unsupported CPU arch "+routerArch)
+		return
+	}
+	if pkgExtension == ".apk" {
+		job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
 	} else {
-		selectedPkgURL = tollgatePkgURL
-		pkgExtension = ".ipk"
-		job.addLog("OpenWrt <=24.x detected with OPKG package manager")
+		job.addLog("OpenWrt <=24.x detected with OPKG package manager (arch " + routerArch + ")")
 	}
 
 	// MT3000-class routers have no RTC — after a cold boot the clock is far
@@ -335,7 +359,7 @@ func runDeployment(job *Job, req deployRequest) {
 				// Download nodogsplash + jq .ipk from OpenWrt package repo
 				// on laptop, push to router, install. nodogsplash is in the
 				// routing/ subdirectory, jq is in packages/.
-				baseURL := "https://downloads.openwrt.org/releases/24.10.4/packages/aarch64_cortex-a53/"
+				baseURL := "https://downloads.openwrt.org/releases/24.10.4/packages/" + routerArch + "/"
 				routingURL := baseURL + "routing/"
 				packagesURL := baseURL + "packages/"
 				ndsListHTML := string(httpGetFileOrEmpty(routingURL))

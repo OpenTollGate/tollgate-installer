@@ -51,9 +51,9 @@ var forbiddenDeployIdentifiers = []string{
 }
 
 // wantTollgatePkgURL is the exact release asset pinned by the wizard.
-// The v0.5.0 release of OpenTollGate/tollgate-module-basic-go ships the
-// tollgate-wrt package for the aarch64_cortex-a53 target.
-const wantTollgatePkgURL = "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.ipk"
+// The v0.6.0-alpha1 release of FreedomTechFeed/packages ships the
+// tollgate-wrt package for the aarch64_cortex-a53 target (feed-primary).
+const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk"
 
 // TestTollgatePkgURLPinsExistingAsset pins the package download URL to the
 // exact asset that exists on the v0.6.1-post-merge release. Any intentional
