@@ -164,6 +164,38 @@ The tollgate-wrt `.ipk`/`.apk` ships the captive portal
 nftables enforcement rules — the wizard only installs the package and points
 nodogsplash/uhttpd at it.
 
+### Which `tollgate-wrt` package gets installed
+
+Step 5 downloads the **feed-built** package from
+`FreedomTechFeed/packages`, so a wizard run is also an end-to-end test of the
+feed's package build:
+
+| | |
+|---|---|
+| Selected release tag | `v0.6.0-alpha2-pre` (the main-tip pre-release) |
+| Package version | `0.6.0_alpha2_pre` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre-r1` |
+| Source commit | `089e876` of `tollgate-module-basic-go` |
+| Asset name | `tollgate-wrt_0.6.0_alpha2_pre_<arch>.{ipk,apk}` for 7 arches |
+
+The installed binary reports `v0.6.0-alpha2-g089e876` — the version string plus
+the **source commit**. That string is not the package version, on purpose: the
+commit identifies the build, the version string only identifies the release
+line. The wizard reads the installed build back off the router and logs it
+(`Installed tollgate-wrt build: …`).
+
+To install a different published release tag — a newer pre-release, or an older
+tag to reproduce an old build — set the override before launching the wizard:
+
+```sh
+TOLLGATE_FEED_RELEASE_TAG=v0.6.0-alpha1 ./tollgate-installer
+```
+
+An empty or malformed value is ignored in favour of the default. If the feed
+does not publish the selected tag, the wizard falls back to the pinned
+`v0.5.0` GitHub release asset (aarch64 only) and the deploy log names which
+source was used. `go test ./...` fails if the selected tag does not exist on the
+feed. See [docs/package-provenance.md](docs/package-provenance.md).
+
 ### Pre-download (staging) + on-disk re-deploy cache
 
 The wizard has an optional **PreStage** phase (checkbox in the deploy UI —

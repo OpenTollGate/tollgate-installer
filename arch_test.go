@@ -75,18 +75,35 @@ func TestSelectPkgURL(t *testing.T) {
 
 // TestFeedAssetURL verifies the generic feed URL builder produces the exact
 // deterministic URL for a canonical tuple, and that it is generic — the tuple
-// is interpolated, not looked up.
+// is interpolated, not looked up. Every tuple × format the pinned feed release
+// publishes is pinned here as a literal, so a change to the tag, the version
+// spelling, or the name layout is caught offline (no network) and named.
 func TestFeedAssetURL(t *testing.T) {
-	cases := map[string]struct{ ext, want string }{
-		"aarch64_cortex-a53": {".ipk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk"},
-		"mipsel_24kc":        {".ipk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_mipsel_24kc.ipk"},
-		"x86_64":             {".apk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_x86_64.apk"},
-		"arm_cortex-a7":      {".ipk", "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_arm_cortex-a7.ipk"},
+	const prefix = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre/tollgate-wrt_0.6.0_alpha2_pre_"
+	cases := []struct{ arch, ext, want string }{
+		{"aarch64_cortex-a53", ".ipk", prefix + "aarch64_cortex-a53.ipk"},
+		{"aarch64_cortex-a53", ".apk", prefix + "aarch64_cortex-a53.apk"},
+		{"aarch64_cortex-a72", ".ipk", prefix + "aarch64_cortex-a72.ipk"},
+		{"aarch64_cortex-a72", ".apk", prefix + "aarch64_cortex-a72.apk"},
+		{"arm_cortex-a7", ".ipk", prefix + "arm_cortex-a7.ipk"},
+		{"arm_cortex-a7", ".apk", prefix + "arm_cortex-a7.apk"},
+		{"mips64_octeonplus", ".ipk", prefix + "mips64_octeonplus.ipk"},
+		{"mips64_octeonplus", ".apk", prefix + "mips64_octeonplus.apk"},
+		{"mipsel_24kc", ".ipk", prefix + "mipsel_24kc.ipk"},
+		{"mipsel_24kc", ".apk", prefix + "mipsel_24kc.apk"},
+		{"mips_24kc", ".ipk", prefix + "mips_24kc.ipk"},
+		{"mips_24kc", ".apk", prefix + "mips_24kc.apk"},
+		{"x86_64", ".ipk", prefix + "x86_64.ipk"},
+		{"x86_64", ".apk", prefix + "x86_64.apk"},
 	}
-	for arch, tc := range cases {
-		if got := feedAssetURL(arch, tc.ext); got != tc.want {
-			t.Errorf("feedAssetURL(%q, %q) = %q, want %q", arch, tc.ext, got, tc.want)
+	for _, tc := range cases {
+		if got := feedAssetURL(tc.arch, tc.ext); got != tc.want {
+			t.Errorf("feedAssetURL(%q, %q) = %q, want %q", tc.arch, tc.ext, got, tc.want)
 		}
+	}
+	if len(cases) != len(feedReleasePublishedArches)*2 {
+		t.Errorf("this table pins %d names but the published release matrix is %d arches × 2 formats",
+			len(cases), len(feedReleasePublishedArches))
 	}
 }
 
@@ -376,8 +393,9 @@ func TestArchAssetsAreLive(t *testing.T) {
 		}
 	}
 
-	// Feed URLs for every canonical tuple the feed publishes (both formats).
-	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64"} {
+	// Feed URLs for every canonical tuple the pinned release publishes (both
+	// formats) — the test fixture matrix, not a runtime allowlist.
+	for _, arch := range feedReleasePublishedArches {
 		for name, ext := range map[string]string{"IPK": ".ipk", "APK": ".apk"} {
 			url := feedAssetURL(arch, ext)
 			t.Run("feed_"+arch+"_"+name, func(t *testing.T) {

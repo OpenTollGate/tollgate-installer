@@ -33,7 +33,7 @@ The install step records the candidate URL **only once the bytes are confirmed
 on the router**, then logs:
 
 ```
-tollgate-wrt source: FreedomTechFeed/packages release — https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.apk
+tollgate-wrt source: FreedomTechFeed/packages release — https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre/tollgate-wrt_0.6.0_alpha2_pre_aarch64_cortex-a53.apk
 ```
 
 If neither candidate supplies the package the log says so explicitly
@@ -57,9 +57,14 @@ a version wins) and reports it in the log and in the install step's detail:
 Result, e.g.:
 
 ```
-Installed tollgate-wrt build: 0.6.0-alpha1 (commit 089e876fedcb)
-step install → "tollgate-wrt 0.6.0-alpha1 (commit 089e876fedcb) installed via apk from FreedomTechFeed/packages release"
+Installed tollgate-wrt build: v0.6.0-alpha2-g089e876 (commit 089e876)
+step install → "tollgate-wrt v0.6.0-alpha2-g089e876 (commit 089e876) installed via apk from FreedomTechFeed/packages release"
 ```
+
+On the current main-tip package the CLI rung reports the version string with the
+**source commit appended** (`v0.6.0-alpha2-g089e876`) while the package-metadata
+rungs report the apk version (`0.6.0_alpha2_pre-r1`) — see "Version string vs
+source commit" below.
 
 Every rung is optional: an older backend (v0.5.0) or an image whose CLI is not
 on `PATH` yields `unknown`, which is logged (never treated as an error). The
@@ -68,18 +73,76 @@ rather than reported as a build identity.
 
 ### Feed URL hardening
 
-`pkgCandidateURLs` now returns **no candidates** for an arch that is not a
+`pkgCandidateURLs` returns **no candidates** for an arch that is not a
 plausible OpenWrt tuple (empty, whitespace-padded, containing spaces or
 slashes). Previously an empty arch produced a malformed
-`.../tollgate-wrt_0.6.0_alpha1_.ipk` URL — a 404 that hid the real fault (arch
+`.../tollgate-wrt_0.6.0_alpha2_pre_.ipk` URL — a 404 that hid the real fault (arch
 detection failed). The caller treats an empty candidate list as a hard failure
 and never substitutes another arch's asset.
 
-The feed release tag and package version are now named constants
-(`feedReleaseTag` = `v0.6.0-alpha1`, `feedPkgVersion` = `0.6.0_alpha1`) so
-`TestFeedAssetURLShapeMatchesPinnedRelease` can assert the two spellings stay in
-sync — the feed's Makefile keeps `PKG_SOURCE_VERSION` (hyphen, tags the release)
-and `PKG_VERSION` (underscore, apk-legal, names the asset) as the same version.
+The **package version is derived from the release tag**, never written out
+separately (see "Selected feed release" below), so the two spellings the feed's
+Makefile keeps — `PKG_SOURCE_VERSION` (hyphen, tags the release) and
+`PKG_VERSION` (underscore, apk-legal, names the asset) — cannot drift.
+
+## Selected feed release (current pin)
+
+| | |
+|---|---|
+| Feed repo | `FreedomTechFeed/packages` (`net/tollgate-wrt/Makefile`) |
+| Selected tag | **`v0.6.0-alpha2-pre`** — the main-tip pre-release |
+| Package version | **`0.6.0_alpha2_pre`** (tag with the leading `v` dropped and `-` → `_`), installed as `0.6.0_alpha2_pre-r1` |
+| Source commit | **`089e876`** of `tollgate-module-basic-go` (the feed build is SHA-pinned to it) |
+| Assets | 7 arches × {`.ipk`, `.apk`} = 14: `aarch64_cortex-a53`, `aarch64_cortex-a72`, `arm_cortex-a7`, `mips64_octeonplus`, `mipsel_24kc`, `mips_24kc`, `x86_64` |
+| Naming | `tollgate-wrt_0.6.0_alpha2_pre_<arch>.<ext>` |
+
+There is exactly **one** version literal in the code —
+`feedReleaseTagDefault = "v0.6.0-alpha2-pre"` — and one conversion rule,
+`feedPkgVersionForTag` (strip the leading `v`, `-` → `_`). `feedAssetURL` builds
+every URL as
+`<feed repo release download>/<effective tag>/tollgate-wrt_<derived version>_<arch><ext>`,
+so bumping the tag moves the URL, the asset name and the version together.
+
+### Overriding the tag
+
+Pre-releases (and rollbacks) can be exercised without rebuilding the wizard:
+
+```
+TOLLGATE_FEED_RELEASE_TAG=v0.6.0-alpha1 ./tollgate-installer
+```
+
+The override is honoured only when it is a plausible tag (no spaces, no
+slashes, no leading dot); anything else falls back to the default, so a typo
+can never turn into a malformed download URL for every arch. It is read once at
+startup, so set it before launching the wizard.
+
+### What happens when the pin goes stale
+
+`TestPinnedFeedReleaseTagExists` queries
+`api.github.com/repos/FreedomTechFeed/packages/releases/tags/<selected tag>` and
+**fails** on HTTP 404, because a stale pin means every arch downloads a 404.
+`TestFeedReleasePublishesEachDerivedAssetName` goes further: it fetches the
+release's own asset list and asserts every name the code derives exists, and
+that no `tollgate-wrt_` asset exists that the code cannot derive. Both tests are
+skipped in `-short` mode, and are skipped (never silently passed) if the
+anonymous GitHub API rate-limits the request.
+
+### Version string vs source commit
+
+Two different strings describe the same build, and neither substitutes for the
+other:
+
+| String | Where it comes from | Value on this release |
+|---|---|---|
+| Package version | The feed's `PKG_VERSION`, the release tag in apk-legal spelling | `0.6.0_alpha2_pre` (installed as `0.6.0_alpha2_pre-r1`) |
+| Binary version string | Compiled into the installed binary | `v0.6.0-alpha2-g089e876` |
+
+The binary's string embeds the **source commit** (`-g089e876`) and does **not**
+equal the tag-derived package version. That is expected: the version string
+identifies the release line, while the **commit identifies the build**. Two
+different main-tip builds can carry the same version string and different
+commits, so the commit — not the version string — is what pins a main-tip
+artifact.
 
 ## Fallback behaviour
 
@@ -103,6 +166,39 @@ architecture's asset.
   publish `tollgate-wrt_0.6.0_alpha1_<arch>.{ipk,apk}`; its `.ipk` control file
   reports `Package: tollgate-wrt`, `Version: 0.6.0_alpha1-r1`, which is what the
   read-back ladder reports.
+- For the **current** pin (`v0.6.0-alpha2-pre`), the release's asset list was
+  queried live and the code's derived names were compared against it — see
+  "Verification of the v0.6.0-alpha2-pre repin" below.
+
+## Verification of the `v0.6.0-alpha2-pre` repin
+
+Verified by this change:
+
+- The release exists and publishes 14 assets: `gh api
+  repos/FreedomTechFeed/packages/releases/tags/v0.6.0-alpha2-pre` returns
+  `tag_name: v0.6.0-alpha2-pre` with 7 arches × {`.ipk`, `.apk`}.
+- `feedAssetURL(arch, ext)` reproduces the release's own asset names
+  byte-for-byte for every arch — the derivation needed **no** change: the tag's
+  hyphens become underscores exactly as the feed's `PKG_VERSION` does. Asserted
+  against the live release by
+  `TestFeedReleasePublishesEachDerivedAssetName`, and pinned offline (all 14
+  names) by `TestFeedAssetURL`.
+- The `x86_64` `.ipk` was downloaded from the release and its payload inspected:
+  `Version: 0.6.0_alpha2_pre-r1` in the control file, and the version string
+  `v0.6.0-alpha2-g089e876` present in the shipped `usr/bin/tollgate-wrt` binary.
+  This is how the two strings in the table above were established; it is a
+  file-level check on one arch, not a router run.
+
+Not verified by this change:
+
+- No install on a physical router: no wizard run downloaded these assets onto a
+  device, and the provenance log lines and read-back output were not observed
+  on a live deploy.
+- `tollgate version --json` was not observed returning a version payload on the
+  downloaded x86_64 CLI on this laptop (that binary needs the router's musl
+  runtime), so the CLI rung's exact output on a router remains unconfirmed; the
+  version string above was read from the binary file itself.
+- The other six arches were verified by asset *listing* only, not by download.
 
 ## What is not verified
 
