@@ -321,19 +321,27 @@ func runDeployment(job *Job, req deployRequest) {
 	var pkgData []byte
 	var pkgFromCache bool
 	var pkgErr error
+	// pkgLaptopURL is the candidate whose bytes the laptop fetched. It is only
+	// promoted to pkgSourceURL once those bytes are CONFIRMED on the router, so
+	// a download/push that never landed is never reported as the package's
+	// source. Provenance is reported from pkgSourceURL only.
+	pkgLaptopURL := ""
 	for _, candURL := range pkgCandidates {
 		pkgData, pkgFromCache, pkgErr = stagedOrLiveBytes(job, "tollgate-wrt "+pkgExtension, candURL)
 		if pkgErr == nil && len(pkgData) > 0 {
+			pkgLaptopURL = candURL
 			break
 		}
 		if pkgErr != nil {
 			job.addLog("Laptop download failed for " + candURL + ": " + truncate(pkgErr.Error(), 80))
 		}
 	}
+	pkgSourceURL := ""
 	if pkgErr == nil && len(pkgData) > 0 {
 		push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
 		if strings.Contains(push, "PUSH_OK") {
 			pkgOnRouter = true
+			pkgSourceURL = pkgLaptopURL
 			if pkgFromCache {
 				job.addLog(fmt.Sprintf("Staged tollgate-wrt %s used from cache (%d KB), pushed to router via SSH", pkgExtension, len(pkgData)/1024))
 			} else {
@@ -357,9 +365,21 @@ func runDeployment(job *Job, req deployRequest) {
 			job.addLog("wget: " + truncate(wgetOut, 120))
 			if strings.Contains(wgetOut, "WGET_OK") {
 				pkgOnRouter = true
+				pkgSourceURL = candURL
 				break
 			}
 		}
+	}
+
+	// PROVENANCE: state which source supplied the package — or that none did.
+	// The point of installing the FEED build is that an installer run also
+	// tests tollgate-module-basic-go + FreedomTechFeed/packages; that is only
+	// provable if the source is reported instead of inferred from a URL in the
+	// log. Never silently substituted: a GitHub-release install says so.
+	if pkgOnRouter {
+		job.addLog("tollgate-wrt source: " + pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL) + " — " + pkgSourceURL)
+	} else {
+		job.addLog("tollgate-wrt source: none — no candidate URL supplied the package (feed and GitHub fallback both failed)")
 	}
 
 	installedOK := false
@@ -445,7 +465,13 @@ func runDeployment(job *Job, req deployRequest) {
 			// NOTE (SW4a): the fw4/nftables enforcement rules (PR #283) ship
 			// inside the package under /etc/nftables.d/{20-nds-enforce,30-backend-firewall}.nft —
 			// no separate overlay download is performed (the old overlay URL 404'd).
-			job.setStep(6, "done", "tollgate-wrt installed via "+pkgMgr)
+			//
+			// Report WHICH build landed: the installed version (and commit when
+			// the backend exposes one) plus the source that supplied it, so
+			// "which build am I running, and did this run exercise the feed?"
+			// is answerable from the deploy log alone.
+			build := reportInstalledBuild(job, client)
+			job.setStep(6, "done", installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL)))
 			installedOK = true
 		}
 	}
@@ -470,7 +496,11 @@ func runDeployment(job *Job, req deployRequest) {
 			jobFail(job, 6, "tollgate-wrt install failed", "Package installation failed — wireless config rolled back")
 			return
 		}
-		job.setStep(6, "done", tollgatePackage+" installed (feed, "+pkgMgr+")")
+		// This path installed from the ROUTER's own configured package feeds —
+		// not the FreedomTechFeed release asset — so the provenance label says
+		// so explicitly rather than reusing "feed" for both meanings.
+		build := reportInstalledBuild(job, client)
+		job.setStep(6, "done", installStepDetail(build, pkgMgr, pkgSourceRouterFeed))
 	}
 
 	// The .ipk now ships gonuts v0.11.1 with all keyset/multimint/existing-wallet

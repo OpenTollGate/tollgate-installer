@@ -146,6 +146,79 @@ func TestArchAssetsMatchDetectedArch(t *testing.T) {
 	}
 }
 
+// TestPkgCandidateURLsRejectUnmappedArch verifies that an arch that cannot be
+// mapped to a canonical OpenWrt tuple yields NO download candidates. Returning
+// a URL built from a bad arch would produce a malformed
+// "..._tollgate-wrt_0.6.0_alpha1_.ipk" URL that 404s and hides the real fault
+// (arch detection failed) — the caller must see an empty list and fail loudly.
+func TestPkgCandidateURLsRejectUnmappedArch(t *testing.T) {
+	for _, arch := range []string{
+		"",                     // nothing detected
+		" ",                    // whitespace only
+		"  aarch64_cortex-a53", // untrimmed — detection must trim, not the URL builder
+		"aarch64_cortex-a53 ",  // trailing space
+		"arm v7",               // inner space
+		"aarch64/cortex",       // path separator
+		"../../etc/passwd",     // traversal-ish
+		"-",                    // punctuation only
+		"aarch64.cortex a53",   // mixed junk
+	} {
+		if got := pkgCandidateURLs(arch, ".ipk"); got != nil {
+			t.Errorf("pkgCandidateURLs(%q, .ipk) = %v, want nil (unmapped arch must yield no candidates)", arch, got)
+		}
+		if got := pkgCandidateURLs(arch, ".apk"); got != nil {
+			t.Errorf("pkgCandidateURLs(%q, .apk) = %v, want nil (unmapped arch must yield no candidates)", arch, got)
+		}
+	}
+}
+
+// TestPkgCandidateURLsAreWellFormed verifies every candidate URL is a
+// well-formed feed/release asset for the EXACT arch requested: the asset name
+// must end with "<arch><ext>", the URL must carry no empty components, and no
+// candidate may point at another architecture's asset. This is the "malformed
+// URL" and "silent arch substitution" guard for the feed source.
+func TestPkgCandidateURLsAreWellFormed(t *testing.T) {
+	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
+		for _, ext := range []string{".ipk", ".apk"} {
+			got := pkgCandidateURLs(arch, ext)
+			if len(got) == 0 {
+				t.Errorf("pkgCandidateURLs(%q, %q) returned no candidates", arch, ext)
+				continue
+			}
+			// The FEED URL is always the first candidate.
+			if got[0] != feedAssetURL(arch, ext) {
+				t.Errorf("pkgCandidateURLs(%q, %q)[0] = %q, want the feed URL %q", arch, ext, got[0], feedAssetURL(arch, ext))
+			}
+			for _, u := range got {
+				if !strings.HasPrefix(u, "https://github.com/") {
+					t.Errorf("%s %s candidate %q is not an https://github.com URL", arch, ext, u)
+				}
+				if !strings.HasSuffix(u, "_"+arch+ext) {
+					t.Errorf("%s %s candidate %q must end with %q (malformed asset name or wrong arch)", arch, ext, u, "_"+arch+ext)
+				}
+				if !strings.Contains(u, "tollgate-wrt_") {
+					t.Errorf("%s %s candidate %q does not name the tollgate-wrt asset", arch, ext, u)
+				}
+				if strings.Contains(u, "__") || strings.ContainsAny(u, " \t") {
+					t.Errorf("%s %s candidate %q contains an empty component or whitespace", arch, ext, u)
+				}
+			}
+		}
+	}
+
+	// No silent substitution: an arch with no GitHub fallback must never be
+	// offered the aarch64 asset as a second chance.
+	for _, arch := range []string{"mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
+		for _, ext := range []string{".ipk", ".apk"} {
+			for _, u := range pkgCandidateURLs(arch, ext) {
+				if strings.Contains(u, "aarch64") {
+					t.Errorf("pkgCandidateURLs(%q, %q) offered an aarch64 asset %q — silent arch substitution", arch, ext, u)
+				}
+			}
+		}
+	}
+}
+
 // TestDetectArchPrecedence drills the precedence ladder of detectArchFrom:
 // DISTRIB_ARCH wins; then opkg print-architecture; then ubus board; then the
 // bare apk --print-arch (normalized); then uname -m (normalized, last resort).

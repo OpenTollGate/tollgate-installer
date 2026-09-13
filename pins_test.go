@@ -77,6 +77,53 @@ func TestTollgatePkgURLPinsExistingAsset(t *testing.T) {
 	}
 }
 
+// TestFeedAssetURLShapeMatchesPinnedRelease pins the SHAPE of the feed asset
+// URL, not just one literal: the release tag and the package version are the
+// same version in two spellings (tag keeps the hyphen, the package version uses
+// underscores because apk-tools 3 rejects hyphens — see the feed's
+// net/tollgate-wrt/Makefile). Bumping one without the other produces a
+// well-formed-looking but wrong asset name that 404s on every deploy, so the
+// relationship is asserted rather than trusted.
+func TestFeedAssetURLShapeMatchesPinnedRelease(t *testing.T) {
+	// The package version must be the release tag, de-hyphenated and without
+	// the leading "v" (PKG_VERSION vs PKG_SOURCE_VERSION in the feed Makefile).
+	wantVersion := strings.ReplaceAll(strings.TrimPrefix(feedReleaseTag, "v"), "-", "_")
+	if feedPkgVersion != wantVersion {
+		t.Errorf("feedPkgVersion = %q, want %q (release tag %q with '-' → '_')", feedPkgVersion, wantVersion, feedReleaseTag)
+	}
+
+	// The URL must be exactly release-prefix + tollgate-wrt_<version>_<arch><ext>.
+	for _, tc := range []struct{ arch, ext string }{
+		{"aarch64_cortex-a53", ".ipk"},
+		{"aarch64_cortex-a53", ".apk"},
+		{"mipsel_24kc", ".ipk"},
+		{"mips_24kc", ".apk"},
+		{"x86_64", ".ipk"},
+	} {
+		got := feedAssetURL(tc.arch, tc.ext)
+		wantName := "tollgate-wrt_" + feedPkgVersion + "_" + tc.arch + tc.ext
+		want := "https://github.com/FreedomTechFeed/packages/releases/download/" + feedReleaseTag + "/" + wantName
+		if got != want {
+			t.Errorf("feedAssetURL(%q, %q) =\n  %q\nwant\n  %q", tc.arch, tc.ext, got, want)
+		}
+		if !strings.HasSuffix(got, "_"+tc.arch+tc.ext) {
+			t.Errorf("feedAssetURL(%q, %q) = %q: asset name must end with %q", tc.arch, tc.ext, got, "_"+tc.arch+tc.ext)
+		}
+		if strings.Contains(got, "__") {
+			t.Errorf("feedAssetURL(%q, %q) = %q: contains an empty URL component", tc.arch, tc.ext, got)
+		}
+	}
+
+	// The release prefix must be derived from the same constants, so the
+	// builder and the pinned tag can never drift apart.
+	if !strings.HasPrefix(feedReleaseURLPrefix, "https://github.com/"+feedRepoSlug+"/releases/download/") {
+		t.Errorf("feedReleaseURLPrefix = %q: must be the feed repo's release download prefix", feedReleaseURLPrefix)
+	}
+	if !strings.HasSuffix(feedReleaseURLPrefix, "/"+feedReleaseTag+"/") {
+		t.Errorf("feedReleaseURLPrefix = %q: must end with the pinned release tag %q", feedReleaseURLPrefix, feedReleaseTag)
+	}
+}
+
 // liveCheckPins is the map of every pinned URL that TestPinnedURLsAreLive
 // exercises with a real HTTP request. TestDeployGoPinRegistry asserts its key
 // set equals expectedPinnedURLConsts, so a pin cannot be registered without
