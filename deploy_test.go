@@ -146,6 +146,17 @@ func TestParseInstalledTollgateBuild(t *testing.T) {
 			want: "0.6.0-alpha1 (commit 089e876)",
 		},
 		{
+			// The main-tip pre-release build: the version string carries the
+			// tag-derived version PLUS "-g" and the source commit
+			// (0.6.0-alpha2 + g089e876), which is the spelling the shipped
+			// v0.6.0-alpha2-pre package's tollgate-wrt binary reports. Note it
+			// does NOT equal the package version 0.6.0_alpha2_pre — the commit
+			// is what identifies the build (see docs/package-provenance.md).
+			name: "cli json main-tip pre-release build",
+			in:   `{"data":{"version":"v0.6.0-alpha2-g089e876","commit":"089e876"}}`,
+			want: "v0.6.0-alpha2-g089e876 (commit 089e876)",
+		},
+		{
 			// A plain `go build` leaves the placeholder commit — the version is
 			// still reported, the placeholder is not passed off as a build id.
 			name: "cli json placeholder commit",
@@ -183,6 +194,15 @@ go_version: go1.22.0`,
 			want: "0.6.0_alpha1-r1",
 		},
 		{
+			// opkg list-installed, the CURRENT feed build (main-tip
+			// pre-release v0.6.0-alpha2-pre): the same PKG_VERSION spelling
+			// with the package revision the published .ipk carries. The tag's
+			// hyphens are underscores here, exactly as in the asset name.
+			name: "opkg list-installed current feed build",
+			in:   "tollgate-wrt - 0.6.0_alpha2_pre-r1",
+			want: "0.6.0_alpha2_pre-r1",
+		},
+		{
 			// opkg list-installed, the pinned GitHub release v0.5.0 (its control
 			// file carries the leading "v").
 			name: "opkg list-installed v0.5.0",
@@ -194,6 +214,11 @@ go_version: go1.22.0`,
 			name: "apk info -v",
 			in:   "tollgate-wrt-0.6.0_alpha1-r1",
 			want: "0.6.0_alpha1-r1",
+		},
+		{
+			name: "apk info -v current feed build",
+			in:   "tollgate-wrt-0.6.0_alpha2_pre-r1",
+			want: "0.6.0_alpha2_pre-r1",
 		},
 		{
 			name: "apk list --installed row",

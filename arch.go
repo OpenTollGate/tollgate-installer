@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -73,31 +74,97 @@ func normalizeBareArch(b string) string {
 // (net/tollgate-wrt/Makefile). Its Makefile keeps TWO version spellings, and
 // the URL/asset name below must match both:
 //
-//	PKG_SOURCE_VERSION := 0.6.0-alpha1   (upstream git tag, hyphen)  → release TAG
-//	PKG_VERSION        := 0.6.0_alpha1   (apk-legal, underscore)     → asset NAME
+//	PKG_SOURCE_VERSION := 0.6.0-alpha2-pre   (upstream git tag, hyphen) → release TAG
+//	PKG_VERSION        := 0.6.0_alpha2_pre   (apk-legal, underscore)    → asset NAME
 //
 // The split is forced by apk-tools 3.x, which rejects hyphens in versions.
-// Keeping the two spellings as named constants (instead of one string literal
-// glued into a URL) lets TestFeedAssetURLShapeMatchesPinnedRelease assert they
-// stay in sync with the pinned release tag.
+// feedPkgVersionForTag DERIVES the second spelling from the first, so the two
+// cannot drift: there is exactly ONE version literal (feedReleaseTagDefault)
+// and one conversion rule. Every asset URL is built from the effective tag,
+// which keeps them in sync by construction rather than by convention.
+//
+// The effective tag is feedReleaseTagDefault unless TOLLGATE_FEED_RELEASE_TAG
+// overrides it (see feedReleaseTagEnv) — the override exists so a pre-release
+// or a rollback can be exercised without rebuilding the wizard.
 const (
 	// feedRepoSlug is the repo whose CI builds and publishes the feed packages.
 	feedRepoSlug = "FreedomTechFeed/packages"
-	// feedReleaseTag is the GitHub release tag carrying the feed-built assets.
-	// It is the upstream PKG_SOURCE_VERSION in hyphenated tag form.
-	feedReleaseTag = "v0.6.0-alpha1"
-	// feedPkgVersion is the same version in PKG_VERSION form (underscores) —
-	// the spelling that appears in asset names and in installed metadata.
-	feedPkgVersion = "0.6.0_alpha1"
-	// feedReleaseURLPrefix is the fixed prefix of every feed asset URL.
-	feedReleaseURLPrefix = "https://github.com/" + feedRepoSlug + "/releases/download/" + feedReleaseTag + "/"
+	// feedReleaseTagDefault is the feed release tag selected by default: the
+	// current main-tip pre-release of tollgate-module-basic-go, whose feed
+	// build is pinned to commit 089e876. It is the upstream
+	// PKG_SOURCE_VERSION in hyphenated tag form.
+	feedReleaseTagDefault = "v0.6.0-alpha2-pre"
+	// feedReleaseTagEnv is the environment variable that overrides
+	// feedReleaseTagDefault. Set it to select another published release tag
+	// (e.g. a newer pre-release, or an older tag to reproduce an old build)
+	// without rebuilding the wizard:
+	//
+	//	TOLLGATE_FEED_RELEASE_TAG=v0.6.0-alpha1 ./tollgate-installer
+	//
+	// An empty or implausible value is ignored in favour of the default, so a
+	// typo cannot turn into a malformed download URL for every arch.
+	feedReleaseTagEnv = "TOLLGATE_FEED_RELEASE_TAG"
 )
+
+// feedReleaseTagRe matches a plausible GitHub release tag (v0.6.0-alpha2-pre,
+// v0.6.0-alpha1, 0.5.0). It is deliberately permissive about WHICH tag — the
+// feed is the authority on what it published, and
+// TestPinnedFeedReleaseTagExists fails if the selected tag does not exist —
+// but strict about the SHAPE, so a typo, a stray space, or a shell fragment
+// can never be interpolated into a download URL.
+var feedReleaseTagRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// feedReleaseTag is the effective release tag: feedReleaseTagDefault, or the
+// TOLLGATE_FEED_RELEASE_TAG override when it is set to a plausible tag. It is
+// resolved once at startup (the PreStage pins in deploy.go are derived from it
+// at init time), so set the override before starting the wizard, not per
+// deploy.
+var feedReleaseTag = resolveFeedReleaseTag(os.Getenv)
+
+// resolveFeedReleaseTag returns the effective feed release tag. Unset, empty,
+// whitespace-only, and implausibly-shaped overrides all fall back to the
+// default: a bad override must never produce a URL that 404s on every arch.
+// Injectable so the precedence is unit-testable without touching real env.
+func resolveFeedReleaseTag(getenv func(string) string) string {
+	if getenv == nil {
+		return feedReleaseTagDefault
+	}
+	if tag := strings.TrimSpace(getenv(feedReleaseTagEnv)); tag != "" && feedReleaseTagRe.MatchString(tag) {
+		return tag
+	}
+	return feedReleaseTagDefault
+}
+
+// feedPkgVersionForTag converts a release tag into the PKG_VERSION spelling the
+// feed uses in asset names and in installed package metadata: the leading "v"
+// is dropped and every hyphen becomes an underscore (apk-tools 3.x rejects
+// hyphens in versions).
+//
+//	v0.6.0-alpha2-pre → 0.6.0_alpha2_pre   (installed as 0.6.0_alpha2_pre-r1)
+//	v0.6.0-alpha1    → 0.6.0_alpha1
+//
+// This is the ONLY place the tag spelling and the package-version spelling are
+// related, so an asset URL can never name a version its tag does not describe.
+func feedPkgVersionForTag(tag string) string {
+	return strings.ReplaceAll(strings.TrimPrefix(strings.TrimSpace(tag), "v"), "-", "_")
+}
+
+// feedPkgVersion is the effective package version: the derived spelling of the
+// effective release tag. It is what appears in asset names on the feed release
+// and in the `Version:` field of the installed package.
+func feedPkgVersion() string { return feedPkgVersionForTag(feedReleaseTag) }
+
+// feedReleaseURLPrefix is the fixed prefix of every feed asset URL, derived
+// from the effective tag (and therefore from the same single literal).
+func feedReleaseURLPrefix() string {
+	return "https://github.com/" + feedRepoSlug + "/releases/download/" + feedReleaseTag + "/"
+}
 
 // feedAssetURL builds the deterministic tollgate-wrt download URL for a
 // canonical OpenWrt arch tuple and file extension. The feed publishes every
 // arch it builds at a stable, predictable URL:
 //
-//	https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_<arch>.<ext>
+//	https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre/tollgate-wrt_0.6.0_alpha2_pre_<arch>.<ext>
 //
 // Because the URL is DERIVED from the tuple rather than looked up in a
 // hardcoded map, ANY arch the feed publishes resolves without a code change —
@@ -108,9 +175,14 @@ const (
 //
 // Callers must pass a real tuple: pkgCandidateURLs refuses an unmapped arch,
 // so this function is never reached with an empty arch (which would otherwise
-// build a malformed "..._tollgate-wrt_0.6.0_alpha1_.ipk" URL).
+// build a malformed "..._tollgate-wrt_0.6.0_alpha2_pre_.ipk" URL).
+//
+// The arch and ext are appended verbatim, which is what the feed's asset names
+// do too (arm_cortex-a7, mipsel_24kc, mips64_octeonplus …). That equality is
+// asserted against the live release by
+// TestFeedReleasePublishesEachDerivedAssetName.
 func feedAssetURL(arch, ext string) string {
-	return feedReleaseURLPrefix + "tollgate-wrt_" + feedPkgVersion + "_" + arch + ext
+	return feedReleaseURLPrefix() + "tollgate-wrt_" + feedPkgVersion() + "_" + arch + ext
 }
 
 // tollgateGithubFallback is the GitHub tollgate-module-basic-go release assets,
@@ -156,7 +228,7 @@ var pkgArchTupleRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // An UNMAPPED arch (empty, whitespace, or anything that is not tuple-shaped)
 // yields NO candidates. Returning a URL built from a bad arch would be worse
 // than returning nothing: it produces a well-formed-looking but wrong
-// "..._tollgate-wrt_0.6.0_alpha1_.ipk" URL that 404s, and it would mask the
+// "..._tollgate-wrt_0.6.0_alpha2_pre_.ipk" URL that 404s, and it would mask the
 // real problem (arch detection failed). The caller treats an empty list as a
 // hard failure and never substitutes another arch's asset.
 func pkgCandidateURLs(arch, ext string) []string {
@@ -356,8 +428,9 @@ var (
 	versionLineRe = regexp.MustCompile(`(?m)^version:[ 	]*(\S+)`)
 	commitLineRe  = regexp.MustCompile(`(?m)^commit:[ 	]*(\S+)`)
 	// installedPkgVersionRe reads package-manager output:
-	//   opkg: "tollgate-wrt - 0.6.0_alpha1-r1"  (or "tollgate-wrt - v0.5.0")
-	//   apk : "tollgate-wrt-0.6.0_alpha1-r1"
+	//   opkg: "tollgate-wrt - 0.6.0_alpha2_pre-r1"  (or "tollgate-wrt - v0.5.0"
+	//         for the legacy GitHub-release asset)
+	//   apk : "tollgate-wrt-0.6.0_alpha2_pre-r1"
 	installedPkgVersionRe = regexp.MustCompile(`(?m)tollgate-wrt[ 	]*-[ 	]*(v?[0-9][A-Za-z0-9._~+-]*)`)
 	// installedPkgStatusRe reads an opkg control/status block.
 	installedPkgStatusRe = regexp.MustCompile(`(?m)^Package:[ 	]*tollgate-wrt[ 	]*\r?\nVersion:[ 	]*(\S+)`)
@@ -377,8 +450,9 @@ var tollgateBuildProbes = []string{
 
 // identifyInstalledTollgateBuild is the pure core of the readback: it walks the
 // ladder with the injected command runner and returns a short identification
-// ("0.6.0-alpha1 (commit 089e876)" from the CLI, or "0.6.0_alpha1-r1" from
-// package metadata), or "" when no rung yields a version. Testable without SSH.
+// ("v0.6.0-alpha2-g089e876 (commit 089e876)" from the CLI on the current
+// main-tip build, or "0.6.0_alpha2_pre-r1" from package metadata), or "" when
+// no rung yields a version. Testable without SSH.
 func identifyInstalledTollgateBuild(get func(cmd string) string) string {
 	if get == nil {
 		return ""
