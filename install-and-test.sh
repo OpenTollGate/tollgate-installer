@@ -150,6 +150,7 @@ echo
 echo "=== Verifying router ${ROUTER_IP} post-deploy ==="
 sshpass -p "${ROUTER_PASS}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@"${ROUTER_IP}" '
     echo "--- hostname ---";          cat /proc/sys/kernel/hostname
+    echo "--- tollgate-wrt build ---"; tollgate version 2>/dev/null || opkg list-installed tollgate-wrt 2>/dev/null || apk info -v tollgate-wrt 2>/dev/null || echo "build version unavailable"
     echo "--- ports ---";             netstat -tln 2>/dev/null | grep -E ":80 |:2050|:2121" || true
     echo "--- DNS tollgate.lan ---";  nslookup tollgate.lan 127.0.0.1 2>/dev/null | tail -3 || true
     echo "--- LNURL ---";             jq -r ".public_identities[] | select(.name==\"owner\") | .lightning_address" /etc/tollgate/identities.json 2>/dev/null || true

@@ -67,6 +67,32 @@ func normalizeBareArch(b string) string {
 	return ""
 }
 
+// ─── Feed release identity ──────────────────────────────────────────────
+//
+// The feed-built tollgate-wrt package is published by FreedomTechFeed/packages
+// (net/tollgate-wrt/Makefile). Its Makefile keeps TWO version spellings, and
+// the URL/asset name below must match both:
+//
+//	PKG_SOURCE_VERSION := 0.6.0-alpha1   (upstream git tag, hyphen)  → release TAG
+//	PKG_VERSION        := 0.6.0_alpha1   (apk-legal, underscore)     → asset NAME
+//
+// The split is forced by apk-tools 3.x, which rejects hyphens in versions.
+// Keeping the two spellings as named constants (instead of one string literal
+// glued into a URL) lets TestFeedAssetURLShapeMatchesPinnedRelease assert they
+// stay in sync with the pinned release tag.
+const (
+	// feedRepoSlug is the repo whose CI builds and publishes the feed packages.
+	feedRepoSlug = "FreedomTechFeed/packages"
+	// feedReleaseTag is the GitHub release tag carrying the feed-built assets.
+	// It is the upstream PKG_SOURCE_VERSION in hyphenated tag form.
+	feedReleaseTag = "v0.6.0-alpha1"
+	// feedPkgVersion is the same version in PKG_VERSION form (underscores) —
+	// the spelling that appears in asset names and in installed metadata.
+	feedPkgVersion = "0.6.0_alpha1"
+	// feedReleaseURLPrefix is the fixed prefix of every feed asset URL.
+	feedReleaseURLPrefix = "https://github.com/" + feedRepoSlug + "/releases/download/" + feedReleaseTag + "/"
+)
+
 // feedAssetURL builds the deterministic tollgate-wrt download URL for a
 // canonical OpenWrt arch tuple and file extension. The feed publishes every
 // arch it builds at a stable, predictable URL:
@@ -79,8 +105,12 @@ func normalizeBareArch(b string) string {
 // A detected-but-unpublished arch yields a URL that 404s at download time,
 // which is an honest, actionable failure rather than a hardcoded "unsupported"
 // list that must be maintained as the feed grows.
+//
+// Callers must pass a real tuple: pkgCandidateURLs refuses an unmapped arch,
+// so this function is never reached with an empty arch (which would otherwise
+// build a malformed "..._tollgate-wrt_0.6.0_alpha1_.ipk" URL).
 func feedAssetURL(arch, ext string) string {
-	return "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_" + arch + ext
+	return feedReleaseURLPrefix + "tollgate-wrt_" + feedPkgVersion + "_" + arch + ext
 }
 
 // tollgateGithubFallback is the GitHub tollgate-module-basic-go release assets,
@@ -110,11 +140,29 @@ func githubFallbackURL(arch, ext string) string {
 	return asset.IPK
 }
 
+// pkgArchTupleRe matches a plausible canonical OpenWrt arch tuple: at least one
+// alphanumeric, then letters/digits/underscore/hyphen (e.g. aarch64_cortex-a53,
+// mipsel_24kc, arm_cortex-a7). It is deliberately permissive about WHICH tuple
+// (the feed is the authority on what it publishes) but strict about the SHAPE,
+// so an unmapped, empty, or whitespace/injection-bearing arch can never be
+// interpolated into a download URL.
+var pkgArchTupleRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // pkgCandidateURLs returns the ordered download URLs to try for a canonical
 // arch tuple and package extension: the feed URL (derived generically from the
 // tuple) first, then the GitHub release fallback (aarch64 only) if one exists.
 // The first URL that yields bytes wins.
+//
+// An UNMAPPED arch (empty, whitespace, or anything that is not tuple-shaped)
+// yields NO candidates. Returning a URL built from a bad arch would be worse
+// than returning nothing: it produces a well-formed-looking but wrong
+// "..._tollgate-wrt_0.6.0_alpha1_.ipk" URL that 404s, and it would mask the
+// real problem (arch detection failed). The caller treats an empty list as a
+// hard failure and never substitutes another arch's asset.
 func pkgCandidateURLs(arch, ext string) []string {
+	if !pkgArchTupleRe.MatchString(arch) {
+		return nil
+	}
 	urls := []string{feedAssetURL(arch, ext)}
 	if fb := githubFallbackURL(arch, ext); fb != "" && fb != urls[0] {
 		urls = append(urls, fb)
@@ -235,4 +283,210 @@ func detectArchFrom(get func(cmd string) string) string {
 // arch tuple is threaded in so nodogsplash/jq installs resolve for ANY router.
 func downloadBaseURL(arch string) string {
 	return fmt.Sprintf("https://downloads.openwrt.org/releases/24.10.4/packages/%s/", arch)
+}
+
+// ─── Package provenance: WHICH source supplied the package ──────────────
+//
+// The install step tries the feed URL first and the pinned GitHub release
+// second, and both produce a working install. Without an explicit label an
+// operator cannot tell which one was used — yet the entire reason for
+// preferring the feed build is to exercise tollgate-module-basic-go +
+// FreedomTechFeed/packages on a real router. The labels below are written to
+// the job log (and the install step's detail) so "which source supplied this
+// package?" is answerable afterwards. No silent substitution: a GitHub-release
+// install is reported as exactly that.
+const (
+	// pkgSourceFeedRelease — the feed-published release asset: the primary,
+	// intended source.
+	pkgSourceFeedRelease = "FreedomTechFeed/packages release"
+	// pkgSourceGitHubRelease — the pinned tollgate-module-basic-go GitHub
+	// release asset: the explicit fallback (feed outage / arch not published
+	// by the feed yet).
+	pkgSourceGitHubRelease = "tollgate-module-basic-go GitHub release (fallback)"
+	// pkgSourceRouterFeed — package installed from the ROUTER's own configured
+	// opkg/apk repositories (last-resort path; nothing was pushed over SSH).
+	pkgSourceRouterFeed = "router package feed"
+	// pkgSourceUnrecognised — a URL that is neither candidate. Reported rather
+	// than guessed, so provenance is never asserted wrongly.
+	pkgSourceUnrecognised = "unrecognised source"
+)
+
+// pkgSourceLabel classifies the download URL that actually supplied the
+// tollgate-wrt bytes. url == "" (nothing supplied the package) returns "".
+func pkgSourceLabel(arch, ext, url string) string {
+	if url == "" {
+		return ""
+	}
+	if url == feedAssetURL(arch, ext) {
+		return pkgSourceFeedRelease
+	}
+	if fb := githubFallbackURL(arch, ext); fb != "" && url == fb {
+		return pkgSourceGitHubRelease
+	}
+	return pkgSourceUnrecognised
+}
+
+// ─── Installed build identification ─────────────────────────────────────
+//
+// "Which build am I running?" must be answerable after a deploy: an installer
+// run that exercised the feed build has to be distinguishable from one that
+// silently landed the GitHub-release fallback. After a successful install the
+// wizard reads the version back off the router and reports it.
+//
+// Readback ladder (first command that yields an identifiable version wins):
+//
+//  1. `tollgate version --json` — the installed CLI (src/cli/version.go in
+//     tollgate-module-basic-go) reports {version, commit, build_time,
+//     go_version, openwrt_version}. The commit is what tells two main-tip
+//     builds sharing a version apart.
+//  2. `tollgate version`        — same fields, human-readable multi-line form.
+//  3. `opkg list-installed`     — package metadata (opkg backends, <= 24.x).
+//  4. `apk info -v`             — package metadata (apk-tools, 25.x+).
+//  5. `apk list --installed`    — apk-tools 3 spelling of the same query.
+//  6. `opkg status`             — control-block form, last metadata resort.
+//
+// Every rung is optional: an older backend (v0.5.0) or an image without the CLI
+// on PATH yields "" and the caller reports the version as unknown instead of
+// failing the deploy.
+var (
+	// versionJSONRe / commitJSONRe read the `tollgate version --json` payload.
+	versionJSONRe = regexp.MustCompile(`"version"[ 	]*:[ 	]*"([^"]+)"`)
+	commitJSONRe  = regexp.MustCompile(`"commit"[ 	]*:[ 	]*"([^"]+)"`)
+	// versionLineRe / commitLineRe read the human-readable payload.
+	versionLineRe = regexp.MustCompile(`(?m)^version:[ 	]*(\S+)`)
+	commitLineRe  = regexp.MustCompile(`(?m)^commit:[ 	]*(\S+)`)
+	// installedPkgVersionRe reads package-manager output:
+	//   opkg: "tollgate-wrt - 0.6.0_alpha1-r1"  (or "tollgate-wrt - v0.5.0")
+	//   apk : "tollgate-wrt-0.6.0_alpha1-r1"
+	installedPkgVersionRe = regexp.MustCompile(`(?m)tollgate-wrt[ 	]*-[ 	]*(v?[0-9][A-Za-z0-9._~+-]*)`)
+	// installedPkgStatusRe reads an opkg control/status block.
+	installedPkgStatusRe = regexp.MustCompile(`(?m)^Package:[ 	]*tollgate-wrt[ 	]*\r?\nVersion:[ 	]*(\S+)`)
+)
+
+// tollgateBuildProbes is the readback ladder, in order. `2>/dev/null` keeps a
+// missing command or binary from adding noise on older backends; `; true`
+// keeps the exit status clean so sshRun always returns output we can parse.
+var tollgateBuildProbes = []string{
+	"tollgate version --json 2>/dev/null; true",
+	"tollgate version 2>/dev/null; true",
+	"opkg list-installed tollgate-wrt 2>/dev/null; true",
+	"apk info -v tollgate-wrt 2>/dev/null; true",
+	"apk list --installed tollgate-wrt 2>/dev/null; true",
+	"opkg status tollgate-wrt 2>/dev/null; true",
+}
+
+// identifyInstalledTollgateBuild is the pure core of the readback: it walks the
+// ladder with the injected command runner and returns a short identification
+// ("0.6.0-alpha1 (commit 089e876)" from the CLI, or "0.6.0_alpha1-r1" from
+// package metadata), or "" when no rung yields a version. Testable without SSH.
+func identifyInstalledTollgateBuild(get func(cmd string) string) string {
+	if get == nil {
+		return ""
+	}
+	for _, cmd := range tollgateBuildProbes {
+		out := get(cmd)
+		if out == "" {
+			continue
+		}
+		if id := parseInstalledTollgateBuild(out); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// readInstalledTollgateBuild is the SSH-backed wrapper around
+// identifyInstalledTollgateBuild. Returns "" (never an error) when the build
+// cannot be identified — reporting an unknown build must not break a deploy.
+func readInstalledTollgateBuild(client *ssh.Client) string {
+	if client == nil {
+		return ""
+	}
+	return identifyInstalledTollgateBuild(func(cmd string) string {
+		return sshRun(client, cmd)
+	})
+}
+
+// parseInstalledTollgateBuild extracts a build identification from the output
+// of any readback rung, or "" if the output carries no version. It only reads;
+// it never invents a version.
+func parseInstalledTollgateBuild(out string) string {
+	// 1 + 2. `tollgate version` output (JSON first, then human-readable).
+	if m := versionJSONRe.FindStringSubmatch(out); m != nil {
+		if ver := strings.TrimSpace(m[1]); ver != "" {
+			return withCommit(ver, commitJSONRe.FindStringSubmatch(out))
+		}
+	}
+	if m := versionLineRe.FindStringSubmatch(out); m != nil {
+		if ver := strings.TrimSpace(m[1]); ver != "" {
+			return withCommit(ver, commitLineRe.FindStringSubmatch(out))
+		}
+	}
+	// 3-5. package-metadata output.
+	if m := installedPkgVersionRe.FindStringSubmatch(out); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	if m := installedPkgStatusRe.FindStringSubmatch(out); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+// withCommit appends the build commit to a version string when the backend
+// reported one that carries information ("unknown"/"dev"/"" add nothing).
+func withCommit(version string, commitMatch []string) string {
+	if len(commitMatch) < 2 {
+		return version
+	}
+	commit := shortCommit(commitMatch[1])
+	if commit == "" {
+		return version
+	}
+	return version + " (commit " + commit + ")"
+}
+
+// shortCommit normalises a build commit: the module's packaging injects the
+// real hash, while a plain `go build` leaves the "unknown"/"dev" placeholder
+// (src/cli/version.go) — placeholders are dropped rather than reported as a
+// build identity. Long hashes are shortened to 12 chars.
+func shortCommit(c string) string {
+	c = strings.TrimSpace(c)
+	c = strings.TrimSuffix(c, "-dirty")
+	if c == "" || c == "unknown" || c == "dev" || c == "none" {
+		return ""
+	}
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
+}
+
+// reportInstalledBuild reads the installed tollgate-wrt build off the router,
+// writes it to the job log, and returns it ("" when the router cannot report
+// one). Best-effort by design: a backend too old to answer must not fail the
+// deploy, so an unknown build is logged as unknown, never treated as an error.
+func reportInstalledBuild(job *Job, client *ssh.Client) string {
+	build := readInstalledTollgateBuild(client)
+	if build != "" {
+		job.addLog("Installed tollgate-wrt build: " + build)
+	} else {
+		job.addLog("Installed tollgate-wrt build: unknown (router reported no version — older backend, or no package DB)")
+	}
+	return build
+}
+
+// installStepDetail renders the install step's detail line: the identified
+// build when the router reported one, the package manager used, and the source
+// that supplied the package. Pure formatting — the caller passes "" for a
+// build the router could not report and/or an empty source.
+func installStepDetail(build, pkgMgr, source string) string {
+	detail := "tollgate-wrt"
+	if build != "" {
+		detail += " " + build
+	}
+	detail += " installed via " + pkgMgr
+	if source != "" {
+		detail += " from " + source
+	}
+	return detail
 }
