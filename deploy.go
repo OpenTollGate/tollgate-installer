@@ -723,20 +723,25 @@ func runDeployment(job *Job, req deployRequest) {
 	// Step 11: Health check
 	job.setStep(11, "running", "")
 	job.addLog("Running health check...")
-	// Retry health check up to 5 times — a single wget 3.5s after service
-	// restart is too fast: the freshly-installed binary may still be starting,
-	// or an old crashing binary may need time before it fails to bind :2121.
+	// Retry health check for up to ~90s (30 x 3s). A single wget 3.5s after
+	// service restart is too fast, and even a 5x2s (~11s) window is too short
+	// on a FRESH router: tollgate-wrt probes every configured mint and
+	// registers the wallet BEFORE it binds :2121, which routinely takes
+	// 30-60s+ on first boot. This is normal initialization, not a crash —
+	// the old 5x2s window failed a healthy RC deploy on a clean OpenWrt
+	// 24.10.1 GL-MT6000 whose API came up ~35s after start.
 	healthOK := false
 	var healthOut string
-	for attempt := 1; attempt <= 5; attempt++ {
-		time.Sleep(2 * time.Second)
+	const healthAttempts = 30
+	for attempt := 1; attempt <= healthAttempts; attempt++ {
+		time.Sleep(3 * time.Second)
 		healthOut = sshRun(client, "wget -qO- http://127.0.0.1:2121/ 2>/dev/null | head -c 100 || echo 'health check failed'")
 		if strings.Contains(healthOut, "kind") || strings.Contains(healthOut, "metric") || strings.Contains(healthOut, "pubkey") {
 			healthOK = true
 			job.addLog(fmt.Sprintf("Health check passed on attempt %d", attempt))
 			break
 		}
-		job.addLog(fmt.Sprintf("Health check attempt %d failed, retrying...", attempt))
+		job.addLog(fmt.Sprintf("Health check attempt %d/%d failed, retrying...", attempt, healthAttempts))
 	}
 	if healthOK {
 		job.addLog("Health check passed — TollGate API responding")
