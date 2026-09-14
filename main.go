@@ -510,6 +510,12 @@ type deployRequest struct {
 	// struct (guarded by j.mu), NOT here (deployRequest is per-POST and
 	// synchronous).
 	PreStage bool `json:"preStage"`
+	// ForceFlash runs the OpenWrt sysupgrade even when the router is ALREADY
+	// running OpenWrt — the default flash step is skipped in that case. It
+	// moves a running OpenWrt install onto the pinned release in images.go
+	// (e.g. 24.10 -> 25.12) and ALWAYS wipes config (sysupgrade -n), then
+	// continues the normal deploy on a clean system. Explicit opt-in only.
+	ForceFlash bool `json:"forceFlash"`
 }
 
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
