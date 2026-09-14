@@ -217,6 +217,13 @@
         </select>
         <div class="hint">Which Cashu mint the router should prefer for ecash payments. Minibits temporarily removed (DLEQ keyset rotation bug).</div>
       </div>
+      <div class="field">
+        <label class="precheck" for="forceflash" style="margin-bottom:0;">
+          <input type="checkbox" id="forceflash">
+          <span class="precheck-text">Force reflash firmware (ERASES router config; upgrades to the pinned OpenWrt release)</span>
+        </label>
+        <div class="hint">Normally skipped when the router already runs OpenWrt. Enable to run <code>sysupgrade -n</code> onto the pinned release (e.g. 24.10 &rarr; 25.12), then continue the deploy on the clean system.</div>
+      </div>
     </details>
 
     <label class="precheck" for="prestage" id="prestage-field">
@@ -481,6 +488,7 @@ async function startDeploy() {
     margin: parseInt(document.getElementById('margin').value, 10),
     mint: document.getElementById('mint').value,
     preStage: document.getElementById('prestage').checked,
+    forceFlash: document.getElementById('forceflash').checked,
   };
 
   const resp = await fetch('/api/deploy', {

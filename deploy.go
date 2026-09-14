@@ -111,6 +111,11 @@ func runDeployment(job *Job, req deployRequest) {
 	} else {
 		job.addLog("SSH OK. Firmware: " + truncate(fwOut, 100))
 		job.setStep(0, "done", truncate(fwOut, 100))
+		// On OpenWrt the model is NOT read above (that branch is stock-GL
+		// only), yet a forced reflash (req.ForceFlash) still needs it to pick
+		// the image. board_name is "glinet,gl-mt6000"; glModelMap keys are the
+		// bare lowercase model ("gl-mt6000").
+		glModel = glModelFromBoard(sshRun(client, "cat /tmp/sysinfo/board_name 2>/dev/null"))
 	}
 	time.Sleep(500 * time.Millisecond)
 
@@ -133,15 +138,25 @@ func runDeployment(job *Job, req deployRequest) {
 	}
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 2: Flash OpenWrt on stock GL.iNet (skipped if already OpenWrt)
+	// Step 2: Flash OpenWrt on stock GL.iNet — or a forced reflash on an
+	// already-OpenWrt router (skipped when neither applies).
 	job.setStep(2, "running", "")
-	if isStockGL {
-		job.addLog("Flashing OpenWrt on GL.iNet " + glModel + "...")
+	if isStockGL || req.ForceFlash {
+		if glModel == "" {
+			jobFail(job, 2, "Cannot determine GL.iNet model", "Force-flash requested but the router's GL.iNet board could not be determined (no /etc/gl-inet-release and no glinet board_name). Refusing to guess an image — flash manually.")
+			return
+		}
 
 		img, ok := glModelMap[glModel]
 		if !ok {
 			jobFail(job, 2, "Unknown GL.iNet model: "+glModel, "Unknown GL.iNet model "+glModel+". Please update the model table in images.go or flash manually.")
 			return
+		}
+
+		if isStockGL {
+			job.addLog("Flashing OpenWrt on GL.iNet " + glModel + "...")
+		} else {
+			job.addLog(fmt.Sprintf("Force-flash requested: reflashing %s to OpenWrt %s (sysupgrade -n — config WIPED)", glModel, img.Version))
 		}
 
 		// Obtain the image on the laptop (not the router — limited storage).
@@ -212,7 +227,7 @@ func runDeployment(job *Job, req deployRequest) {
 		client.Close()
 		client = newClient
 		job.addLog("Reconnected to router at " + newIP)
-		job.setStep(2, "done", "OpenWrt flashed on "+glModel)
+		job.setStep(2, "done", "OpenWrt "+img.Version+" flashed on "+glModel)
 	} else {
 		job.setStep(2, "done", "skipped (already OpenWrt)")
 	}
@@ -834,6 +849,25 @@ func reconnectSSH(ip, password string, attempts int, delay time.Duration) *ssh.C
 		}
 	}
 	return nil
+}
+
+// glModelFromBoard normalizes an OpenWrt board_name into a glModelMap key.
+// OpenWrt reports GL.iNet boards as "vendor,model" (e.g. "glinet,gl-mt6000"),
+// while glModelMap is keyed by the bare lowercase model ("gl-mt6000"). Returns
+// "" for an empty or non-GL.iNet board so callers never guess an image.
+func glModelFromBoard(board string) string {
+	board = strings.ToLower(strings.TrimSpace(board))
+	if board == "" {
+		return ""
+	}
+	// Take the model segment after the vendor comma (glinet,gl-mt6000 → gl-mt6000).
+	if i := strings.LastIndex(board, ","); i >= 0 {
+		board = strings.TrimSpace(board[i+1:])
+	}
+	if !strings.HasPrefix(board, "gl-") {
+		return ""
+	}
+	return board
 }
 
 // waitForRouterAfterFlash polls for the router to come back after sysupgrade.
