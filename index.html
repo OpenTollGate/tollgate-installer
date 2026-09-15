@@ -192,11 +192,9 @@
       </div>
       <div class="field">
         <label>Upstream WiFi password</label>
-        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password" oninput="onWifiPassChange()">
-        <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.5rem;">
-          <button type="button" class="btn btn-secondary" id="wifi-test-btn" onclick="testUpstreamWifi()" style="width:auto; padding:8px 12px; margin-top:0;">Test WiFi connection</button>
-          <span class="hint" id="wifi-test-status"></span>
-        </div>
+        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password"
+               oninput="onWifiPassChange()" onchange="onWifiPassChange()">
+        <div class="hint" id="wifi-test-status" style="margin-top:0.5rem;"></div>
       </div>
     </div>
     <div class="field">
@@ -236,10 +234,7 @@
       </div>
     </details>
 
-    <label class="precheck" for="prestage" id="prestage-field">
-      <input type="checkbox" id="prestage">
-      <span class="precheck-text">Pre-download required packages before deploy (needed if the laptop's only internet is via the router being flashed)</span>
-    </label>
+    <div class="hint" style="margin:0 0 .3rem 0;">Packages are pre-downloaded automatically as soon as a router is selected — no action needed.</div>
     <div class="hint" id="prestage-status" style="margin:0 0 1rem 0;"></div>
 
     <button class="btn" id="deploy-btn" onclick="startDeploy()" disabled>Deploy TollGate</button>
@@ -289,12 +284,6 @@ function selectMode(mode) {
   document.getElementById('mode-wan').classList.toggle('selected', mode === 'wan');
   document.getElementById('mode-sta').classList.toggle('selected', mode === 'sta');
   document.getElementById('sta-fields').classList.toggle('hidden', mode !== 'sta');
-  // Pre-download default: in STA (WiFi repeater) mode the laptop is a WLAN
-  // client whose only internet may be the router being flashed/reconfigured,
-  // so it can lose connectivity mid-deploy — pre-download by default. WAN
-  // (Ethernet) mode keeps the laptop's own uplink, so default off. The
-  // operator can still override the checkbox either way.
-  document.getElementById('prestage').checked = (mode === 'sta');
   if (mode === 'sta' && !wifiScanned) {
     wifiScan();
   }
@@ -415,6 +404,14 @@ function onSsidChange() {
   checkReady();
 }
 
+// selectedSSIDBand returns the scan-derived band ("2.4"/"5"/"6") of the
+// currently selected SSID, so the STA is configured on the matching radio.
+function selectedSSIDBand() {
+  const sel = document.getElementById('ssid');
+  const opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+  return (opt && opt.dataset && opt.dataset.band) ? opt.dataset.band : '';
+}
+
 async function testUpstreamWifi() {
   const ip = document.getElementById('router-select').value;
   const ssid = document.getElementById('ssid').value;
@@ -433,6 +430,7 @@ async function testUpstreamWifi() {
         password: document.getElementById('password').value,
         ssid: ssid,
         wifiPass: wifiPass,
+        band: selectedSSIDBand(),
       }),
     });
     const data = await resp.json();
@@ -524,8 +522,11 @@ async function wifiScan() {
       const opt = document.createElement('option');
       opt.value = s.name;
       const enc = s.encryption || 'unknown';
-      opt.textContent = s.name + (enc && enc !== 'none' ? '  (' + enc + ')' : '  (open)');
+      const band = s.band ? s.band + ' GHz' : '';
+      const meta = [enc && enc !== 'none' ? enc : 'open', band].filter(Boolean).join(' \u00b7 ');
+      opt.textContent = s.name + (meta ? '  (' + meta + ')' : '');
       opt.dataset.encryption = enc;
+      opt.dataset.band = s.band || '';
       ssidSelect.appendChild(opt);
     });
 
@@ -535,14 +536,18 @@ async function wifiScan() {
     ssidSelect.onchange = function() {
       const sel = ssidSelect.options[ssidSelect.selectedIndex];
       const enc = sel ? sel.dataset.encryption : '';
+      const band = sel ? sel.dataset.band : '';
+      const bandTxt = band ? ' \u00b7 ' + band + ' GHz' : '';
       if (enc && enc !== 'unknown' && enc !== 'none') {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Encryption: ' + enc;
+        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Encryption: ' + enc + bandTxt;
       } else if (enc === 'none') {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Open network (no password needed)';
+        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Open network (no password needed)' + bandTxt;
       } else {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value;
+        ssidHint.textContent = 'Selected: ' + ssidSelect.value + bandTxt;
       }
-      checkReady();
+      // Selecting a network re-runs the proactive WiFi check (which is also
+      // debounced on password typing).
+      onSsidChange();
     };
   } catch (e) {
     ssidSelect.innerHTML = '<option value="">Scan failed</option>';
@@ -695,11 +700,12 @@ async function startDeploy() {
     mode: upstreamMode,
     ssid: document.getElementById('ssid').value,
     wifiPass: document.getElementById('wifi-pass').value,
+    band: selectedSSIDBand(),
     lnurl: lnurl,
     devSplit: parseInt(document.getElementById('devsplit').value, 10),
     margin: parseInt(document.getElementById('margin').value, 10),
     mint: document.getElementById('mint').value,
-    preStage: document.getElementById('prestage').checked,
+    preStage: true,
     forceFlash: document.getElementById('forceflash').checked,
     prestageJobId: prestageJobId,
   };

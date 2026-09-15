@@ -224,7 +224,57 @@ type wifiScanRequest struct {
 type wifiSSID struct {
 	Name       string `json:"name"`
 	Encryption string `json:"encryption"`
-	Signal     int    `json:"signal"` // dBm, e.g. -45 (0 if unknown)
+	Signal     int    `json:"signal"`         // dBm, e.g. -45 (0 if unknown)
+	Band       string `json:"band,omitempty"` // "2.4", "5", "6" (empty = unknown)
+}
+
+// bandFromGHz extracts the band from an iwinfo "Channel: 36 (5 GHz)" style
+// fragment: "2.4", "5", "6", or "" when no band token is present.
+func bandFromGHz(s string) string {
+	i := strings.Index(s, "GHz")
+	if i < 0 {
+		return ""
+	}
+	j := i - 1
+	for j >= 0 && s[j] == ' ' {
+		j--
+	}
+	end := j + 1
+	for j >= 0 && (s[j] == '.' || (s[j] >= '0' && s[j] <= '9')) {
+		j--
+	}
+	switch strings.TrimSpace(s[j+1 : end]) {
+	case "2.4":
+		return "2.4"
+	case "5":
+		return "5"
+	case "6":
+		return "6"
+	}
+	return ""
+}
+
+// bandFromFreq maps an 802.11 centre frequency (MHz) to a band label.
+func bandFromFreq(freq int) string {
+	switch {
+	case freq >= 2400 && freq < 2500:
+		return "2.4"
+	case freq >= 4900 && freq < 5925:
+		return "5"
+	case freq >= 5925 && freq <= 7125:
+		return "6"
+	}
+	return ""
+}
+
+// normalizeBand returns b only if it is exactly one of "2.4", "5", "6" — used
+// before interpolating a band into the STA shell script.
+func normalizeBand(b string) string {
+	switch strings.TrimSpace(b) {
+	case "2.4", "5", "6":
+		return strings.TrimSpace(b)
+	}
+	return ""
 }
 
 // parseIwinfoScan parses `iwinfo scan` output and returns deduplicated SSIDs
@@ -239,16 +289,17 @@ type wifiSSID struct {
 func parseIwinfoScan(output string) []wifiSSID {
 	seen := map[string]bool{}
 	ssids := []wifiSSID{}
-	var currentName, currentEnc string
+	var currentName, currentEnc, currentBand string
 	var currentSignal int
 
 	flush := func() {
 		if currentName != "" && !seen[currentName] {
 			seen[currentName] = true
-			ssids = append(ssids, wifiSSID{Name: currentName, Encryption: currentEnc, Signal: currentSignal})
+			ssids = append(ssids, wifiSSID{Name: currentName, Encryption: currentEnc, Signal: currentSignal, Band: currentBand})
 		}
 		currentName = ""
 		currentEnc = ""
+		currentBand = ""
 		currentSignal = 0
 	}
 
@@ -291,6 +342,12 @@ func parseIwinfoScan(output string) []wifiSSID {
 			currentEnc = val
 			continue
 		}
+
+		// Band: iwinfo prints "Channel: 36 (5 GHz)" (or "Channel: 6 (2.4 GHz)").
+		if b := bandFromGHz(trimmed); b != "" {
+			currentBand = b
+			continue
+		}
 	}
 	flush()
 
@@ -314,16 +371,26 @@ func parseIwinfoScan(output string) []wifiSSID {
 func parseIwScan(output string) []wifiSSID {
 	seen := map[string]bool{}
 	ssids := []wifiSSID{}
-	var currentName string
+	var currentName, currentBand string
 
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "BSS ") {
 			if currentName != "" && !seen[currentName] {
 				seen[currentName] = true
-				ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown"})
+				ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown", Band: currentBand})
 			}
 			currentName = ""
+			currentBand = ""
+			continue
+		}
+		if strings.HasPrefix(line, "freq:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if f, err := strconv.Atoi(fields[1]); err == nil {
+					currentBand = bandFromFreq(f)
+				}
+			}
 			continue
 		}
 		if strings.HasPrefix(line, "SSID:") {
@@ -335,7 +402,7 @@ func parseIwScan(output string) []wifiSSID {
 	}
 	if currentName != "" && !seen[currentName] {
 		seen[currentName] = true
-		ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown"})
+		ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown", Band: currentBand})
 	}
 	return ssids
 }
@@ -597,6 +664,9 @@ type wifiTestRequest struct {
 	Password string `json:"password"`
 	SSID     string `json:"ssid"`
 	WifiPass string `json:"wifiPass"`
+	// Band is the scan-derived band of the selected SSID ("2.4"/"5"/"6"), so
+	// the STA is configured on the radio that can actually see it.
+	Band string `json:"band"`
 }
 
 // handleWifiTest proactively verifies the upstream WiFi (SSID + password)
@@ -618,7 +688,7 @@ func handleWifiTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "ip and ssid are required")
 		return
 	}
-	ok, msg := testSTAConfig(req.IP, req.Password, req.SSID, req.WifiPass)
+	ok, msg := testSTAConfig(req.IP, req.Password, req.SSID, req.WifiPass, req.Band)
 	w.Header().Set("Content-Type", "application/json")
 	if !ok {
 		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": msg})
@@ -633,6 +703,7 @@ type deployRequest struct {
 	Mode     string `json:"mode"`     // wan | sta
 	SSID     string `json:"ssid"`     // for sta mode
 	WifiPass string `json:"wifiPass"` // for sta mode
+	Band     string `json:"band"`     // sta mode: scan-derived band of SSID ("2.4"/"5"/"6")
 	LNURL    string `json:"lnurl"`    // Lightning address or raw LNURL
 	DevSplit *int   `json:"devSplit"` // advanced: % to dev fund (0-50); nil => defaultDevSplit
 	Margin   *int   `json:"margin"`   // advanced: operator markup % (0-100); nil => defaultMargin

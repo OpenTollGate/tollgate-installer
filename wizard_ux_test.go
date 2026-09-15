@@ -176,3 +176,69 @@ func TestPrestageJobIDRoundTrip(t *testing.T) {
 		t.Errorf("PrestageJobID = %q, want abc", back.PrestageJobID)
 	}
 }
+
+func TestBandParsers(t *testing.T) {
+	if got := bandFromGHz("Mode: Master  Channel: 36 (5 GHz)"); got != "5" {
+		t.Errorf("bandFromGHz 5 = %q", got)
+	}
+	if got := bandFromGHz("Channel: 6 (2.4 GHz)"); got != "2.4" {
+		t.Errorf("bandFromGHz 2.4 = %q", got)
+	}
+	if got := bandFromGHz("Channel: 5 (6 GHz)"); got != "6" {
+		t.Errorf("bandFromGHz 6 = %q", got)
+	}
+	if got := bandFromGHz("no band here"); got != "" {
+		t.Errorf("bandFromGHz none = %q, want empty", got)
+	}
+	for freq, want := range map[int]string{2412: "2.4", 5180: "5", 5955: "6", 0: ""} {
+		if got := bandFromFreq(freq); got != want {
+			t.Errorf("bandFromFreq(%d) = %q, want %q", freq, got, want)
+		}
+	}
+	if got := normalizeBand(" 2.4 "); got != "2.4" {
+		t.Errorf("normalizeBand = %q", got)
+	}
+	if got := normalizeBand(`5"; rm -rf /`); got != "" {
+		t.Errorf("normalizeBand hostile = %q, want empty", got)
+	}
+}
+
+func TestParseIwinfoScanBand(t *testing.T) {
+	out := `wl0-sha0   ESSID: "Home-2G"
+          Mode: Master  Channel: 6 (2.4 GHz)
+          Signal: -45 dBm  Quality: 70/70
+          Encryption: WPA2 PSK (CCMP)
+wl1-sha0   ESSID: "Home-5G"
+          Mode: Master  Channel: 36 (5 GHz)
+          Signal: -60 dBm  Quality: 40/70
+          Encryption: WPA2 PSK (CCMP)`
+	byName := map[string]string{}
+	for _, s := range parseIwinfoScan(out) {
+		byName[s.Name] = s.Band
+	}
+	if byName["Home-2G"] != "2.4" {
+		t.Errorf("Home-2G band = %q, want 2.4", byName["Home-2G"])
+	}
+	if byName["Home-5G"] != "5" {
+		t.Errorf("Home-5G band = %q, want 5", byName["Home-5G"])
+	}
+}
+
+func TestParseIwScanBand(t *testing.T) {
+	out := `BSS aa:bb:cc:dd:ee:01 on wlan0
+	freq: 2412
+	SSID: N2
+BSS aa:bb:cc:dd:ee:02 on wlan1
+	freq: 5180
+	SSID: N5`
+	byName := map[string]string{}
+	for _, s := range parseIwScan(out) {
+		byName[s.Name] = s.Band
+	}
+	if byName["N2"] != "2.4" {
+		t.Errorf("N2 band = %q, want 2.4", byName["N2"])
+	}
+	if byName["N5"] != "5" {
+		t.Errorf("N5 band = %q, want 5", byName["N5"])
+	}
+}
