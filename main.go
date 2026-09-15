@@ -283,6 +283,21 @@ func bandFromFreq(freq int) string {
 	return ""
 }
 
+// bandFromChannel infers a band from an 802.11 channel number, for iwinfo
+// output that prints "Channel: 36" WITHOUT the "(5 GHz)" suffix (common on
+// some builds — this is why a 5 GHz SSID was being configured on the 2.4 GHz
+// radio). Channels 1-14 are 2.4 GHz; 32-177 are 5 GHz. 6 GHz reuses 1-233, so
+// it is only inferred when the "(6 GHz)" token is present (see bandFromGHz).
+func bandFromChannel(ch int) string {
+	switch {
+	case ch >= 1 && ch <= 14:
+		return "2.4"
+	case ch >= 32 && ch <= 177:
+		return "5"
+	}
+	return ""
+}
+
 // normalizeBand returns b only if it is exactly one of "2.4", "5", "6" — used
 // before interpolating a band into the STA shell script.
 func normalizeBand(b string) string {
@@ -359,9 +374,21 @@ func parseIwinfoScan(output string) []wifiSSID {
 			continue
 		}
 
-		// Band: iwinfo prints "Channel: 36 (5 GHz)" (or "Channel: 6 (2.4 GHz)").
+		// Band: iwinfo prints "Channel: 36 (5 GHz)" — or just "Channel: 36"
+		// on some builds, in which case infer from the channel number.
 		if b := bandFromGHz(trimmed); b != "" {
 			currentBand = b
+			continue
+		}
+		if idx := strings.Index(trimmed, "Channel:"); idx >= 0 {
+			fields := strings.Fields(strings.TrimSpace(trimmed[idx+len("Channel:"):]))
+			if len(fields) > 0 {
+				if ch, err := strconv.Atoi(fields[0]); err == nil {
+					if b := bandFromChannel(ch); b != "" {
+						currentBand = b
+					}
+				}
+			}
 			continue
 		}
 	}
