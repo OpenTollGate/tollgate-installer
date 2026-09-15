@@ -242,3 +242,48 @@ BSS aa:bb:cc:dd:ee:02 on wlan1
 		t.Errorf("N5 band = %q, want 5", byName["N5"])
 	}
 }
+
+func TestAdLooksHealthy(t *testing.T) {
+	if !adLooksHealthy(`{"metric":"bytes","step_size":22020096}`) {
+		t.Error("an advertisement with metric must look healthy")
+	}
+	if !adLooksHealthy(`{"kind":10021}`) {
+		t.Error("an advertisement with kind must look healthy")
+	}
+	if adLooksHealthy("") {
+		t.Error("an empty body must NOT look healthy")
+	}
+	if adLooksHealthy("not found") {
+		t.Error("an error body must NOT look healthy")
+	}
+}
+
+func TestHandleStatusExposesProgress(t *testing.T) {
+	job := newPreStageJob("192.168.1.1")
+	job.setProgress(1, 3, "downloading")
+	jobsMutex.Lock()
+	jobs["test-progress"] = job
+	jobsMutex.Unlock()
+	defer func() {
+		jobsMutex.Lock()
+		delete(jobs, "test-progress")
+		jobsMutex.Unlock()
+	}()
+
+	rr := httptest.NewRecorder()
+	handleStatus(rr, httptest.NewRequest(http.MethodGet, "/api/status/test-progress", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", rr.Code)
+	}
+	var body struct {
+		ProgressCurrent int    `json:"progressCurrent"`
+		ProgressTotal   int    `json:"progressTotal"`
+		ProgressLabel   string `json:"progressLabel"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.ProgressCurrent != 1 || body.ProgressTotal != 3 || body.ProgressLabel != "downloading" {
+		t.Errorf("progress = %+v, want {1 3 downloading}", body)
+	}
+}

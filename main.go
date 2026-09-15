@@ -75,6 +75,12 @@ type Job struct {
 	// outlive a single deployRequest), NOT on deployRequest. Not serialized
 	// to JSON (unexported; handleStatus builds an explicit snapshot).
 	stageCache map[string][]byte
+	// progress drives the UI progress bar during a pre-download. current/total
+	// are asset counts (total==0 => indeterminate); label is a short verb.
+	// Guarded by mu; exported via the handleStatus snapshot.
+	progressCurrent int
+	progressTotal   int
+	progressLabel   string
 }
 
 var (
@@ -147,6 +153,16 @@ func (j *Job) stagedAsset(url string) ([]byte, bool) {
 	defer j.mu.Unlock()
 	data, ok := j.stageCache[url]
 	return data, ok
+}
+
+// setProgress records pre-download progress for the UI progress bar. total==0
+// means "indeterminate" (nothing to report yet). Guarded by j.mu.
+func (j *Job) setProgress(current, total int, label string) {
+	j.mu.Lock()
+	j.progressCurrent = current
+	j.progressTotal = total
+	j.progressLabel = label
+	j.mu.Unlock()
 }
 
 // adoptStageCache copies every staged asset from src into dst and returns how
@@ -805,13 +821,17 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Return a snapshot for thread-safe JSON
 	job.mu.Lock()
 	snapshot := struct {
-		IP     string     `json:"ip"`
-		Status string     `json:"status"`
-		Step   int        `json:"step"`
-		Steps  []Step     `json:"steps"`
-		Log    []LogEntry `json:"log"`
-		Error  string     `json:"error,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error}
+		IP              string     `json:"ip"`
+		Status          string     `json:"status"`
+		Step            int        `json:"step"`
+		Steps           []Step     `json:"steps"`
+		Log             []LogEntry `json:"log"`
+		Error           string     `json:"error,omitempty"`
+		ProgressCurrent int        `json:"progressCurrent"`
+		ProgressTotal   int        `json:"progressTotal"`
+		ProgressLabel   string     `json:"progressLabel,omitempty"`
+	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error,
+		job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
