@@ -287,3 +287,31 @@ func TestHandleStatusExposesProgress(t *testing.T) {
 		t.Errorf("progress = %+v, want {1 3 downloading}", body)
 	}
 }
+
+// TestBandFromChannelRegression reproduces the reported bug: iwinfo printed
+// "Channel: 36" WITHOUT a "(5 GHz)" token, so the band came back empty and a
+// 5 GHz SSID was configured on the 2.4 GHz radio (radio0) and never
+// associated. The band must now be inferred from the channel number.
+func TestBandFromChannelRegression(t *testing.T) {
+	if got := bandFromChannel(36); got != "5" {
+		t.Errorf("bandFromChannel(36) = %q, want 5", got)
+	}
+	if got := bandFromChannel(6); got != "2.4" {
+		t.Errorf("bandFromChannel(6) = %q, want 2.4", got)
+	}
+	if got := bandFromChannel(200); got != "" {
+		t.Errorf("bandFromChannel(200) = %q, want empty", got)
+	}
+
+	out := `wl1-sha0   ESSID: "EnterSSID-5GHz"
+          Mode: Master  Channel: 36
+          Signal: -60 dBm  Quality: 40/70
+          Encryption: WPA PSK (CCMP)`
+	got := parseIwinfoScan(out)
+	if len(got) == 0 {
+		t.Fatal("parseIwinfoScan returned no SSIDs")
+	}
+	if got[0].Name != "EnterSSID-5GHz" || got[0].Band != "5" {
+		t.Errorf("parsed %+v, want name EnterSSID-5GHz band 5", got[0])
+	}
+}
