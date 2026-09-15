@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -313,5 +314,48 @@ func TestBandFromChannelRegression(t *testing.T) {
 	}
 	if got[0].Name != "EnterSSID-5GHz" || got[0].Band != "5" {
 		t.Errorf("parsed %+v, want name EnterSSID-5GHz band 5", got[0])
+	}
+}
+
+// TestSubnetsOverlap pins the collision check used to relocate our local
+// subnets away from the upstream. It must use the REAL prefixes (an upstream
+// 10.47.0.0/16 collides with our 10.47.41.0/24 and 10.47.42.0/24) while not
+// flagging unrelated private ranges.
+func TestSubnetsOverlap(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"192.168.1.1/24", "192.168.1.23/24", true},
+		{"192.168.1.1/24", "192.168.2.23/24", false},
+		{"10.47.41.1/24", "10.47.0.1/16", true},  // upstream /16 contains our LAN /24
+		{"10.47.42.1/24", "10.47.41.1/16", true}, // and our private /24
+		{"192.168.1.1/24", "10.0.0.0/8", false},
+		{"", "192.168.1.1/24", false},
+		{"garbage", "192.168.1.1/24", false},
+	}
+	for _, c := range cases {
+		if got := subnetsOverlap(c.a, c.b); got != c.want {
+			t.Errorf("subnetsOverlap(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestRandomPrivateLANIP pins the relocation target: inside 10.0.0.0/8, in
+// 10.x.y.1 form, with no zero octets.
+func TestRandomPrivateLANIP(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		ip := randomPrivateLANIP()
+		v4 := net.ParseIP(ip)
+		if v4 == nil || v4.To4() == nil {
+			t.Fatalf("randomPrivateLANIP returned invalid IP %q", ip)
+		}
+		if !strings.HasPrefix(ip, "10.") || !strings.HasSuffix(ip, ".1") {
+			t.Fatalf("randomPrivateLANIP %q is not in 10.x.y.1 form", ip)
+		}
+		oct := strings.Split(ip, ".")
+		if len(oct) != 4 || oct[1] == "0" || oct[2] == "0" {
+			t.Fatalf("randomPrivateLANIP %q has a zero octet", ip)
+		}
 	}
 }

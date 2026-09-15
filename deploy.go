@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1169,6 +1170,84 @@ func attemptSTA(ip, password, ssid, wifiPass, radio string) (*ssh.Client, bool) 
 	return c, true
 }
 
+// randomPrivateLANIP returns a random address inside 10.0.0.0/8 (RFC1918)
+// ending in .1 — the scheme the wizard already used whenever a subnet had to
+// move. Keeps the third octet >= 2 to avoid odd edge cases.
+func randomPrivateLANIP() string {
+	b := make([]byte, 2)
+	cryptorand.Read(b)
+	return fmt.Sprintf("10.%d.%d.1", int(b[0])%200+10, int(b[1])%200+2)
+}
+
+// upstreamCIDR returns the STA (wwan) interface address/prefix and the default
+// gateway. Prefers the live ubus status (which carries the real netmask, often
+// not /24) and falls back to the gateway as a /24.
+func upstreamCIDR(client *ssh.Client) (cidr, gateway string) {
+	cidr = strings.TrimSpace(sshRun(client,
+		"ubus call network.interface.wwan status 2>/dev/null | jq -r '.\"ipv4-address\"[0] | \"\\(.address)/\\(.mask)\"' 2>/dev/null"))
+	gateway = strings.TrimSpace(sshRun(client, "ip route show default 2>/dev/null | awk '{print $3}' | head -1"))
+	if cidr != "" && strings.Contains(cidr, "/") {
+		return cidr, gateway
+	}
+	if gateway != "" {
+		return gateway + "/24", gateway
+	}
+	return "", ""
+}
+
+// localCIDR returns the IPv4 CIDR configured on a local interface (e.g.
+// br-lan), or "" when the interface has no address.
+func localCIDR(client *ssh.Client, ifname string) string {
+	return strings.TrimSpace(sshRun(client, "ip -4 -o addr show dev "+ifname+" 2>/dev/null | awk '{print $4}' | head -1"))
+}
+
+// subnetsOverlap reports whether two CIDRs share address space. Malformed input
+// yields false (never a false collision).
+func subnetsOverlap(a, b string) bool {
+	_, na, errA := net.ParseCIDR(a)
+	_, nb, errB := net.ParseCIDR(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return na.Contains(nb.IP) || nb.Contains(na.IP)
+}
+
+// moveLocalSubnet relocates a local interface and its DHCP pool to a fresh
+// random 10.x.y.0/24, commits, restarts the network and reconnects. Returns
+// the live client (best-effort: the original client if reconnecting failed).
+func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string) *ssh.Client {
+	newIP := randomPrivateLANIP()
+	job.addLog(fmt.Sprintf("%s — moving %s to %s/24", why, ifname, newIP))
+	cmds := []string{
+		"uci set network." + netSection + ".ipaddr='" + newIP + "'",
+		"uci set network." + netSection + ".netmask='255.255.255.0'",
+	}
+	if dhcpSection != "" {
+		cmds = append(cmds,
+			"uci -q set dhcp."+dhcpSection+".start='100'",
+			"uci -q set dhcp."+dhcpSection+".limit='150'")
+	}
+	cmds = append(cmds,
+		"uci commit network",
+		"uci -q commit dhcp",
+		"/etc/init.d/network restart 2>/dev/null",
+		"sleep 2")
+	sshRun(client, strings.Join(cmds, " && "))
+	client.Close()
+
+	nc := reconnectSSH(newIP, password, 5, 3*time.Second)
+	if nc == nil {
+		job.addLog("Could not reconnect on new " + ifname + " IP " + newIP + ", trying original IP " + ip + "...")
+		nc = reconnectSSH(ip, password, 3, 5*time.Second)
+	}
+	if nc == nil {
+		job.addLog("WARNING: could not reconnect after moving " + ifname + " — subsequent steps may fail")
+		return client
+	}
+	job.addLog("Reconnected to router on " + newIP)
+	return nc
+}
+
 // configureSTA wires up the tollgate_uplink WiFi STA (deploy step 5).
 // Returns false after marking the job failed; any failure AFTER the
 // wireless snapshot restores the snapshot and reloads wifi (rollback).
@@ -1228,55 +1307,34 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 	*pclient = live
 	client = live
 
-	// --- Upstream subnet conflict detection ---
-	// If the router's LAN subnet (e.g. 192.168.1.0/24) overlaps with the
-	// upstream WiFi subnet that phy0-sta0 just joined, routing breaks: both
-	// br-lan and the STA interface are in the same /24, so the router can't
-	// reach the upstream gateway. Fix by moving br-lan to a random 10.x.y.1/24.
-	upstreamGW := strings.TrimSpace(sshRun(client, "ip route show default 2>/dev/null | grep -E 'phy|wlan|wwan' | awk '{print $3}' | head -1"))
-	lanIP := strings.TrimSpace(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null | tr -d \"'\" | awk '{print $1}'"))
-	if upstreamGW != "" && lanIP != "" {
-		lanParts := strings.Split(lanIP, ".")
-		gwParts := strings.Split(upstreamGW, ".")
-		if len(lanParts) >= 3 && len(gwParts) >= 3 {
-			lanPrefix := strings.Join(lanParts[:3], ".")
-			gwPrefix := strings.Join(gwParts[:3], ".")
-			if lanPrefix == gwPrefix {
-				// CONFLICT — change LAN to a random 10.x.y.1/24
-				randBytes := make([]byte, 2)
-				cryptorand.Read(randBytes)
-				newSecond := int(randBytes[0])%200 + 10 // 10-210
-				newThird := int(randBytes[1])%200 + 2   // 2-202
-				newLanIP := fmt.Sprintf("10.%d.%d.1", newSecond, newThird)
-
-				job.addLog(fmt.Sprintf("LAN subnet conflict with upstream (%s.0/24 == %s.0/24), changing LAN to %s/24", lanPrefix, gwPrefix, newLanIP))
-
-				sshRun(client, strings.Join([]string{
-					"uci set network.lan.ipaddr='" + newLanIP + "'",
-					"uci commit network",
-					"/etc/init.d/network restart 2>/dev/null",
-					"sleep 2",
-				}, " && "))
-
-				// Network restart drops the SSH session — reconnect.
-				// Try the new LAN IP first, then fall back to the original IP.
-				client.Close()
-				newClient := reconnectSSH(newLanIP, password, 5, 3*time.Second)
-				if newClient == nil {
-					job.addLog(fmt.Sprintf("Could not reconnect on new LAN IP %s, trying original IP %s...", newLanIP, ip))
-					newClient = reconnectSSH(ip, password, 3, 5*time.Second)
-				}
-				if newClient != nil {
-					*pclient = newClient
-					client = newClient
-					job.addLog(fmt.Sprintf("Reconnected to router on new LAN IP %s", newLanIP))
-				} else {
-					job.addLog("WARNING: Could not reconnect after LAN IP change — subsequent steps may fail")
-				}
+	// --- Upstream subnet collision detection ---
+	// If any of our local networks (br-lan, br-private) overlaps the upstream
+	// subnet, the router routes to itself and loses the internet, and DHCP can
+	// hand out addresses that collide with the upstream gateway. Upstream masks
+	// are not always /24 (e.g. 10.47.0.0/16), so compare the REAL CIDRs rather
+	// than just the first three octets. Every colliding local network is
+	// relocated to a fresh random 10.x.y.0/24, and its DHCP pool is moved with
+	// it (otherwise clients get leases from the old, colliding range).
+	if upCIDR, gw := upstreamCIDR(client); upCIDR != "" {
+		locals := []struct{ ifname, netSection, dhcpSection string }{
+			{"br-lan", "lan", "lan"},
+			{"br-private", "private", "private"},
+		}
+		for _, ln := range locals {
+			lCIDR := localCIDR(client, ln.ifname)
+			if lCIDR == "" {
+				continue
+			}
+			if subnetsOverlap(lCIDR, upCIDR) {
+				client = moveLocalSubnet(job, client, ip, password, ln.ifname, ln.netSection, ln.dhcpSection,
+					fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw))
+				*pclient = client
 			} else {
-				job.addLog(fmt.Sprintf("No LAN/upstream subnet conflict (LAN=%s.0/24, upstream=%s.0/24)", lanPrefix, gwPrefix))
+				job.addLog(fmt.Sprintf("No subnet collision (%s=%s vs upstream=%s)", ln.ifname, lCIDR, upCIDR))
 			}
 		}
+	} else {
+		job.addLog("WARNING: could not determine the upstream subnet — skipping collision detection")
 	}
 
 	// Verify the router can actually USE the upstream before continuing: a
