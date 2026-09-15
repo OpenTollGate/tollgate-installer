@@ -234,10 +234,7 @@
       </div>
     </details>
 
-    <label class="precheck" for="prestage" id="prestage-field">
-      <input type="checkbox" id="prestage">
-      <span class="precheck-text">Pre-download required packages before deploy (needed if the laptop's only internet is via the router being flashed)</span>
-    </label>
+    <div class="hint" style="margin:0 0 .3rem 0;">Packages are pre-downloaded automatically as soon as a router is selected — no action needed.</div>
     <div class="hint" id="prestage-status" style="margin:0 0 1rem 0;"></div>
 
     <button class="btn" id="deploy-btn" onclick="startDeploy()" disabled>Deploy TollGate</button>
@@ -287,12 +284,6 @@ function selectMode(mode) {
   document.getElementById('mode-wan').classList.toggle('selected', mode === 'wan');
   document.getElementById('mode-sta').classList.toggle('selected', mode === 'sta');
   document.getElementById('sta-fields').classList.toggle('hidden', mode !== 'sta');
-  // Pre-download default: in STA (WiFi repeater) mode the laptop is a WLAN
-  // client whose only internet may be the router being flashed/reconfigured,
-  // so it can lose connectivity mid-deploy — pre-download by default. WAN
-  // (Ethernet) mode keeps the laptop's own uplink, so default off. The
-  // operator can still override the checkbox either way.
-  document.getElementById('prestage').checked = (mode === 'sta');
   if (mode === 'sta' && !wifiScanned) {
     wifiScan();
   }
@@ -714,7 +705,7 @@ async function startDeploy() {
     devSplit: parseInt(document.getElementById('devsplit').value, 10),
     margin: parseInt(document.getElementById('margin').value, 10),
     mint: document.getElementById('mint').value,
-    preStage: document.getElementById('prestage').checked,
+    preStage: true,
     forceFlash: document.getElementById('forceflash').checked,
     prestageJobId: prestageJobId,
   };
