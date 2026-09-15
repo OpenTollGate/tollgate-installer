@@ -116,12 +116,29 @@ func TestDeployRequestDefaults(t *testing.T) {
 		LNURL:    "test@wallet.app",
 	}
 
-	if req.DevSplit != 0 {
-		t.Errorf("default DevSplit = %d, want 0", req.DevSplit)
+	// Omitted (nil) advanced fields resolve to the server-side defaults.
+	if req.DevSplit != nil {
+		t.Errorf("default DevSplit = %v, want nil (unset)", *req.DevSplit)
 	}
-	if req.Margin != 0 {
-		t.Errorf("default Margin = %d, want 0", req.Margin)
+	if req.Margin != nil {
+		t.Errorf("default Margin = %v, want nil (unset)", *req.Margin)
 	}
+	ds, m := req.resolvedAdvanced()
+	if ds != defaultDevSplit {
+		t.Errorf("resolved DevSplit = %d, want %d", ds, defaultDevSplit)
+	}
+	if m != defaultMargin {
+		t.Errorf("resolved Margin = %d, want %d", m, defaultMargin)
+	}
+
+	// An explicit 0 must be honoured, not replaced by the default.
+	zero := 0
+	explicit := deployRequest{DevSplit: &zero, Margin: &zero}
+	ds, m = explicit.resolvedAdvanced()
+	if ds != 0 || m != 0 {
+		t.Errorf("explicit 0 resolved to (devSplit=%d, margin=%d), want (0,0)", ds, m)
+	}
+
 	if req.Mint != "" {
 		t.Errorf("default Mint = %q, want empty", req.Mint)
 	}
