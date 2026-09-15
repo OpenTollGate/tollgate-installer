@@ -739,38 +739,52 @@ func runDeployment(job *Job, req deployRequest) {
 	// Step 11: Health check
 	job.setStep(11, "running", "")
 	job.addLog("Running health check...")
-	// Retry health check for up to ~90s (30 x 3s). A single wget 3.5s after
-	// service restart is too fast, and even a 5x2s (~11s) window is too short
-	// on a FRESH router: tollgate-wrt probes every configured mint and
-	// registers the wallet BEFORE it binds :2121, which routinely takes
-	// 30-60s+ on first boot. This is normal initialization, not a crash —
-	// the old 5x2s window failed a healthy RC deploy on a clean OpenWrt
-	// 24.10.1 GL-MT6000 whose API came up ~35s after start.
+	// tollgate-wrt registers the wallet (probing every configured mint) BEFORE
+	// it binds :2121 — 30-90s+ on a fresh router, and longer in STA mode where
+	// DNS/time are still settling after the upstream connects. We retry, and we
+	// distinguish two failure modes that the old single body check conflated:
+	//   - :2121 never listens              => service down / crash-looping
+	//   - :2121 listens but GET / has no
+	//     advertisement                     => merchant DEGRADED (mint/wallet
+	//                                          not ready) — the API is up
+	// The old code reported both as "API not responding", which sent operators
+	// chasing the wrong problem.
 	healthOK := false
-	var healthOut string
-	const healthAttempts = 30
+	listening := false
+	var healthBody string
+	const healthAttempts = 40 // ~2 min
 	for attempt := 1; attempt <= healthAttempts; attempt++ {
 		time.Sleep(3 * time.Second)
-		healthOut = sshRun(client, "wget -qO- http://127.0.0.1:2121/ 2>/dev/null | head -c 100 || echo 'health check failed'")
-		if strings.Contains(healthOut, "kind") || strings.Contains(healthOut, "metric") || strings.Contains(healthOut, "pubkey") {
+		listening, healthBody = tollgateHealthProbe(client)
+		if adLooksHealthy(healthBody) {
 			healthOK = true
 			job.addLog(fmt.Sprintf("Health check passed on attempt %d", attempt))
 			break
 		}
-		job.addLog(fmt.Sprintf("Health check attempt %d/%d failed, retrying...", attempt, healthAttempts))
+		if attempt == 1 || attempt%5 == 0 {
+			job.addLog(fmt.Sprintf("Health check attempt %d/%d: listening=%v ad=%q",
+				attempt, healthAttempts, listening, truncate(healthBody, 40)))
+		}
 	}
 	if healthOK {
 		job.addLog("Health check passed — TollGate API responding")
 		job.setStep(11, "done", "API healthy on :2121")
 	} else {
-		job.addLog("Health check FAILED: " + truncate(healthOut, 80))
+		diag := tollgateDiagnostics(client, listening, healthBody)
+		job.addLog("Health check FAILED. Diagnostics:\n" + diag)
 		// Roll back wireless config so the router's radios are usable for
 		// re-scanning after a failed deploy (e.g. old binary crashed with
 		// new config, leaving radio0 stuck in STA mode).
 		job.addLog("Rolling back wireless config to pre-deploy state...")
 		rollbackWireless(client)
 		job.addLog("Wireless config restored — radios should be available for scanning")
-		jobFail(job, 11, "tollgate API not responding on :2121", "Health check failed — wireless config rolled back for recovery")
+		if listening {
+			jobFail(job, 11, "tollgate API up but no advertisement",
+				"TollGate API is UP on :2121 but returned no pricing advertisement — the merchant is degraded (mint/wallet not ready), not down.\n"+diag)
+		} else {
+			jobFail(job, 11, "tollgate service not listening on :2121",
+				"The tollgate-wrt service is NOT listening on :2121 (crash-looping or still initializing).\n"+diag)
+		}
 		return
 	}
 
@@ -789,6 +803,43 @@ func jobFail(job *Job, step int, stepDetail, jobErr string) {
 	job.Status = "failed"
 	job.Error = jobErr
 	job.mu.Unlock()
+}
+
+// tollgateHealthProbe checks the TollGate API from the ROUTER's own shell:
+// whether :2121 is listening, and the first bytes of GET /. It never fails —
+// a closed port yields listening=false and an empty body.
+func tollgateHealthProbe(client *ssh.Client) (listening bool, body string) {
+	out := sshRun(client, "netstat -ltn 2>/dev/null | grep -q ':2121' && echo LISTEN || echo NOLISTEN; echo '~~'; wget -qO- --timeout=3 http://127.0.0.1:2121/ 2>/dev/null | head -c 400")
+	listening = strings.Contains(out, "LISTEN") && !strings.Contains(out, "NOLISTEN")
+	if i := strings.Index(out, "~~"); i >= 0 {
+		body = strings.TrimSpace(out[i+2:])
+	}
+	return listening, body
+}
+
+// adLooksHealthy reports whether GET / returned the NIP-61 advertisement
+// (which carries the pricing/mint fields) rather than an empty or degraded
+// response.
+func adLooksHealthy(body string) bool {
+	return strings.Contains(body, "kind") || strings.Contains(body, "metric") || strings.Contains(body, "pubkey")
+}
+
+// tollgateDiagnostics gathers router-side state after a failed health check so
+// the operator (and the UI) can tell a crash-loop from a degraded merchant.
+// Best-effort: every command is capped and individually harmless.
+func tollgateDiagnostics(client *ssh.Client, listening bool, body string) string {
+	parts := []string{
+		fmt.Sprintf("listening=%v ad=%q", listening, truncate(body, 120)),
+		"service: " + truncate(sshRun(client, "/etc/init.d/tollgate-wrt status 2>&1 | head -2"), 200),
+		"proc: " + truncate(sshRun(client, "pgrep -af tollgate-wrt 2>/dev/null | head -1"), 200),
+		"date: " + truncate(sshRun(client, "date -u 2>/dev/null"), 80),
+		"mints: " + truncate(sshRun(client, "jq -r '.accepted_mints[]?.url' /etc/tollgate/config.json 2>/dev/null | tr '\\n' ' '"), 200),
+		"internet: " + truncate(sshRun(client, "(wget -q -T4 -O /dev/null https://1.1.1.1 2>/dev/null && echo online) || echo 'no internet'"), 40),
+		"dns: " + truncate(sshRun(client, "nslookup github.com 2>&1 | tail -2"), 160),
+		"log: " + truncate(sshRun(client, "logread 2>/dev/null | grep -iE 'tollgate|merchant|mint|wallet' | tail -12"), 1500),
+		"debug: " + truncate(sshRun(client, "tail -15 /tmp/tollgate-debug.log 2>/dev/null"), 1500),
+	}
+	return strings.Join(parts, "\n")
 }
 
 // staSetupScript returns the shell script that configures the
@@ -1439,11 +1490,21 @@ func runPreStage(job *Job, client *ssh.Client, isStockGL bool, glModel string) {
 // a cache miss.
 func stageAssets(job *Job, urls []string) []string {
 	var failed []string
+	total := 0
+	for _, u := range urls {
+		if u != "" {
+			total++
+		}
+	}
+	done := 0
+	advance := func() { done++; job.setProgress(done, total, "downloading") }
+	job.setProgress(0, total, "downloading")
 	for _, u := range urls {
 		if u == "" {
 			continue
 		}
 		if _, ok := job.stagedAsset(u); ok {
+			advance()
 			continue
 		}
 		// Disk re-deploy cache (Task 5): if a previous deploy to another
@@ -1455,12 +1516,14 @@ func stageAssets(job *Job, urls []string) []string {
 			if data, ok := loadStageDisk(u); ok {
 				job.addLog("PreStage: using disk cache for " + truncate(u, 100) + " (no download)")
 				job.stageAsset(u, data)
+				advance()
 				continue
 			}
 		}
 		data, err := downloadWithRetry(u, 3, 2*time.Second)
 		if err != nil || len(data) == 0 {
 			failed = append(failed, u)
+			advance()
 			continue
 		}
 		job.stageAsset(u, data)
@@ -1472,6 +1535,7 @@ func stageAssets(job *Job, urls []string) []string {
 				job.addLog("PreStage: could not persist " + truncate(u, 100) + " to disk cache: " + err.Error())
 			}
 		}
+		advance()
 	}
 	return failed
 }
