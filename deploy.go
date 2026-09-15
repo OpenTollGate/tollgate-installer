@@ -268,7 +268,7 @@ func runDeployment(job *Job, req deployRequest) {
 	// Step 5: Configure upstream (WiFi STA if requested)
 	job.setStep(5, "running", "")
 	if req.Mode == "sta" && req.SSID != "" {
-		if !configureSTA(job, &client, req.IP, req.Password, req.SSID, req.WifiPass) {
+		if !configureSTA(job, &client, req.IP, req.Password, req.SSID, req.WifiPass, req.Band) {
 			return
 		}
 	} else {
@@ -792,24 +792,47 @@ func jobFail(job *Job, step int, stepDetail, jobErr string) {
 }
 
 // staSetupScript returns the shell script that configures the
-// tollgate_uplink STA iface on the target radio (radio0 if present, else
-// the first wifi-device found).
+// tollgate_uplink STA iface on the radio matching band ("2.4"/"5"/"6"), or
+// radio0 when band is empty/unknown.
+//
+// CRITICAL (band): the MT3000 has a 2.4 GHz radio0 and a 5 GHz radio1. The
+// original script always targeted radio0, so a 5 GHz-only upstream never
+// associated and the failure looked like a wrong password. The target radio is
+// now chosen by matching the requested band against each wifi-device's
+// `band` (OpenWrt 21+) or `hwmode` (legacy). A "NO_BAND_RADIO" marker means no
+// radio on this router serves the requested band.
 //
 // CRITICAL (dual-STA guard): a radio can host only ONE STA interface — a
 // second one kills the router's wireless entirely. Any existing STA iface
 // on the target radio (including a previous tollgate_uplink on re-run) is
-// DISABLED — not deleted — before the new uplink is added. Disabling keeps
-// the old section recoverable by the operator.
+// DISABLED — not deleted — before the new uplink is added.
 //
 // The script snapshots /etc/config/wireless to /tmp for rollback (see
-// rollbackWireless) and performs a single commit pair; the caller applies
-// the whole change set with ONE `wifi reload`.
-func staSetupScript(ssid, wifiKey string) string {
+// rollbackWireless) and performs a single commit pair; the caller applies the
+// whole change set with ONE `wifi reload`.
+func staSetupScript(ssid, wifiKey, band string) string {
 	return `
-target=radio0
-uci -q get wireless.radio0 >/dev/null 2>&1 || target=$(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p" | head -n1)
+want_band="` + normalizeBand(band) + `"
+target=""
+for r in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do
+	rb=$(uci -q get wireless.$r.band 2>/dev/null)
+	[ -z "$rb" ] && rb=$(uci -q get wireless.$r.hwmode 2>/dev/null)
+	case "$rb" in 2g|bg|11g) rb=2.4;; 5g|a|11a) rb=5;; 6g|11ax6g) rb=6;; esac
+	if [ -n "$want_band" ] && [ "$rb" = "$want_band" ]; then target="$r"; break; fi
+done
+if [ -z "$target" ]; then
+	target=radio0
+	uci -q get wireless.radio0 >/dev/null 2>&1 || target=$(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p" | head -n1)
+fi
 if [ -z "$target" ]; then echo 'NO_RADIO'; exit 0; fi
+if [ -n "$want_band" ]; then
+	rb=$(uci -q get wireless.$target.band 2>/dev/null)
+	[ -z "$rb" ] && rb=$(uci -q get wireless.$target.hwmode 2>/dev/null)
+	case "$rb" in 2g|bg|11g) rb=2.4;; 5g|a|11a) rb=5;; 6g|11ax6g) rb=6;; esac
+	if [ -n "$rb" ] && [ "$rb" != "$want_band" ]; then echo "NO_BAND_RADIO target=$target band=$rb want=$want_band"; exit 0; fi
+fi
 cp /etc/config/wireless /tmp/wireless.pre-tollgate &&
+uci -q set wireless.$target.disabled='0' &&
 for s in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)\.device='$target'$/\1/p"); do
 	if [ "$(uci -q get wireless.$s.mode 2>/dev/null)" = 'sta' ]; then uci -q set wireless.$s.disabled='1'; fi
 done &&
@@ -966,10 +989,18 @@ func ifaceUp(statusJSON string) bool {
 // The SSH client is re-established after the single `wifi reload` — the old
 // session can go stale while radios restart — and written back through
 // pclient so subsequent steps use the live session.
-func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass string) bool {
+func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, band string) bool {
 	client := *pclient
-	job.addLog("Configuring WiFi STA uplink: " + ssid)
-	out := sshRun(client, staSetupScript(ssid, wifiPass))
+	if b := normalizeBand(band); b != "" {
+		job.addLog("Configuring WiFi STA uplink: " + ssid + " (" + b + " GHz)")
+	} else {
+		job.addLog("Configuring WiFi STA uplink: " + ssid)
+	}
+	out := sshRun(client, staSetupScript(ssid, wifiPass, band))
+	if strings.Contains(out, "NO_BAND_RADIO") {
+		jobFail(job, 5, "no radio for band", "No "+normalizeBand(band)+" GHz radio on this router — pick a network on a supported band")
+		return false
+	}
 	if strings.Contains(out, "NO_RADIO") {
 		jobFail(job, 5, "no wireless radio found", "No wifi-device found in UCI — cannot configure STA uplink")
 		return false
@@ -1022,10 +1053,14 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass s
 		}
 	}
 	if !up {
+		hint := staFailureHint(client, ssid, band)
 		job.addLog("WiFi STA verification failed — wwan interface not up")
 		rollbackWireless(client)
-		jobFail(job, 5, "WiFi connection failed — check SSID and password",
-			"WiFi STA connection failed for \""+ssid+"\" — check SSID and password (wireless config rolled back)")
+		detail := "WiFi STA connection failed for \"" + ssid + "\" — check SSID and password (wireless config rolled back)"
+		if hint != "" {
+			detail += "\n" + hint
+		}
+		jobFail(job, 5, "WiFi connection failed — check SSID and password", detail)
 		return false
 	}
 	job.addLog("WiFi STA connected: " + ssid)
@@ -1089,7 +1124,8 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass s
 // wwan interface to come up, then ALWAYS restores the pre-change wireless
 // config. Used by /api/wifi-test so a wrong SSID/password surfaces on the form
 // before a deploy spends time flashing/installing. Returns (ok, message).
-func testSTAConfig(ip, password, ssid, wifiPass string) (bool, string) {
+func testSTAConfig(ip, password, ssid, wifiPass, band string) (bool, string) {
+	b := normalizeBand(band)
 	client := sshConnect(ip, password)
 	if client == nil && password != "" {
 		client = sshConnect(ip, "")
@@ -1103,7 +1139,12 @@ func testSTAConfig(ip, password, ssid, wifiPass string) (bool, string) {
 		return false, "the router is not running OpenWrt yet — the WiFi check runs after flashing"
 	}
 
-	out := sshRun(client, staSetupScript(ssid, wifiPass))
+	out := sshRun(client, staSetupScript(ssid, wifiPass, band))
+	if strings.Contains(out, "NO_BAND_RADIO") {
+		rollbackWireless(client)
+		client.Close()
+		return false, "no " + b + " GHz radio on this router — pick a network on a supported band"
+	}
 	if strings.Contains(out, "NO_RADIO") {
 		rollbackWireless(client)
 		client.Close()
@@ -1119,6 +1160,7 @@ func testSTAConfig(ip, password, ssid, wifiPass string) (bool, string) {
 
 	c := reconnectSSH(ip, password, 3, 5*time.Second)
 	up := false
+	hint := ""
 	if c != nil {
 		for i := 0; i < 15 && !up; i++ { // ~22s budget: association + DHCP
 			up = ifaceUp(sshRun(c, "ubus call network.interface.wwan status 2>/dev/null"))
@@ -1126,15 +1168,53 @@ func testSTAConfig(ip, password, ssid, wifiPass string) (bool, string) {
 				time.Sleep(1500 * time.Millisecond)
 			}
 		}
+		if !up {
+			hint = staFailureHint(c, ssid, band)
+		}
 		// Always restore the router's prior wireless config after the test —
 		// the check must not leave the router reconfigured.
 		rollbackWireless(c)
 		c.Close()
 	}
 	if !up {
-		return false, "WiFi connection failed for \"" + ssid + "\" — check the SSID and password"
+		msg := "WiFi connection failed for \"" + ssid + "\""
+		if b != "" {
+			msg += " (" + b + " GHz)"
+		}
+		msg += " — check the SSID and password"
+		if hint != "" {
+			msg += "\n" + hint
+		}
+		return false, msg
 	}
 	return true, "connected to \"" + ssid + "\""
+}
+
+// staFailureHint inspects the wifi logs after a failed association and returns
+// a short, actionable hint — distinguishing a wrong password (WPA 4-way
+// handshake failure) from a band/visibility problem. Best-effort: "" when the
+// logs do not clearly indicate one.
+func staFailureHint(client *ssh.Client, ssid, band string) string {
+	if client == nil {
+		return ""
+	}
+	low := strings.ToLower(sshRun(client, "logread 2>/dev/null | grep -iE 'wpa|handshake|assoc|ssid|sae' | tail -8"))
+	switch {
+	case strings.Contains(low, "4-way handshake failed"),
+		strings.Contains(low, "pre-shared key"),
+		strings.Contains(low, "invalid psk"),
+		strings.Contains(low, "psk mismatch"):
+		return "The password was rejected (WPA handshake failed) — the WiFi password looks wrong."
+	case strings.Contains(low, "ap not found"),
+		strings.Contains(low, "no suitable network"),
+		strings.Contains(low, "ssid not found"),
+		strings.Contains(low, "join failed"):
+		if b := normalizeBand(band); b != "" {
+			return "The network was not found on the " + b + " GHz radio — check the band and that the router can reach the access point."
+		}
+		return "The network was not found — check the SSID and that the router can reach the access point."
+	}
+	return ""
 }
 
 // httpGetFile downloads a release asset on the laptop, following redirects

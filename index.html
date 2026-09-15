@@ -415,6 +415,14 @@ function onSsidChange() {
   checkReady();
 }
 
+// selectedSSIDBand returns the scan-derived band ("2.4"/"5"/"6") of the
+// currently selected SSID, so the STA is configured on the matching radio.
+function selectedSSIDBand() {
+  const sel = document.getElementById('ssid');
+  const opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+  return (opt && opt.dataset && opt.dataset.band) ? opt.dataset.band : '';
+}
+
 async function testUpstreamWifi() {
   const ip = document.getElementById('router-select').value;
   const ssid = document.getElementById('ssid').value;
@@ -433,6 +441,7 @@ async function testUpstreamWifi() {
         password: document.getElementById('password').value,
         ssid: ssid,
         wifiPass: wifiPass,
+        band: selectedSSIDBand(),
       }),
     });
     const data = await resp.json();
@@ -524,8 +533,11 @@ async function wifiScan() {
       const opt = document.createElement('option');
       opt.value = s.name;
       const enc = s.encryption || 'unknown';
-      opt.textContent = s.name + (enc && enc !== 'none' ? '  (' + enc + ')' : '  (open)');
+      const band = s.band ? s.band + ' GHz' : '';
+      const meta = [enc && enc !== 'none' ? enc : 'open', band].filter(Boolean).join(' \u00b7 ');
+      opt.textContent = s.name + (meta ? '  (' + meta + ')' : '');
       opt.dataset.encryption = enc;
+      opt.dataset.band = s.band || '';
       ssidSelect.appendChild(opt);
     });
 
@@ -535,14 +547,18 @@ async function wifiScan() {
     ssidSelect.onchange = function() {
       const sel = ssidSelect.options[ssidSelect.selectedIndex];
       const enc = sel ? sel.dataset.encryption : '';
+      const band = sel ? sel.dataset.band : '';
+      const bandTxt = band ? ' \u00b7 ' + band + ' GHz' : '';
       if (enc && enc !== 'unknown' && enc !== 'none') {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Encryption: ' + enc;
+        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Encryption: ' + enc + bandTxt;
       } else if (enc === 'none') {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Open network (no password needed)';
+        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Open network (no password needed)' + bandTxt;
       } else {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value;
+        ssidHint.textContent = 'Selected: ' + ssidSelect.value + bandTxt;
       }
-      checkReady();
+      // Selecting a network re-runs the proactive WiFi check (which is also
+      // debounced on password typing).
+      onSsidChange();
     };
   } catch (e) {
     ssidSelect.innerHTML = '<option value="">Scan failed</option>';
@@ -695,6 +711,7 @@ async function startDeploy() {
     mode: upstreamMode,
     ssid: document.getElementById('ssid').value,
     wifiPass: document.getElementById('wifi-pass').value,
+    band: selectedSSIDBand(),
     lnurl: lnurl,
     devSplit: parseInt(document.getElementById('devsplit').value, 10),
     margin: parseInt(document.getElementById('margin').value, 10),
