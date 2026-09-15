@@ -243,6 +243,7 @@
     <div class="hint" id="prestage-status" style="margin:0 0 1rem 0;"></div>
 
     <button class="btn" id="deploy-btn" onclick="startDeploy()" disabled>Deploy TollGate</button>
+    <div class="hint" id="deploy-hint" style="text-align:center; margin-top:0.6rem;"></div>
     <button class="btn btn-secondary" onclick="scanAgain()">Scan again</button>
   </div>
 
@@ -648,14 +649,34 @@ function checkReady() {
   const ip = document.getElementById('router-select').value;
   const ln = document.getElementById('lnurl').value;
   let ready = !!(ip && validLightning(ln));
-  // For STA mode, also require an SSID and a passing WiFi test (fail fast:
-  // never let the operator deploy while a test runs or after it failed).
+  let hint = '';
+  // STA (WiFi repeater) mode: the router's uplink IS the upstream WiFi, so
+  // Deploy stays greyed out until that connection is CONFIRMED. "unavailable"
+  // means the router is not on OpenWrt yet (stock, pre-flash) — the check can
+  // only run after flashing, so it is not a blocker. Anything else (untested,
+  // testing, failed) blocks the deploy so the operator never wastes a
+  // flash/install on a wrong SSID or password.
   if (ready && upstreamMode === 'sta') {
     const ssidVal = document.getElementById('ssid').value;
-    if (!ssidVal) ready = false;
-    if (wifiTestState === 'testing' || wifiTestState === 'failed') ready = false;
+    if (!ssidVal) {
+      ready = false;
+      hint = 'Select the upstream WiFi network.';
+    } else if (wifiTestState === 'ok' || wifiTestState === 'unavailable') {
+      // confirmed — or deferred until after flashing for a stock router
+    } else if (wifiTestState === 'testing') {
+      ready = false;
+      hint = 'Testing the upstream WiFi connection…';
+    } else if (wifiTestState === 'failed') {
+      ready = false;
+      hint = 'Fix the upstream WiFi connection to unlock Deploy.';
+    } else {
+      ready = false;
+      hint = 'Enter the upstream WiFi password — Deploy unlocks after a successful test.';
+    }
   }
   document.getElementById('deploy-btn').disabled = !ready;
+  const hintEl = document.getElementById('deploy-hint');
+  if (hintEl) hintEl.textContent = hint;
 }
 
 async function startDeploy() {
