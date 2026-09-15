@@ -192,11 +192,9 @@
       </div>
       <div class="field">
         <label>Upstream WiFi password</label>
-        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password" oninput="onWifiPassChange()">
-        <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.5rem;">
-          <button type="button" class="btn btn-secondary" id="wifi-test-btn" onclick="testUpstreamWifi()" style="width:auto; padding:8px 12px; margin-top:0;">Test WiFi connection</button>
-          <span class="hint" id="wifi-test-status"></span>
-        </div>
+        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password"
+               oninput="onWifiPassChange()" onchange="onWifiPassChange()">
+        <div class="hint" id="wifi-test-status" style="margin-top:0.5rem;"></div>
       </div>
     </div>
     <div class="field">
