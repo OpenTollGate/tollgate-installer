@@ -146,15 +146,16 @@ func TestParseInstalledTollgateBuild(t *testing.T) {
 			want: "0.6.0-alpha1 (commit 089e876)",
 		},
 		{
-			// The main-tip pre-release build: the version string carries the
+			// The main-tip pre-release build (v0.6.0-alpha2-pre2, commit
+			// 7cd1882; the current pin): the version string carries the
 			// tag-derived version PLUS "-g" and the source commit
-			// (0.6.0-alpha2 + g089e876), which is the spelling the shipped
-			// v0.6.0-alpha2-pre package's tollgate-wrt binary reports. Note it
-			// does NOT equal the package version 0.6.0_alpha2_pre — the commit
+			// (0.6.0-alpha2 + g7cd1882), which is the spelling the shipped
+			// v0.6.0-alpha2-pre2 package's tollgate-wrt binary reports. Note it
+			// does NOT equal the package version 0.6.0_alpha2_pre2 — the commit
 			// is what identifies the build (see docs/package-provenance.md).
 			name: "cli json main-tip pre-release build",
-			in:   `{"data":{"version":"v0.6.0-alpha2-g089e876","commit":"089e876"}}`,
-			want: "v0.6.0-alpha2-g089e876 (commit 089e876)",
+			in:   `{"data":{"version":"v0.6.0-alpha2-g7cd1882","commit":"7cd1882"}}`,
+			want: "v0.6.0-alpha2-g7cd1882 (commit 7cd1882)",
 		},
 		{
 			// A plain `go build` leaves the placeholder commit — the version is
@@ -195,12 +196,12 @@ go_version: go1.22.0`,
 		},
 		{
 			// opkg list-installed, the CURRENT feed build (main-tip
-			// pre-release v0.6.0-alpha2-pre): the same PKG_VERSION spelling
+			// pre-release v0.6.0-alpha2-pre2): the same PKG_VERSION spelling
 			// with the package revision the published .ipk carries. The tag's
 			// hyphens are underscores here, exactly as in the asset name.
 			name: "opkg list-installed current feed build",
-			in:   "tollgate-wrt - 0.6.0_alpha2_pre-r1",
-			want: "0.6.0_alpha2_pre-r1",
+			in:   "tollgate-wrt - 0.6.0_alpha2_pre2-r1",
+			want: "0.6.0_alpha2_pre2-r1",
 		},
 		{
 			// opkg list-installed, the pinned GitHub release v0.5.0 (its control
@@ -217,8 +218,8 @@ go_version: go1.22.0`,
 		},
 		{
 			name: "apk info -v current feed build",
-			in:   "tollgate-wrt-0.6.0_alpha2_pre-r1",
-			want: "0.6.0_alpha2_pre-r1",
+			in:   "tollgate-wrt-0.6.0_alpha2_pre2-r1",
+			want: "0.6.0_alpha2_pre2-r1",
 		},
 		{
 			name: "apk list --installed row",

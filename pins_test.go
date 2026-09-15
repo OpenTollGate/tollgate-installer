@@ -56,29 +56,29 @@ var forbiddenDeployIdentifiers = []string{
 
 // wantFeedReleaseTag is the feed release tag the wizard selects by default:
 // the main-tip pre-release of tollgate-module-basic-go, whose feed build is
-// pinned to upstream commit 089e876. Bumping the code's feedReleaseTagDefault
+// pinned to upstream commit 7cd1882. Bumping the code's feedReleaseTagDefault
 // without bumping this literal (and the per-arch names in TestFeedAssetURL)
 // fails TestFeedReleaseIdentityIsPinned — that is what makes a repin auditable
 // instead of a silent literal swap.
-const wantFeedReleaseTag = "v0.6.0-alpha2-pre"
+const wantFeedReleaseTag = "v0.6.0-alpha2-pre2"
 
 // wantFeedPkgVersion is wantFeedReleaseTag in the feed's PKG_VERSION spelling:
 // leading "v" dropped, hyphens turned into underscores (apk-tools 3.x rejects
 // hyphens in versions). The installed package reports this as
-// "0.6.0_alpha2_pre-r1" — note it is NOT the string the binary reports about
-// itself ("v0.6.0-alpha2-g089e876"; see docs/package-provenance.md).
-const wantFeedPkgVersion = "0.6.0_alpha2_pre"
+// "0.6.0_alpha2_pre2-r1" — note it is NOT the string the binary reports about
+// itself ("v0.6.0-alpha2-g7cd1882"; see docs/package-provenance.md).
+const wantFeedPkgVersion = "0.6.0_alpha2_pre2"
 
 // wantTollgatePkgURL is the exact release asset pinned by the wizard.
-// The v0.6.0-alpha2-pre release of FreedomTechFeed/packages ships the
+// The v0.6.0-alpha2-pre2 release of FreedomTechFeed/packages ships the
 // tollgate-wrt package for the aarch64_cortex-a53 target (feed-primary).
 // It is DERIVED from feedAssetURL so it can never drift from the generic
 // URL builder — this test pins the derivation, not a literal.
-const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre/tollgate-wrt_0.6.0_alpha2_pre_aarch64_cortex-a53.ipk"
+const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre2/tollgate-wrt_0.6.0_alpha2_pre2_aarch64_cortex-a53.ipk"
 
 // feedReleasePublishedArches is the arch matrix the pinned feed release
 // actually publishes: 7 tuples × {.ipk, .apk} = the 14 assets on
-// v0.6.0-alpha2-pre. This is a TEST FIXTURE describing one release, not a
+// v0.6.0-alpha2-pre2. This is a TEST FIXTURE describing one release, not a
 // runtime allowlist — feedAssetURL stays generic on purpose, so an arch the
 // feed adds later works without a code change. It is also deliberately NOT
 // the set of tuples normalizeBareArch can emit: "aarch64_generic" is absent
@@ -185,16 +185,16 @@ func TestFeedAssetURLShapeMatchesPinnedRelease(t *testing.T) {
 }
 
 // TestFeedPkgVersionForTag pins the tag → PKG_VERSION transformation itself,
-// including the two spellings in play today (v0.6.0-alpha2-pre is the current
+// including the two spellings in play today (v0.6.0-alpha2-pre2 is the current
 // feed release, v0.6.0-alpha1 the previous one) and the legacy v0.5.0 GitHub
 // release, whose version carries no hyphen and no leading "v" once stripped.
 func TestFeedPkgVersionForTag(t *testing.T) {
 	for _, tc := range []struct{ tag, want string }{
-		{"v0.6.0-alpha2-pre", "0.6.0_alpha2_pre"},
+		{"v0.6.0-alpha2-pre2", "0.6.0_alpha2_pre2"},
 		{"v0.6.0-alpha1", "0.6.0_alpha1"},
 		{"v0.5.0", "0.5.0"},
-		{"0.6.0-alpha2-pre", "0.6.0_alpha2_pre"}, // no leading v
-		{" v0.6.0-alpha2-pre\n", "0.6.0_alpha2_pre"},
+		{"v0.6.0-alpha2-pre", "0.6.0_alpha2_pre"},
+		{" v0.6.0-alpha2-pre2\n", "0.6.0_alpha2_pre2"},
 		{"", ""},
 	} {
 		if got := feedPkgVersionForTag(tc.tag); got != tc.want {
