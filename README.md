@@ -172,12 +172,12 @@ feed's package build:
 
 | | |
 |---|---|
-| Selected release tag | `v0.6.0-alpha2-pre2` (the main-tip pre-release) |
-| Package version | `0.6.0_alpha2_pre2` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre2-r1` |
-| Source commit | `7cd1882` of `tollgate-module-basic-go` |
-| Asset name | `tollgate-wrt_0.6.0_alpha2_pre2_<arch>.{ipk,apk}` for 7 arches |
+| Selected release tag | `v0.6.0-alpha2-pre3` (the main-tip pre-release) |
+| Package version | `0.6.0_alpha2_pre3` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre3-r1` |
+| Source commit | `373770a` of `tollgate-module-basic-go` |
+| Asset name | `tollgate-wrt_0.6.0_alpha2_pre3_<arch>.{ipk,apk}` for 7 arches |
 
-The installed binary reports `v0.6.0-alpha2-g7cd1882` — the version string plus
+The installed binary reports `v0.6.0-alpha2-g373770a` — the version string plus
 the **source commit**. That string is not the package version, on purpose: the
 commit identifies the build, the version string only identifies the release
 line. The wizard reads the installed build back off the router and logs it

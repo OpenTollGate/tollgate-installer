@@ -74,8 +74,8 @@ func normalizeBareArch(b string) string {
 // (net/tollgate-wrt/Makefile). Its Makefile keeps TWO version spellings, and
 // the URL/asset name below must match both:
 //
-//	PKG_SOURCE_VERSION := 0.6.0-alpha2-pre2  (upstream git tag, hyphen) → release TAG
-//	PKG_VERSION        := 0.6.0_alpha2_pre2   (apk-legal, underscore)    → asset NAME
+//	PKG_SOURCE_VERSION := 0.6.0-alpha2-pre3  (upstream git tag, hyphen) → release TAG
+//	PKG_VERSION        := 0.6.0_alpha2_pre3   (apk-legal, underscore)    → asset NAME
 //
 // The split is forced by apk-tools 3.x, which rejects hyphens in versions.
 // feedPkgVersionForTag DERIVES the second spelling from the first, so the two
@@ -91,9 +91,9 @@ const (
 	feedRepoSlug = "FreedomTechFeed/packages"
 	// feedReleaseTagDefault is the feed release tag selected by default: the
 	// current main-tip pre-release of tollgate-module-basic-go, whose feed
-	// build is pinned to commit 7cd1882 (PKG_VERSION 0.6.0_alpha2_pre2). It is
+	// build is pinned to commit 373770a (PKG_VERSION 0.6.0_alpha2_pre3). It is
 	// the upstream PKG_SOURCE_VERSION in hyphenated tag form.
-	feedReleaseTagDefault = "v0.6.0-alpha2-pre2"
+	feedReleaseTagDefault = "v0.6.0-alpha2-pre3"
 	// feedReleaseTagEnv is the environment variable that overrides
 	// feedReleaseTagDefault. Set it to select another published release tag
 	// (e.g. a newer pre-release, or an older tag to reproduce an old build)
@@ -106,7 +106,7 @@ const (
 	feedReleaseTagEnv = "TOLLGATE_FEED_RELEASE_TAG"
 )
 
-// feedReleaseTagRe matches a plausible GitHub release tag (v0.6.0-alpha2-pre2,
+// feedReleaseTagRe matches a plausible GitHub release tag (v0.6.0-alpha2-pre3,
 // v0.6.0-alpha1, 0.5.0). It is deliberately permissive about WHICH tag — the
 // feed is the authority on what it published, and
 // TestPinnedFeedReleaseTagExists fails if the selected tag does not exist —
@@ -140,7 +140,7 @@ func resolveFeedReleaseTag(getenv func(string) string) string {
 // is dropped and every hyphen becomes an underscore (apk-tools 3.x rejects
 // hyphens in versions).
 //
-//		v0.6.0-alpha2-pre2 → 0.6.0_alpha2_pre2   (installed as 0.6.0_alpha2_pre2-r1)
+//		v0.6.0-alpha2-pre3 → 0.6.0_alpha2_pre3   (installed as 0.6.0_alpha2_pre3-r1)
 //	v0.6.0-alpha1    → 0.6.0_alpha1
 //
 // This is the ONLY place the tag spelling and the package-version spelling are
@@ -164,7 +164,7 @@ func feedReleaseURLPrefix() string {
 // canonical OpenWrt arch tuple and file extension. The feed publishes every
 // arch it builds at a stable, predictable URL:
 //
-//	https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre2/tollgate-wrt_0.6.0_alpha2_pre2_<arch>.<ext>
+//	https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre3/tollgate-wrt_0.6.0_alpha2_pre3_<arch>.<ext>
 //
 // Because the URL is DERIVED from the tuple rather than looked up in a
 // hardcoded map, ANY arch the feed publishes resolves without a code change —
@@ -428,9 +428,9 @@ var (
 	versionLineRe = regexp.MustCompile(`(?m)^version:[ 	]*(\S+)`)
 	commitLineRe  = regexp.MustCompile(`(?m)^commit:[ 	]*(\S+)`)
 	// installedPkgVersionRe reads package-manager output:
-	//   opkg: "tollgate-wrt - 0.6.0_alpha2_pre2-r1"  (or "tollgate-wrt - v0.5.0"
+	//   opkg: "tollgate-wrt - 0.6.0_alpha2_pre3-r1"  (or "tollgate-wrt - v0.5.0"
 	//         for the legacy GitHub-release asset)
-	//   apk : "tollgate-wrt-0.6.0_alpha2_pre2-r1"
+	//   apk : "tollgate-wrt-0.6.0_alpha2_pre3-r1"
 	installedPkgVersionRe = regexp.MustCompile(`(?m)tollgate-wrt[ 	]*-[ 	]*(v?[0-9][A-Za-z0-9._~+-]*)`)
 	// installedPkgStatusRe reads an opkg control/status block.
 	installedPkgStatusRe = regexp.MustCompile(`(?m)^Package:[ 	]*tollgate-wrt[ 	]*\r?\nVersion:[ 	]*(\S+)`)
@@ -450,8 +450,8 @@ var tollgateBuildProbes = []string{
 
 // identifyInstalledTollgateBuild is the pure core of the readback: it walks the
 // ladder with the injected command runner and returns a short identification
-// ("v0.6.0-alpha2-g7cd1882 (commit 7cd1882)" from the CLI on the current
-// main-tip build, or "0.6.0_alpha2_pre2-r1" from package metadata), or "" when
+// ("v0.6.0-alpha2-g373770a (commit 373770a)" from the CLI on the current
+// main-tip build, or "0.6.0_alpha2_pre3-r1" from package metadata), or "" when
 // no rung yields a version. Testable without SSH.
 func identifyInstalledTollgateBuild(get func(cmd string) string) string {
 	if get == nil {
