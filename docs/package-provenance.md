@@ -33,7 +33,7 @@ The install step records the candidate URL **only once the bytes are confirmed
 on the router**, then logs:
 
 ```
-tollgate-wrt source: FreedomTechFeed/packages release — https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre/tollgate-wrt_0.6.0_alpha2_pre_aarch64_cortex-a53.apk
+tollgate-wrt source: FreedomTechFeed/packages release — https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre3/tollgate-wrt_0.6.0_alpha2_pre3_aarch64_cortex-a53.apk
 ```
 
 If neither candidate supplies the package the log says so explicitly
@@ -57,13 +57,13 @@ a version wins) and reports it in the log and in the install step's detail:
 Result, e.g.:
 
 ```
-Installed tollgate-wrt build: v0.6.0-alpha2-g089e876 (commit 089e876)
-step install → "tollgate-wrt v0.6.0-alpha2-g089e876 (commit 089e876) installed via apk from FreedomTechFeed/packages release"
+Installed tollgate-wrt build: v0.6.0-alpha2-g373770a (commit 373770a)
+step install → "tollgate-wrt v0.6.0-alpha2-g373770a (commit 373770a) installed via apk from FreedomTechFeed/packages release"
 ```
 
 On the current main-tip package the CLI rung reports the version string with the
-**source commit appended** (`v0.6.0-alpha2-g089e876`) while the package-metadata
-rungs report the apk version (`0.6.0_alpha2_pre-r1`) — see "Version string vs
+**source commit appended** (`v0.6.0-alpha2-g373770a`) while the package-metadata
+rungs report the apk version (`0.6.0_alpha2_pre3-r1`) — see "Version string vs
 source commit" below.
 
 Every rung is optional: an older backend (v0.5.0) or an image whose CLI is not
@@ -90,14 +90,14 @@ Makefile keeps — `PKG_SOURCE_VERSION` (hyphen, tags the release) and
 | | |
 |---|---|
 | Feed repo | `FreedomTechFeed/packages` (`net/tollgate-wrt/Makefile`) |
-| Selected tag | **`v0.6.0-alpha2-pre`** — the main-tip pre-release |
-| Package version | **`0.6.0_alpha2_pre`** (tag with the leading `v` dropped and `-` → `_`), installed as `0.6.0_alpha2_pre-r1` |
-| Source commit | **`089e876`** of `tollgate-module-basic-go` (the feed build is SHA-pinned to it) |
+| Selected tag | **`v0.6.0-alpha2-pre3`** — the main-tip pre-release |
+| Package version | **`0.6.0_alpha2_pre3`** (tag with the leading `v` dropped and `-` → `_`), installed as `0.6.0_alpha2_pre3-r1` |
+| Source commit | **`373770a`** of `tollgate-module-basic-go` (the feed build is SHA-pinned to it) |
 | Assets | 7 arches × {`.ipk`, `.apk`} = 14: `aarch64_cortex-a53`, `aarch64_cortex-a72`, `arm_cortex-a7`, `mips64_octeonplus`, `mipsel_24kc`, `mips_24kc`, `x86_64` |
 | Naming | `tollgate-wrt_0.6.0_alpha2_pre_<arch>.<ext>` |
 
 There is exactly **one** version literal in the code —
-`feedReleaseTagDefault = "v0.6.0-alpha2-pre"` — and one conversion rule,
+`feedReleaseTagDefault = "v0.6.0-alpha2-pre3"` — and one conversion rule,
 `feedPkgVersionForTag` (strip the leading `v`, `-` → `_`). `feedAssetURL` builds
 every URL as
 `<feed repo release download>/<effective tag>/tollgate-wrt_<derived version>_<arch><ext>`,
@@ -134,10 +134,10 @@ other:
 
 | String | Where it comes from | Value on this release |
 |---|---|---|
-| Package version | The feed's `PKG_VERSION`, the release tag in apk-legal spelling | `0.6.0_alpha2_pre` (installed as `0.6.0_alpha2_pre-r1`) |
-| Binary version string | Compiled into the installed binary | `v0.6.0-alpha2-g089e876` |
+| Package version | The feed's `PKG_VERSION`, the release tag in apk-legal spelling | `0.6.0_alpha2_pre3` (installed as `0.6.0_alpha2_pre3-r1`) |
+| Binary version string | Compiled into the installed binary | `v0.6.0-alpha2-g373770a` |
 
-The binary's string embeds the **source commit** (`-g089e876`) and does **not**
+The binary's string embeds the **source commit** (`-g373770a`) and does **not**
 equal the tag-derived package version. That is expected: the version string
 identifies the release line, while the **commit identifies the build**. Two
 different main-tip builds can carry the same version string and different
@@ -166,11 +166,11 @@ architecture's asset.
   publish `tollgate-wrt_0.6.0_alpha1_<arch>.{ipk,apk}`; its `.ipk` control file
   reports `Package: tollgate-wrt`, `Version: 0.6.0_alpha1-r1`, which is what the
   read-back ladder reports.
-- For the **current** pin (`v0.6.0-alpha2-pre`), the release's asset list was
+- For the **current** pin (`v0.6.0-alpha2-pre3`), the release's asset list was
   queried live and the code's derived names were compared against it — see
   "Verification of the v0.6.0-alpha2-pre repin" below.
 
-## Verification of the `v0.6.0-alpha2-pre` repin
+## Verification of the `v0.6.0-alpha2-pre3` repin
 
 Verified by this change:
 
@@ -185,7 +185,7 @@ Verified by this change:
   names) by `TestFeedAssetURL`.
 - The `x86_64` `.ipk` was downloaded from the release and its payload inspected:
   `Version: 0.6.0_alpha2_pre-r1` in the control file, and the version string
-  `v0.6.0-alpha2-g089e876` present in the shipped `usr/bin/tollgate-wrt` binary.
+  `v0.6.0-alpha2-g373770a` present in the shipped `usr/bin/tollgate-wrt` binary.
   This is how the two strings in the table above were established; it is a
   file-level check on one arch, not a router run.
 
