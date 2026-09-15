@@ -842,6 +842,38 @@ func tollgateDiagnostics(client *ssh.Client, listening bool, body string) string
 	return strings.Join(parts, "\n")
 }
 
+// upstreamOnline reports whether the router can actually USE the internet
+// after the STA associates — a wwan interface can be "up" (layer-2 associated)
+// with no default route or no working DNS. A fresh STA on some OpenWrt builds
+// leaves /etc/resolv.conf pointing at ::1 with nothing listening, so dnsmasq is
+// restarted once. Returns a multi-line diagnostic block for logging/failure
+// detail. The payment backend registers its wallet (probing every mint) BEFORE
+// it binds :2121, so no internet means the API never comes up — this check
+// turns a 2-minute health-check timeout into an immediate, actionable message.
+func upstreamOnline(client *ssh.Client) (bool, string) {
+	sshRun(client, "/etc/init.d/dnsmasq restart 2>/dev/null; true")
+	var pingOK, dnsOK bool
+	for i := 0; i < 8; i++ {
+		pout := sshRun(client, "ping -c1 -W3 1.1.1.1 2>&1 | tail -2")
+		pingOK = strings.Contains(pout, "1 received") || strings.Contains(pout, "1 packets received")
+		dout := sshRun(client, "nslookup github.com 2>&1 | tail -2")
+		dnsOK = strings.Contains(dout, "Address") &&
+			!strings.Contains(dout, "can't") && !strings.Contains(dout, "timed out") && !strings.Contains(dout, "refused")
+		if pingOK && dnsOK {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	diag := strings.Join([]string{
+		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v", pingOK, dnsOK),
+		"route: " + truncate(sshRun(client, "ip route show default 2>/dev/null | head -2"), 200),
+		"wan: " + truncate(sshRun(client, "ubus call network.interface.wwan status 2>/dev/null | grep -E 'up|address|dns-server' | head -6"), 300),
+		"resolv: " + truncate(sshRun(client, "grep -v '^#' /etc/resolv.conf 2>/dev/null | head -4"), 200),
+		"dnsmasq: " + truncate(sshRun(client, "pgrep -f dnsmasq >/dev/null && echo running || echo 'not running'"), 40),
+	}, "\n")
+	return pingOK && dnsOK, diag
+}
+
 // staSetupScript returns the shell script that configures the
 // tollgate_uplink STA iface on the radio matching band ("2.4"/"5"/"6"), or
 // radio0 when band is empty/unknown.
@@ -1245,6 +1277,26 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 				job.addLog(fmt.Sprintf("No LAN/upstream subnet conflict (LAN=%s.0/24, upstream=%s.0/24)", lanPrefix, gwPrefix))
 			}
 		}
+	}
+
+	// Verify the router can actually USE the upstream before continuing: a
+	// wwan iface can be "up" with no route/DNS, and the payment backend cannot
+	// bind :2121 until its wallet registers against the mints over the
+	// internet. Fail early with an actionable message rather than a 2-minute
+	// health-check timeout.
+	if online, odiag := upstreamOnline(client); !online {
+		job.addLog("Router associated to \"" + ssid + "\" but the internet looks unavailable:\n" + odiag)
+		job.addLog("Retrying after a network + dnsmasq reload...")
+		sshRun(client, "/etc/init.d/network reload 2>/dev/null; /etc/init.d/dnsmasq restart 2>/dev/null; sleep 3")
+		if online2, odiag2 := upstreamOnline(client); !online2 {
+			job.addLog("Router still offline after reload:\n" + odiag2)
+			jobFail(job, 5, "upstream has no internet",
+				"Associated to \""+ssid+"\" but the router cannot reach the internet (no default route / no DNS). Check that the upstream network actually provides internet and is not a captive portal.\n"+odiag2)
+			return false
+		}
+		job.addLog("Internet available after reload")
+	} else {
+		job.addLog("Upstream internet verified (route + DNS)")
 	}
 
 	job.setStep(5, "done", "STA mode: "+ssid)
