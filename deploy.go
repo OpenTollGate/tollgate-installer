@@ -655,8 +655,9 @@ func runDeployment(job *Job, req deployRequest) {
 	// 8b: Write margin + profit_share to config.json.
 	// Also ensure 9 default mints (7 production + 2 testnut zero-fee) are present (idempotent).
 	// Does NOT strip minibits (DLEQ keyset rotation bug fixed in gonuts v0.11.1).
-	devSplit := clamp(req.DevSplit, 0, 50)
-	margin := clamp(req.Margin, 0, 100)
+	devSplit, margin := req.resolvedAdvanced()
+	devSplit = clamp(devSplit, 0, 50)
+	margin = clamp(margin, 0, 100)
 	ownerFactor := strconv.FormatFloat(1.0-float64(devSplit)/100.0, 'f', 4, 64)
 	devFactor := strconv.FormatFloat(float64(devSplit)/100.0, 'f', 4, 64)
 	defaultMints := `[
@@ -1084,6 +1085,58 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass s
 	return true
 }
 
+// testSTAConfig applies the STA settings for ssid/wifiPass, waits for the
+// wwan interface to come up, then ALWAYS restores the pre-change wireless
+// config. Used by /api/wifi-test so a wrong SSID/password surfaces on the form
+// before a deploy spends time flashing/installing. Returns (ok, message).
+func testSTAConfig(ip, password, ssid, wifiPass string) (bool, string) {
+	client := sshConnect(ip, password)
+	if client == nil && password != "" {
+		client = sshConnect(ip, "")
+	}
+	if client == nil {
+		return false, "cannot connect to router via SSH"
+	}
+	fw := sshRun(client, "cat /etc/openwrt_release 2>/dev/null")
+	if !strings.Contains(fw, "OpenWrt") {
+		client.Close()
+		return false, "the router is not running OpenWrt yet — the WiFi check runs after flashing"
+	}
+
+	out := sshRun(client, staSetupScript(ssid, wifiPass))
+	if strings.Contains(out, "NO_RADIO") {
+		rollbackWireless(client)
+		client.Close()
+		return false, "no wireless radio found on the router"
+	}
+	if !strings.Contains(out, "STA_CFG_OK") {
+		rollbackWireless(client)
+		client.Close()
+		return false, "failed to apply the WiFi settings"
+	}
+	sshRun(client, "wifi reload 2>/dev/null || wifi 2>/dev/null || true")
+	client.Close()
+
+	c := reconnectSSH(ip, password, 3, 5*time.Second)
+	up := false
+	if c != nil {
+		for i := 0; i < 15 && !up; i++ { // ~22s budget: association + DHCP
+			up = ifaceUp(sshRun(c, "ubus call network.interface.wwan status 2>/dev/null"))
+			if !up {
+				time.Sleep(1500 * time.Millisecond)
+			}
+		}
+		// Always restore the router's prior wireless config after the test —
+		// the check must not leave the router reconfigured.
+		rollbackWireless(c)
+		c.Close()
+	}
+	if !up {
+		return false, "WiFi connection failed for \"" + ssid + "\" — check the SSID and password"
+	}
+	return true, "connected to \"" + ssid + "\""
+}
+
 // httpGetFile downloads a release asset on the laptop, following redirects
 // (GitHub release URLs redirect to a CDN), with a 60s timeout and a 64 MB
 // size guard. This is the PRIMARY package path — pushing the bytes over SSH
@@ -1225,6 +1278,45 @@ func stageAssetURLs(isStockGL bool, glModel, pkgMgr string) []string {
 	return urls
 }
 
+// stageAssetURLsForArch is the arch-aware variant of stageAssetURLs used by
+// the selection-time pre-stage job and the deploy PreStage step. It derives
+// the package URLs for the DETECTED OpenWrt arch (feed-primary plus the
+// GitHub fallback), so a non-aarch64 router is not served the wrong package.
+// An empty arch (unknown, e.g. a stock router that will be flashed) falls back
+// to the pinned aarch64 assets, matching the historical behaviour.
+func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) []string {
+	urls := []string{}
+	pkg := func(ext string) []string {
+		if arch == "" {
+			if ext == ".apk" {
+				return []string{tollgatePkgAPKURL}
+			}
+			return []string{tollgatePkgURL}
+		}
+		return pkgCandidateURLs(arch, ext)
+	}
+	if isStockGL {
+		if img, ok := glModelMap[glModel]; ok {
+			urls = append(urls, img.URL())
+		}
+		// The post-flash package manager is only known after the reboot, so
+		// stage both formats.
+		urls = append(urls, pkg(".ipk")...)
+		urls = append(urls, pkg(".apk")...)
+		return urls
+	}
+	switch pkgMgr {
+	case "apk":
+		urls = append(urls, pkg(".apk")...)
+	case "opkg":
+		urls = append(urls, pkg(".ipk")...)
+	default: // unknown — stage both so a later probe hits the cache
+		urls = append(urls, pkg(".ipk")...)
+		urls = append(urls, pkg(".apk")...)
+	}
+	return urls
+}
+
 // runPreStage is the PreStage wiring point called from runDeployment right
 // after verify (so glModel/isStockGL are known) and before flash. It probes
 // the router's package manager (when the router is already OpenWrt — a stock
@@ -1235,10 +1327,12 @@ func stageAssetURLs(isStockGL bool, glModel, pkgMgr string) []string {
 // live-fetch → router-wget → feed fallbacks on a cache miss.
 func runPreStage(job *Job, client *ssh.Client, isStockGL bool, glModel string) {
 	pkgMgr := ""
+	arch := ""
 	if !isStockGL && client != nil {
 		pkgMgr = strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
+		arch = detectArch(client)
 	}
-	urls := stageAssetURLs(isStockGL, glModel, pkgMgr)
+	urls := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
 	if len(urls) == 0 {
 		job.addLog("PreStage: nothing to stage for this router state")
 		return

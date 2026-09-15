@@ -15,6 +15,10 @@ type RouterInfo struct {
 	Vendor   string `json:"vendor"`
 	Model    string `json:"model"`
 	Firmware string `json:"firmware"`
+	// Name is a friendly display label (e.g. "GL-MT3000") derived from
+	// model/vendor/OUI. The UI shows it instead of a bare IP so the operator
+	// can tell devices apart. Best-effort: never affects routing or deploy.
+	Name     string `json:"name"`
 	SSH      bool   `json:"ssh_open"`
 	HTTPPort int    `json:"http_port,omitempty"`
 }
@@ -64,6 +68,9 @@ func discoverRouters() []RouterInfo {
 					info.MAC = a.MAC
 				}
 			}
+			// Recompute the friendly name now the MAC is known (the OUI
+			// fallback in friendlyRouterName needs it).
+			info.Name = friendlyRouterName(info)
 			found = append(found, info)
 		}
 	}
@@ -98,7 +105,15 @@ func readARPTable() []arpEntry {
 	return entries
 }
 
-func probeRouter(ip string) RouterInfo {
+// probeRouter probes ip with passwordless SSH (the LAN scan path).
+func probeRouter(ip string) RouterInfo { return probeRouterWithPassword(ip, "") }
+
+// probeRouterWithPassword probes ip, using password when non-empty so a
+// password-protected router can still be identified (the wizard calls this
+// after the operator enters the root password, via /api/identify). The
+// friendly Name is computed here; discoverRouters recomputes it once the MAC
+// has been enriched so the OUI fallback can apply.
+func probeRouterWithPassword(ip, password string) RouterInfo {
 	info := RouterInfo{IP: ip, Vendor: "unknown", Model: "unknown", Firmware: "unknown"}
 
 	// Check SSH port 22
@@ -112,15 +127,16 @@ func probeRouter(ip string) RouterInfo {
 		}
 	}
 
-	// Try SSH-based identification (passwordless first, common for fresh OpenWrt)
+	// Try SSH-based identification (password when supplied, else passwordless)
 	if info.SSH {
-		if fw, vendor, model := sshIdentify(ip, ""); fw != "" {
+		if fw, vendor, model := sshIdentify(ip, password); fw != "" {
 			info.Firmware = fw
 			info.Vendor = vendor
 			info.Model = model
 		}
 	}
 
+	info.Name = friendlyRouterName(info)
 	return info
 }
 
@@ -237,4 +253,61 @@ func sshIdentify(ip, password string) (firmware, vendor, model string) {
 	}
 
 	return
+}
+
+// prettyModel turns an OpenWrt board_name / GL release model into a display
+// name: "glinet,gl-mt3000" -> "GL-MT3000", "gl-mt3000" -> "GL-MT3000"; other
+// strings are returned unchanged.
+func prettyModel(model string) string {
+	model = strings.TrimSpace(model)
+	if i := strings.LastIndex(model, ","); i >= 0 {
+		model = strings.TrimSpace(model[i+1:])
+	}
+	if model == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToUpper(model), "GL-") {
+		return strings.ToUpper(model)
+	}
+	return model
+}
+
+// friendlyRouterName builds a human label for a discovered device: the
+// prettified model when known, else the vendor, else an OUI-derived vendor,
+// else "Router". Never returns the raw "unknown"/"unknown unknown" pair.
+func friendlyRouterName(info RouterInfo) string {
+	model := strings.TrimSpace(info.Model)
+	vendor := strings.TrimSpace(info.Vendor)
+	if model != "" && model != "unknown" {
+		if p := prettyModel(model); p != "" {
+			return p
+		}
+	}
+	if vendor != "" && vendor != "unknown" {
+		return vendor + " router"
+	}
+	if v := ouiVendor(info.MAC); v != "" {
+		return v + " device"
+	}
+	return "Router"
+}
+
+// ouiVendors is a small best-effort MAC-prefix table used only to make the
+// dropdown friendlier when SSH identification is unavailable. A miss (or a
+// wrong guess) only affects the display label — never routing or deploy.
+var ouiVendors = map[string]string{
+	"94:83:C4": "GL.iNet",
+	"E4:95:6E": "GL.iNet",
+	"52:54:00": "QEMU",
+	"00:1C:42": "Parallels",
+}
+
+// ouiVendor returns the vendor for a MAC's OUI (first three octets), or "".
+func ouiVendor(mac string) string {
+	mac = strings.ToUpper(strings.TrimSpace(mac))
+	mac = strings.ReplaceAll(mac, "-", ":")
+	if len(mac) < 8 {
+		return ""
+	}
+	return ouiVendors[mac[:8]]
 }

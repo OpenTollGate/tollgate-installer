@@ -93,6 +93,20 @@ func newJob(ip string) *Job {
 	}
 }
 
+// newPreStageJob creates a job for a selection-time pre-download
+// (/api/prestage). Same Job type (so /api/status works unchanged) but a short
+// prestageSteps() list.
+func newPreStageJob(ip string) *Job {
+	return &Job{
+		IP:         ip,
+		Status:     "running",
+		Step:       0,
+		Steps:      prestageSteps(),
+		Log:        []LogEntry{},
+		stageCache: map[string][]byte{},
+	}
+}
+
 func (j *Job) addLog(msg string) {
 	j.mu.Lock()
 	j.Log = append(j.Log, LogEntry{Time: float64(time.Now().Unix()), Msg: msg})
@@ -135,12 +149,69 @@ func (j *Job) stagedAsset(url string) ([]byte, bool) {
 	return data, ok
 }
 
+// adoptStageCache copies every staged asset from src into dst and returns how
+// many it moved. It hands a /api/prestage job's downloads to the deploy job so
+// the install/flash steps reuse them instead of re-fetching. Safe with a nil
+// src or dst (returns 0). Locks are taken one at a time (never nested) to
+// avoid any lock-order deadlock.
+func adoptStageCache(dst, src *Job) int {
+	if dst == nil || src == nil {
+		return 0
+	}
+	src.mu.Lock()
+	staged := make(map[string][]byte, len(src.stageCache))
+	for u, d := range src.stageCache {
+		staged[u] = d
+	}
+	src.mu.Unlock()
+	for u, d := range staged {
+		dst.stageAsset(u, d)
+	}
+	return len(staged)
+}
+
 // ─── API handlers ─────────────────────────────────────────────
 
 func handleScan(w http.ResponseWriter, r *http.Request) {
 	routers := discoverRouters()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"routers": routers})
+}
+
+// identifyRequest is the JSON body for /api/identify.
+type identifyRequest struct {
+	IP       string `json:"ip"`
+	Password string `json:"password"`
+}
+
+// handleIdentify re-identifies a router (vendor/model/firmware/name) using the
+// supplied root password. The LAN scan only tries passwordless SSH, so a
+// password-protected router shows as "Router" until the operator types the
+// password; this endpoint lets the UI refresh the label then. Read-only: it
+// probes ports and runs one SSH identification, never changes the router.
+func handleIdentify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req identifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" {
+		writeError(w, 400, "IP required")
+		return
+	}
+	info := probeRouterWithPassword(req.IP, req.Password)
+	for _, a := range readARPTable() {
+		if a.IP == req.IP && info.MAC == "" {
+			info.MAC = a.MAC
+		}
+	}
+	info.Name = friendlyRouterName(info)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
 }
 
 // wifiScanRequest is the JSON body for /api/wifi-scan.
@@ -492,6 +563,70 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handlePreStage starts a background pre-download of the deploy assets for a
+// router, so the download begins as soon as the operator selects it. The
+// resulting job id can be passed to /api/deploy as prestageJobId to reuse the
+// cached bytes. The router is not modified.
+func handlePreStage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req prestageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" {
+		writeError(w, 400, "IP required")
+		return
+	}
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
+	job := newPreStageJob(req.IP)
+	jobsMutex.Lock()
+	jobs[jobID] = job
+	jobsMutex.Unlock()
+	go runPreStageJob(job, req)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// wifiTestRequest is the JSON body for /api/wifi-test.
+type wifiTestRequest struct {
+	IP       string `json:"ip"`
+	Password string `json:"password"`
+	SSID     string `json:"ssid"`
+	WifiPass string `json:"wifiPass"`
+}
+
+// handleWifiTest proactively verifies the upstream WiFi (SSID + password)
+// before deploy: it applies the STA config, waits for association, then rolls
+// the wireless config back, so a wrong password surfaces on the form instead
+// of after the flash/install steps. Blocks up to ~40s. Read-only-ish: the
+// router's wireless config is restored before returning.
+func handleWifiTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req wifiTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" || req.SSID == "" {
+		writeError(w, 400, "ip and ssid are required")
+		return
+	}
+	ok, msg := testSTAConfig(req.IP, req.Password, req.SSID, req.WifiPass)
+	w.Header().Set("Content-Type", "application/json")
+	if !ok {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": msg})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
+}
+
 type deployRequest struct {
 	IP       string `json:"ip"`
 	Password string `json:"password"`
@@ -499,8 +634,8 @@ type deployRequest struct {
 	SSID     string `json:"ssid"`     // for sta mode
 	WifiPass string `json:"wifiPass"` // for sta mode
 	LNURL    string `json:"lnurl"`    // Lightning address or raw LNURL
-	DevSplit int    `json:"devSplit"` // advanced: % to dev fund (0-50, default 10)
-	Margin   int    `json:"margin"`   // advanced: operator markup % (0-100, default 0)
+	DevSplit *int   `json:"devSplit"` // advanced: % to dev fund (0-50); nil => defaultDevSplit
+	Margin   *int   `json:"margin"`   // advanced: operator markup % (0-100); nil => defaultMargin
 	Mint     string `json:"mint"`     // advanced: preferred Cashu mint URL
 	// PreStage asks the wizard to download all deploy binaries up-front into
 	// the Job's stageCache before running the flash/install steps, so the
@@ -516,6 +651,32 @@ type deployRequest struct {
 	// (e.g. 24.10 -> 25.12) and ALWAYS wipes config (sysupgrade -n), then
 	// continues the normal deploy on a clean system. Explicit opt-in only.
 	ForceFlash bool `json:"forceFlash"`
+	// PrestageJobID optionally references a /api/prestage job whose stage
+	// cache should be adopted by this deploy, so the assets pre-downloaded
+	// when the router was selected are reused instead of fetched again.
+	PrestageJobID string `json:"prestageJobId"`
+}
+
+// Advanced-field defaults. The wizard pre-fills the sliders with these; the
+// server applies them too when the field is omitted (nil), so API callers get
+// the same defaults without having to know the values. An explicit 0
+// ("devSplit":0) is honoured — only ABSENCE means "use the default".
+const (
+	defaultDevSplit = 21
+	defaultMargin   = 21
+)
+
+// resolvedAdvanced returns the effective dev split / margin, substituting the
+// defaults for omitted (nil) fields.
+func (r deployRequest) resolvedAdvanced() (int, int) {
+	devSplit, margin := defaultDevSplit, defaultMargin
+	if r.DevSplit != nil {
+		devSplit = *r.DevSplit
+	}
+	if r.Margin != nil {
+		margin = *r.Margin
+	}
+	return devSplit, margin
 }
 
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
@@ -537,6 +698,19 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
 	job := newJob(req.IP)
+
+	// Adopt assets pre-downloaded by a /api/prestage job (started when the
+	// router was selected) so the deploy reuses them instead of re-fetching.
+	if pid := strings.TrimSpace(req.PrestageJobID); pid != "" {
+		jobsMutex.RLock()
+		pj, ok := jobs[pid]
+		jobsMutex.RUnlock()
+		if ok {
+			if n := adoptStageCache(job, pj); n > 0 {
+				job.addLog(fmt.Sprintf("Using %d pre-downloaded asset(s) from pre-stage job %s", n, pid))
+			}
+		}
+	}
 
 	jobsMutex.Lock()
 	jobs[jobID] = job
@@ -627,7 +801,10 @@ func main() {
 	listenAddr = ":" + *listenPort
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/scan", handleScan)
+	mux.HandleFunc("/api/identify", handleIdentify)
 	mux.HandleFunc("/api/wifi-scan", handleWifiScan)
+	mux.HandleFunc("/api/wifi-test", handleWifiTest)
+	mux.HandleFunc("/api/prestage", handlePreStage)
 	mux.HandleFunc("/api/deploy", handleDeploy)
 	mux.HandleFunc("/api/status/", handleStatus)
 	mux.HandleFunc("/", handleIndex)

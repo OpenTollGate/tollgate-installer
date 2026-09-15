@@ -183,7 +183,7 @@
       <div class="field">
         <label>Upstream WiFi SSID</label>
         <div style="display:flex; gap:0.5rem; align-items:center;">
-          <select id="ssid" disabled>
+          <select id="ssid" disabled onchange="onSsidChange()">
             <option value="">Select router first to scan...</option>
           </select>
           <button type="button" class="btn btn-secondary" id="rescan-btn" onclick="wifiScan()" style="width:auto; padding:10px 14px; margin-top:0; white-space:nowrap;">Rescan</button>
@@ -192,7 +192,11 @@
       </div>
       <div class="field">
         <label>Upstream WiFi password</label>
-        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password">
+        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password" oninput="onWifiPassChange()">
+        <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.5rem;">
+          <button type="button" class="btn btn-secondary" id="wifi-test-btn" onclick="testUpstreamWifi()" style="width:auto; padding:8px 12px; margin-top:0;">Test WiFi connection</button>
+          <span class="hint" id="wifi-test-status"></span>
+        </div>
       </div>
     </div>
     <div class="field">
@@ -204,16 +208,16 @@
     <details class="advanced">
       <summary>Advanced settings (optional)</summary>
       <div class="field">
-        <label>Dev split <span class="range-val" id="devsplit-val">10%</span></label>
-        <input type="range" id="devsplit" min="0" max="50" value="10"
+        <label>Dev split <span class="range-val" id="devsplit-val">21%</span></label>
+        <input type="range" id="devsplit" min="0" max="50" value="21"
                oninput="document.getElementById('devsplit-val').textContent=this.value+'%'">
-        <div class="hint">Share of payments routed to the TollGate developer fund. Default 10%.</div>
+        <div class="hint">Share of payments routed to the TollGate developer fund. Default 21%.</div>
       </div>
       <div class="field">
-        <label>Margin <span class="range-val" id="margin-val">0%</span></label>
-        <input type="range" id="margin" min="0" max="100" value="0"
+        <label>Margin <span class="range-val" id="margin-val">21%</span></label>
+        <input type="range" id="margin" min="0" max="100" value="21"
                oninput="document.getElementById('margin-val').textContent=this.value+'%'">
-        <div class="hint">Operator markup added on top of data costs. Default 0%.</div>
+        <div class="hint">Operator markup added on top of data costs. Default 21%.</div>
       </div>
       <div class="field">
         <label>Cashu mint preference</label>
@@ -225,7 +229,7 @@
       </div>
       <div class="field">
         <label class="precheck" for="forceflash" style="margin-bottom:0;">
-          <input type="checkbox" id="forceflash">
+          <input type="checkbox" id="forceflash" onchange="schedulePreStage()">
           <span class="precheck-text">Force reflash firmware (ERASES router config; upgrades to the pinned OpenWrt release)</span>
         </label>
         <div class="hint">Normally skipped when the router already runs OpenWrt. Enable to run <code>sysupgrade -n</code> onto the pinned release (e.g. 24.10 &rarr; 25.12), then continue the deploy on the clean system.</div>
@@ -236,6 +240,7 @@
       <input type="checkbox" id="prestage">
       <span class="precheck-text">Pre-download required packages before deploy (needed if the laptop's only internet is via the router being flashed)</span>
     </label>
+    <div class="hint" id="prestage-status" style="margin:0 0 1rem 0;"></div>
 
     <button class="btn" id="deploy-btn" onclick="startDeploy()" disabled>Deploy TollGate</button>
     <button class="btn btn-secondary" onclick="scanAgain()">Scan again</button>
@@ -275,6 +280,8 @@ let pollTimer = null;
 let upstreamMode = 'wan';
 let scannedSSIDs = [];
 let wifiScanned = false;
+let prestageJobId = '';
+let wifiTestState = 'idle'; // idle | testing | ok | failed | unavailable
 
 function selectMode(mode) {
   upstreamMode = mode;
@@ -290,6 +297,14 @@ function selectMode(mode) {
   if (mode === 'sta' && !wifiScanned) {
     wifiScan();
   }
+  if (mode !== 'sta') {
+    wifiTestState = 'idle';
+    setWifiTestStatus('idle', '');
+  } else if (document.getElementById('ssid').value && document.getElementById('wifi-pass').value) {
+    // Re-test the upstream once the operator returns to STA mode.
+    testUpstreamWifi();
+  }
+  schedulePreStage();
   checkReady();
 }
 
@@ -305,6 +320,12 @@ function onPasswordChange() {
     clearTimeout(window._wifiScanTimer);
     window._wifiScanTimer = setTimeout(wifiScan, 600);
   }
+  // Re-identify the selected router with the new password (debounced) so the
+  // dropdown shows a real model name instead of "Router".
+  clearTimeout(window._identifyTimer);
+  window._identifyTimer = setTimeout(refreshRouterName, 600);
+  // The router password is also what pre-staging SSHes with — restart it.
+  schedulePreStage();
   checkReady();
 }
 
@@ -312,11 +333,135 @@ function onRouterChange() {
   // Reset WiFi scan when router changes
   if (upstreamMode === 'sta') {
     wifiScanned = false;
+    wifiTestState = 'idle';
+    setWifiTestStatus('idle', '');
     const ssidSelect = document.getElementById('ssid');
     ssidSelect.innerHTML = '<option value="">Select router, then Rescan...</option>';
     ssidSelect.disabled = true;
   }
+  // Re-identify the newly selected router (password if already typed).
+  refreshRouterName();
+  // Start pre-downloading the deploy assets for the new target.
+  schedulePreStage();
   checkReady();
+}
+
+// ---- Selection-time pre-download of deploy assets ----
+function schedulePreStage() {
+  clearTimeout(window._prestageTimer);
+  window._prestageTimer = setTimeout(startPreStage, 800);
+}
+
+async function startPreStage() {
+  const ip = document.getElementById('router-select').value;
+  if (!ip) { setPrestageStatus('idle', ''); return; }
+  prestageJobId = '';
+  setPrestageStatus('running', 'Pre-downloading required packages...');
+  try {
+    const resp = await fetch('/api/prestage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ip: ip,
+        password: document.getElementById('password').value,
+        forceFlash: document.getElementById('forceflash').checked,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.job_id) { setPrestageStatus('idle', ''); return; }
+    prestageJobId = data.job_id;
+    pollPreStage(data.job_id);
+  } catch (e) { setPrestageStatus('idle', ''); }
+}
+
+function pollPreStage(id) {
+  clearInterval(window._prestagePoll);
+  window._prestagePoll = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/status/' + id);
+      const st = await resp.json();
+      if (st.status === 'done') {
+        clearInterval(window._prestagePoll);
+        setPrestageStatus('done', 'Required packages pre-downloaded');
+      } else if (st.status === 'failed') {
+        clearInterval(window._prestagePoll);
+        prestageJobId = '';
+        setPrestageStatus('failed', 'Pre-download failed: ' + (st.error || 'unknown error'));
+      } else {
+        const running = (st.steps || []).find(s => s.status === 'running');
+        setPrestageStatus('running', running ? running.desc : 'Pre-downloading required packages...');
+      }
+    } catch (e) { /* keep polling */ }
+  }, 1500);
+}
+
+function setPrestageStatus(state, msg) {
+  const el = document.getElementById('prestage-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = state === 'failed' ? '#ff8a80'
+                 : state === 'done' ? 'var(--tg-green)' : '#8892b0';
+}
+
+// ---- Proactive upstream WiFi check (STA mode) ----
+function onWifiPassChange() {
+  clearTimeout(window._wifiTestTimer);
+  window._wifiTestTimer = setTimeout(testUpstreamWifi, 700);
+}
+
+function onSsidChange() {
+  if (document.getElementById('wifi-pass').value) testUpstreamWifi();
+  checkReady();
+}
+
+async function testUpstreamWifi() {
+  const ip = document.getElementById('router-select').value;
+  const ssid = document.getElementById('ssid').value;
+  if (!ip || !ssid) return;
+  const wifiPass = document.getElementById('wifi-pass').value;
+  if (!wifiPass) { setWifiTestStatus('idle', 'Enter the WiFi password to test'); checkReady(); return; }
+  wifiTestState = 'testing';
+  setWifiTestStatus('testing', 'Testing WiFi connection...');
+  checkReady();
+  try {
+    const resp = await fetch('/api/wifi-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ip: ip,
+        password: document.getElementById('password').value,
+        ssid: ssid,
+        wifiPass: wifiPass,
+      }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      wifiTestState = 'ok';
+      setWifiTestStatus('ok', 'WiFi OK: ' + (data.message || ssid));
+    } else {
+      const msg = data.error || 'WiFi test failed';
+      if (/not running OpenWrt/i.test(msg)) {
+        // Stock firmware: the check only works after flashing — not a failure.
+        wifiTestState = 'unavailable';
+        setWifiTestStatus('idle', msg);
+      } else {
+        wifiTestState = 'failed';
+        setWifiTestStatus('failed', msg);
+      }
+    }
+  } catch (e) {
+    wifiTestState = 'failed';
+    setWifiTestStatus('failed', 'WiFi test failed — is the router reachable?');
+  }
+  checkReady();
+}
+
+function setWifiTestStatus(state, msg) {
+  const el = document.getElementById('wifi-test-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = state === 'failed' ? '#ff8a80'
+                 : state === 'ok' ? 'var(--tg-green)' : '#8892b0';
 }
 
 async function wifiScan() {
@@ -438,15 +583,54 @@ function showSelectView() {
   const select = document.getElementById('router-select');
   select.innerHTML = '';
   detectedRouters.forEach(r => {
-    let name = (r.vendor + ' ' + r.model).trim();
-    if (name === 'unknown unknown' || name === '') name = 'Router';
-    const label = name + ' (' + r.ip + ')';
     const opt = document.createElement('option');
     opt.value = r.ip;
-    opt.textContent = label;
+    opt.textContent = formatRouterLabel(r);
+    const meta = [r.vendor, r.firmware, r.mac].filter(x => x && x !== 'unknown').join(' \u00b7 ');
+    if (meta) opt.title = meta;
     select.appendChild(opt);
   });
+  // If the password was already typed (e.g. scan re-run), identify now.
+  if (document.getElementById('password').value) refreshRouterName();
   checkReady();
+}
+
+// formatRouterLabel builds the dropdown text: friendly model/vendor name,
+// firmware when known, then the IP — e.g.
+// "GL-MT3000 — OpenWrt 25.12.5 (192.168.1.1)".
+function formatRouterLabel(r) {
+  let name = (r.name && r.name !== 'unknown') ? r.name : '';
+  if (!name) name = ((r.vendor || '') + ' ' + (r.model || '')).trim();
+  if (!name || name === 'unknown unknown' || name === 'unknown') name = 'Router';
+  const fw = (r.firmware && r.firmware !== 'unknown') ? ' \u2014 ' + r.firmware : '';
+  return name + fw + ' (' + r.ip + ')';
+}
+
+// refreshRouterName re-identifies the selected router with the password the
+// operator typed. The initial LAN scan is passwordless, so a protected router
+// shows as "Router" until this runs. Read-only and best-effort: failures are
+// ignored (the existing label stays).
+async function refreshRouterName() {
+  const ip = document.getElementById('router-select').value;
+  if (!ip) return;
+  const password = document.getElementById('password').value;
+  try {
+    const resp = await fetch('/api/identify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, password: password }),
+    });
+    const info = await resp.json();
+    if (!info || info.error) return;
+    const r = detectedRouters.find(x => x.ip === ip);
+    if (r) Object.assign(r, info);
+    const opt = Array.from(document.getElementById('router-select').options).find(o => o.value === ip);
+    if (opt) {
+      opt.textContent = formatRouterLabel(r || info);
+      const meta = [info.vendor, info.firmware, info.mac].filter(x => x && x !== 'unknown').join(' \u00b7 ');
+      if (meta) opt.title = meta;
+    }
+  } catch (e) { /* identification is best-effort */ }
 }
 
 function scanAgain() {
@@ -462,13 +646,14 @@ function validLightning(ln) {
 
 function checkReady() {
   const ip = document.getElementById('router-select').value;
-  const password = document.getElementById('password').value;
   const ln = document.getElementById('lnurl').value;
   let ready = !!(ip && validLightning(ln));
-  // For STA mode, also require an SSID to be selected
+  // For STA mode, also require an SSID and a passing WiFi test (fail fast:
+  // never let the operator deploy while a test runs or after it failed).
   if (ready && upstreamMode === 'sta') {
     const ssidVal = document.getElementById('ssid').value;
     if (!ssidVal) ready = false;
+    if (wifiTestState === 'testing' || wifiTestState === 'failed') ready = false;
   }
   document.getElementById('deploy-btn').disabled = !ready;
 }
@@ -495,6 +680,7 @@ async function startDeploy() {
     mint: document.getElementById('mint').value,
     preStage: document.getElementById('prestage').checked,
     forceFlash: document.getElementById('forceflash').checked,
+    prestageJobId: prestageJobId,
   };
 
   const resp = await fetch('/api/deploy', {
