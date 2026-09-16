@@ -317,6 +317,48 @@ func TestBandFromChannelRegression(t *testing.T) {
 	}
 }
 
+// TestSanitizeIPv4 pins the fix for the DNS-killing bug: OpenWrt stores
+// network.lan.ipaddr as "192.168.1.1/24", and using that verbatim produced
+// "address=/tollgate.lan/192.168.1.1/24" — dnsmasq rejects it ("Bad address in
+// --address"), crash-loops, and the router can ping but not resolve names.
+func TestSanitizeIPv4(t *testing.T) {
+	cases := map[string]string{
+		"192.168.1.1/24":   "192.168.1.1",
+		"192.168.1.1":      "192.168.1.1",
+		"'192.168.1.1'":    "192.168.1.1",
+		"'192.168.1.1/24'": "192.168.1.1",
+		"10.47.41.1/16":    "10.47.41.1",
+		" 192.168.1.1/24 ": "192.168.1.1",
+		"":                 "",
+		"garbage":          "",
+		"999.1.1.1/24":     "",
+		"fe80::1/64":       "",
+	}
+	for in, want := range cases {
+		if got := sanitizeIPv4(in); got != want {
+			t.Errorf("sanitizeIPv4(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestValidCIDR pins the guard that rejects jq's "null/null" (returned when a
+// ubus interface status has no ipv4-address). Accepting it disabled collision
+// detection entirely on a wired-WAN router.
+func TestValidCIDR(t *testing.T) {
+	good := []string{"192.168.2.8/24", "10.47.0.1/16", "1.2.3.4/32"}
+	bad := []string{"null/null", "", "192.168.1.1", "garbage", "999.1.1.1/24"}
+	for _, s := range good {
+		if !validCIDR(s) {
+			t.Errorf("validCIDR(%q) = false, want true", s)
+		}
+	}
+	for _, s := range bad {
+		if validCIDR(s) {
+			t.Errorf("validCIDR(%q) = true, want false", s)
+		}
+	}
+}
+
 // TestSubnetsOverlap pins the collision check used to relocate our local
 // subnets away from the upstream. It must use the REAL prefixes (an upstream
 // 10.47.0.0/16 collides with our 10.47.41.0/24 and 10.47.42.0/24) while not
