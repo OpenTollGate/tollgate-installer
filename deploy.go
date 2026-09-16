@@ -120,6 +120,19 @@ func runDeployment(job *Job, req deployRequest) {
 	}
 	time.Sleep(500 * time.Millisecond)
 
+	// Heal dnsmasq/hosts corruption left by an earlier installer run BEFORE any
+	// download: older builds wrote the LAN IP with its /24 suffix
+	// ("address=/tollgate.lan/192.168.1.1/24"), dnsmasq rejects that and
+	// crash-loops, and the router then pings but cannot resolve any name — which
+	// breaks the package fetch and the health check. Safe no-op on a stock-GL
+	// router that is about to be flashed.
+	if !isStockGL {
+		if lanIP := repairLanDNS(client); lanIP != "" {
+			sshRun(client, "/etc/init.d/dnsmasq restart 2>/dev/null; true")
+			job.addLog("DNS entries normalized for " + lanIP)
+		}
+	}
+
 	// Step 1: Stage — pre-download deploy assets (optional; req.PreStage).
 	// If the operator asked for it, pre-download every asset the deploy will
 	// need into the Job's stageCache NOW, while the laptop's current
@@ -274,6 +287,10 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 	} else {
 		job.addLog("Using WAN upstream (default)")
+		// A pre-existing local/upstream subnet overlap breaks name resolution
+		// (the router answers for the upstream gateway's own IP), which also
+		// breaks the package download — fix it before installing.
+		client = fixSubnetCollisions(job, client, req.IP, req.Password)
 		job.setStep(5, "done", "WAN mode (default)")
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -542,9 +559,15 @@ func runDeployment(job *Job, req deployRequest) {
 	nodeName := "tollgate-" + string(suffix)
 	job.addLog("Branding as " + nodeName + "...")
 
-	// Get router LAN IP first (needed for DNS entries)
-	routerIP := sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null | tr -d \"'\" | awk '{print $1}'")
-	routerIP = strings.TrimSpace(routerIP)
+	// Get router LAN IP first (needed for DNS entries). netifd stores
+	// network.lan.ipaddr as "192.168.1.1/24" on current OpenWrt, so the value
+	// MUST be sanitized to a bare IPv4 — using "192.168.1.1/24" as an address
+	// makes dnsmasq reject "address=/tollgate.lan/192.168.1.1/24" (Bad address
+	// in --address), crash-loops it, and breaks all name resolution.
+	routerIP := sanitizeIPv4(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null"))
+	if routerIP == "" {
+		routerIP = sanitizeIPv4(sshRun(client, "ip -4 -o addr show dev br-lan 2>/dev/null | awk '{print $4}' | head -1"))
+	}
 	if routerIP == "" {
 		routerIP = "192.168.8.1"
 	}
@@ -568,11 +591,16 @@ func runDeployment(job *Job, req deployRequest) {
 		// Ensure dnsmasq serves .lan domain
 		"uci -q set dhcp.@dnsmasq[0].domain='lan'",
 		"uci -q set dhcp.@dnsmasq[0].local='/lan/'",
-		// dnsmasq address records (belt-and-suspenders with /etc/hosts)
-		"uci -q del_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + routerIP + "' 2>/dev/null; uci -q add_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + routerIP + "'",
+		// dnsmasq address records (belt-and-suspenders with /etc/hosts).
+		// Purge ALL prior /tollgate.lan/* entries first: an older deploy may
+		// have written a corrupt value (e.g. a trailing /24), and a plain
+		// del_list of the new value would leave it in place and keep dnsmasq
+		// crash-looping.
+		"for a in $(uci -q get dhcp.@dnsmasq[0].address); do case \"$a\" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address=\"$a\";; esac; done; uci -q add_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + routerIP + "'",
 		// DHCP: push router as DNS server to all DHCP clients (option 6)
-		// This is what makes .lan domains resolve on connected devices
-		"uci -q del_list dhcp.lan.dhcp_option='6," + routerIP + "' 2>/dev/null; uci -q add_list dhcp.lan.dhcp_option='6," + routerIP + "'",
+		// This is what makes .lan domains resolve on connected devices.
+		// Same purge-first rationale as the address list above.
+		"for a in $(uci -q get dhcp.lan.dhcp_option); do case \"$a\" in 6,*) uci -q del_list dhcp.lan.dhcp_option=\"$a\";; esac; done; uci -q add_list dhcp.lan.dhcp_option='6," + routerIP + "'",
 		// dnsmasq: expand /etc/hosts entries with domain suffix
 		"uci -q set dhcp.@dnsmasq[0].expandhosts='1'",
 		"uci -q set dhcp.@dnsmasq[0].readethers='1'",
@@ -737,6 +765,14 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(10, "done", "tollgate-wrt+nodogsplash+uhttpd")
 	time.Sleep(500 * time.Millisecond)
 
+	// Step 10.5: Re-check subnet collisions now that the tollgate-wrt package
+	// install has run its uci-defaults and created network.private (derived
+	// from network.lan). The derived private subnet can overlap the upstream
+	// even when nothing collided at step 5 — and that silently breaks DNS for
+	// the deployed router (its own private interface answers for the upstream
+	// gateway's IP). Relocate before the health check so the router is usable.
+	client = fixSubnetCollisions(job, client, req.IP, req.Password)
+
 	// Step 11: Health check
 	job.setStep(11, "running", "")
 	job.addLog("Running health check...")
@@ -843,20 +879,52 @@ func tollgateDiagnostics(client *ssh.Client, listening bool, body string) string
 	return strings.Join(parts, "\n")
 }
 
+// repairLanDNS makes dnsmasq + /etc/hosts serve the router's LAN IP as
+// tollgate.lan/tollgate.local, purging any prior entries first. It is
+// idempotent and — crucially — heals corruption written by an older installer
+// build that used network.lan.ipaddr verbatim ("192.168.1.1/24"), which made
+// dnsmasq reject its own config ("Bad address in --address") and crash-loop,
+// breaking all name resolution while ping still worked. Returns the bare LAN
+// IP used, or "" when it could not be determined.
+func repairLanDNS(client *ssh.Client) string {
+	ip := sanitizeIPv4(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null"))
+	if ip == "" {
+		ip = sanitizeIPv4(sshRun(client, "ip -4 -o addr show dev br-lan 2>/dev/null | awk '{print $4}' | head -1"))
+	}
+	if ip == "" {
+		return ""
+	}
+	sshRun(client, strings.Join([]string{
+		"for a in $(uci -q get dhcp.@dnsmasq[0].address); do case \"$a\" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address=\"$a\";; esac; done",
+		"uci -q add_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + ip + "'",
+		"for a in $(uci -q get dhcp.lan.dhcp_option); do case \"$a\" in 6,*) uci -q del_list dhcp.lan.dhcp_option=\"$a\";; esac; done",
+		"uci -q add_list dhcp.lan.dhcp_option='6," + ip + "'",
+		"sed -i '/tollgate\\.lan/d; /tollgate\\.local/d' /etc/hosts",
+		"echo '" + ip + " tollgate.lan tollgate.local' >> /etc/hosts",
+		"uci commit dhcp",
+	}, " && "))
+	return ip
+}
+
 // upstreamOnline reports whether the router can actually USE the internet
 // after the STA associates — a wwan interface can be "up" (layer-2 associated)
-// with no default route or no working DNS. A fresh STA on some OpenWrt builds
-// leaves /etc/resolv.conf pointing at ::1 with nothing listening, so dnsmasq is
-// restarted once. Returns a multi-line diagnostic block for logging/failure
-// detail. The payment backend registers its wallet (probing every mint) BEFORE
-// it binds :2121, so no internet means the API never comes up — this check
-// turns a 2-minute health-check timeout into an immediate, actionable message.
+// with no default route or no working DNS. It first repairs the dnsmasq
+// entries (see repairLanDNS) so corruption from an earlier installer run does
+// not mask a healthy upstream, then restarts dnsmasq once. Returns a
+// multi-line diagnostic block for logging/failure detail. The payment backend
+// registers its wallet (probing every mint) BEFORE it binds :2121, so no
+// internet means the API never comes up — this check turns a 2-minute
+// health-check timeout into an immediate, actionable message.
 func upstreamOnline(client *ssh.Client) (bool, string) {
+	if lanIP := repairLanDNS(client); lanIP != "" {
+		sshRun(client, "logger -t tollgate-installer 'dns entries repaired for "+lanIP+"' 2>/dev/null; true")
+	}
 	sshRun(client, "/etc/init.d/dnsmasq restart 2>/dev/null; true")
-	var pingOK, dnsOK bool
+	var pingOK, dnsOK, routeOK bool
 	for i := 0; i < 8; i++ {
 		pout := sshRun(client, "ping -c1 -W3 1.1.1.1 2>&1 | tail -2")
 		pingOK = strings.Contains(pout, "1 received") || strings.Contains(pout, "1 packets received")
+		routeOK = strings.TrimSpace(sshRun(client, "ip route show default 2>/dev/null | head -1")) != ""
 		dout := sshRun(client, "nslookup github.com 2>&1 | tail -2")
 		dnsOK = strings.Contains(dout, "Address") &&
 			!strings.Contains(dout, "can't") && !strings.Contains(dout, "timed out") && !strings.Contains(dout, "refused")
@@ -866,11 +934,14 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 		time.Sleep(2 * time.Second)
 	}
 	diag := strings.Join([]string{
-		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v", pingOK, dnsOK),
-		"route: " + truncate(sshRun(client, "ip route show default 2>/dev/null | head -2"), 200),
-		"wan: " + truncate(sshRun(client, "ubus call network.interface.wwan status 2>/dev/null | grep -E 'up|address|dns-server' | head -6"), 300),
-		"resolv: " + truncate(sshRun(client, "grep -v '^#' /etc/resolv.conf 2>/dev/null | head -4"), 200),
-		"dnsmasq: " + truncate(sshRun(client, "pgrep -f dnsmasq >/dev/null && echo running || echo 'not running'"), 40),
+		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v default-route=%v", pingOK, dnsOK, routeOK),
+		"route: " + truncate(sshRun(client, "ip route show 2>/dev/null | head -5 | tr '\\n' ' '"), 300),
+		"uplink: " + truncate(sshRun(client, "for i in wwan wan; do s=$(ubus call network.interface.$i status 2>/dev/null | grep -E '\"up\"|address' | head -3 | tr '\\n' ' '); [ -n \"$s\" ] && echo \"$i: $s\"; done"), 300),
+		"resolv: " + truncate(sshRun(client, "grep -v '^#' /etc/resolv.conf 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
+		"resolv.auto: " + truncate(sshRun(client, "grep -v '^#' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
+		"dnsmasq: " + truncate(sshRun(client, "pgrep -f '[d]nsmasq' >/dev/null && echo running || echo 'not running'"), 40),
+		"dnsmasq-log: " + truncate(sshRun(client, "logread 2>/dev/null | grep -i dnsmasq | tail -3 | tr '\\n' ' '"), 300),
+		"dnsmasq-address: " + truncate(sshRun(client, "grep -h '^address=' /var/etc/dnsmasq.conf.* 2>/dev/null | head -3 | tr '\\n' ' '"), 200),
 	}, "\n")
 	return pingOK && dnsOK, diag
 }
@@ -1179,17 +1250,62 @@ func randomPrivateLANIP() string {
 	return fmt.Sprintf("10.%d.%d.1", int(b[0])%200+10, int(b[1])%200+2)
 }
 
-// upstreamCIDR returns the STA (wwan) interface address/prefix and the default
-// gateway. Prefers the live ubus status (which carries the real netmask, often
-// not /24) and falls back to the gateway as a /24.
-func upstreamCIDR(client *ssh.Client) (cidr, gateway string) {
-	cidr = strings.TrimSpace(sshRun(client,
-		"ubus call network.interface.wwan status 2>/dev/null | jq -r '.\"ipv4-address\"[0] | \"\\(.address)/\\(.mask)\"' 2>/dev/null"))
-	gateway = strings.TrimSpace(sshRun(client, "ip route show default 2>/dev/null | awk '{print $3}' | head -1"))
-	if cidr != "" && strings.Contains(cidr, "/") {
-		return cidr, gateway
+// sanitizeIPv4 extracts a bare IPv4 address from a value that may carry a CIDR
+// suffix and/or surrounding quotes: "192.168.1.1/24" -> "192.168.1.1".
+//
+// OpenWrt stores network.lan.ipaddr BOTH as a bare address (legacy) and as an
+// address/prefix pair (netifd), so any caller that needs a plain address MUST
+// go through this. Using the raw value as an IP silently corrupts dnsmasq —
+// "address=/tollgate.lan/192.168.1.1/24" is rejected with "Bad address in
+// --address", dnsmasq crash-loops, and the router can ping 1.1.1.1 but cannot
+// resolve any name. The same value also poisons /etc/hosts and DHCP option 6.
+// Returns "" when no valid IPv4 address is present.
+func sanitizeIPv4(s string) string {
+	s = strings.TrimSpace(strings.Trim(strings.TrimSpace(s), "'\""))
+	if s == "" {
+		return ""
 	}
-	if gateway != "" {
+	if i := strings.IndexAny(s, "/ \t"); i >= 0 {
+		s = s[:i]
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return ""
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ""
+}
+
+// validCIDR reports whether s is a parseable "addr/prefix" CIDR. It exists to
+// reject jq's "null/null" (emitted when a ubus status has no ipv4-address),
+// which a naive non-empty check would accept and thereby disable collision
+// detection.
+func validCIDR(s string) bool {
+	_, _, err := net.ParseCIDR(strings.TrimSpace(s))
+	return err == nil
+}
+
+// upstreamCIDR returns the upstream interface address/prefix and the default
+// gateway. It checks the WiFi STA (wwan) first, then the wired WAN (wan) — a
+// collision breaks DNS for both uplink types — using the live ubus status
+// (which carries the real netmask, often not /24) and falling back to the
+// gateway as a /24.
+func upstreamCIDR(client *ssh.Client) (cidr, gateway string) {
+	gateway = strings.TrimSpace(sshRun(client, "ip route show default 2>/dev/null | awk '{print $3}' | head -1"))
+	for _, iface := range []string{"wwan", "wan"} {
+		// Note: index .address/.mask (not a string interpolation of the whole
+		// object) so a status with no ipv4-address yields EMPTY stdout rather
+		// than the literal "null/null" that would otherwise pass a naive
+		// non-empty check and silently disable collision detection.
+		out := strings.TrimSpace(sshRun(client,
+			"ubus call network.interface."+iface+" status 2>/dev/null | jq -r '.\"ipv4-address\"[0].address + \"/\" + (.\"ipv4-address\"[0].mask|tostring)' 2>/dev/null"))
+		if validCIDR(out) {
+			return out, gateway
+		}
+	}
+	if gateway != "" && validCIDR(gateway+"/24") {
 		return gateway + "/24", gateway
 	}
 	return "", ""
@@ -1230,7 +1346,12 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 	cmds = append(cmds,
 		"uci commit network",
 		"uci -q commit dhcp",
-		"/etc/init.d/network restart 2>/dev/null",
+		// ifup applies ONLY this interface. A full "/etc/init.d/network
+		// restart" has been observed to leave network.lan without an address
+		// (br-lan up but no IPv4) — which drops the operator's LAN access — and
+		// is otherwise unnecessarily disruptive. Fall back to a restart only
+		// if ifup is unavailable.
+		"/sbin/ifup "+netSection+" 2>/dev/null || /etc/init.d/network restart 2>/dev/null",
 		"sleep 2")
 	sshRun(client, strings.Join(cmds, " && "))
 	client.Close()
@@ -1246,6 +1367,40 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 	}
 	job.addLog("Reconnected to router on " + newIP)
 	return nc
+}
+
+// fixSubnetCollisions relocates any local network (br-lan, br-private) that
+// overlaps the upstream subnet, then reconnects. A collision makes the router
+// route the upstream's own subnet (including its DNS server) to itself, so DNS
+// breaks while ping still works.
+//
+// It MUST also run AFTER the tollgate-wrt package install: the package's
+// uci-defaults derives network.private from network.lan (lan/24 with the third
+// octet +/-1), which can land inside the upstream subnet even though nothing
+// collided at step 5. Returns the live client (reconnected if a subnet moved).
+func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh.Client {
+	upCIDR, gw := upstreamCIDR(client)
+	if upCIDR == "" {
+		job.addLog("WARNING: could not determine the upstream subnet — skipping collision detection")
+		return client
+	}
+	locals := []struct{ ifname, netSection, dhcpSection string }{
+		{"br-lan", "lan", "lan"},
+		{"br-private", "private", "private"},
+	}
+	for _, ln := range locals {
+		lCIDR := localCIDR(client, ln.ifname)
+		if lCIDR == "" {
+			continue
+		}
+		if subnetsOverlap(lCIDR, upCIDR) {
+			client = moveLocalSubnet(job, client, ip, password, ln.ifname, ln.netSection, ln.dhcpSection,
+				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw))
+		} else {
+			job.addLog(fmt.Sprintf("No subnet collision (%s=%s vs upstream=%s)", ln.ifname, lCIDR, upCIDR))
+		}
+	}
+	return client
 }
 
 // configureSTA wires up the tollgate_uplink WiFi STA (deploy step 5).
@@ -1315,27 +1470,8 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 	// than just the first three octets. Every colliding local network is
 	// relocated to a fresh random 10.x.y.0/24, and its DHCP pool is moved with
 	// it (otherwise clients get leases from the old, colliding range).
-	if upCIDR, gw := upstreamCIDR(client); upCIDR != "" {
-		locals := []struct{ ifname, netSection, dhcpSection string }{
-			{"br-lan", "lan", "lan"},
-			{"br-private", "private", "private"},
-		}
-		for _, ln := range locals {
-			lCIDR := localCIDR(client, ln.ifname)
-			if lCIDR == "" {
-				continue
-			}
-			if subnetsOverlap(lCIDR, upCIDR) {
-				client = moveLocalSubnet(job, client, ip, password, ln.ifname, ln.netSection, ln.dhcpSection,
-					fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw))
-				*pclient = client
-			} else {
-				job.addLog(fmt.Sprintf("No subnet collision (%s=%s vs upstream=%s)", ln.ifname, lCIDR, upCIDR))
-			}
-		}
-	} else {
-		job.addLog("WARNING: could not determine the upstream subnet — skipping collision detection")
-	}
+	client = fixSubnetCollisions(job, client, ip, password)
+	*pclient = client
 
 	// Verify the router can actually USE the upstream before continuing: a
 	// wwan iface can be "up" with no route/DNS, and the payment backend cannot
@@ -1349,7 +1485,7 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 		if online2, odiag2 := upstreamOnline(client); !online2 {
 			job.addLog("Router still offline after reload:\n" + odiag2)
 			jobFail(job, 5, "upstream has no internet",
-				"Associated to \""+ssid+"\" but the router cannot reach the internet (no default route / no DNS). Check that the upstream network actually provides internet and is not a captive portal.\n"+odiag2)
+				"Associated to \""+ssid+"\" but the router cannot use the internet. Check whether the failing check below is routing or name resolution (DNS), and whether the upstream network actually provides internet or is a captive portal.\n"+odiag2)
 			return false
 		}
 		job.addLog("Internet available after reload")
