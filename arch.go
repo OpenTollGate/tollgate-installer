@@ -74,8 +74,11 @@ func normalizeBareArch(b string) string {
 // (net/tollgate-wrt/Makefile). Its Makefile keeps TWO version spellings, and
 // the URL/asset name below must match both:
 //
-//	PKG_SOURCE_VERSION := 0.6.0-alpha2-pre3  (upstream git tag, hyphen) → release TAG
-//	PKG_VERSION        := 0.6.0_alpha2_pre3   (apk-legal, underscore)    → asset NAME
+//	release TAG := v0.6.0-alpha2-pre4   (hyphenated)        → download URL
+//	PKG_VERSION := 0.6.0_alpha2_pre4    (apk-legal underscore) → asset NAME
+//
+// PKG_SOURCE_VERSION in the feed is the upstream module COMMIT (373770a), not
+// this tag — but every ARCH asset URL is named by the tag/PKG_VERSION pair above.
 //
 // The split is forced by apk-tools 3.x, which rejects hyphens in versions.
 // feedPkgVersionForTag DERIVES the second spelling from the first, so the two
@@ -89,11 +92,10 @@ func normalizeBareArch(b string) string {
 const (
 	// feedRepoSlug is the repo whose CI builds and publishes the feed packages.
 	feedRepoSlug = "FreedomTechFeed/packages"
-	// feedReleaseTagDefault is the feed release tag selected by default: the
-	// current main-tip pre-release of tollgate-module-basic-go, whose feed
-	// build is pinned to commit 373770a (PKG_VERSION 0.6.0_alpha2_pre3). It is
-	// the upstream PKG_SOURCE_VERSION in hyphenated tag form.
-	feedReleaseTagDefault = "v0.6.0-alpha2-pre3"
+	// feedReleaseTagDefault is the feed release tag selected by default. pre4
+	// ships the vendored, working captive portal (the pre3 package had no
+	// /assets bundles); its source pin is still module main's tip, 373770a.
+	feedReleaseTagDefault = "v0.6.0-alpha2-pre4"
 	// feedReleaseTagEnv is the environment variable that overrides
 	// feedReleaseTagDefault. Set it to select another published release tag
 	// (e.g. a newer pre-release, or an older tag to reproduce an old build)
