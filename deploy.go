@@ -1346,7 +1346,12 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 	cmds = append(cmds,
 		"uci commit network",
 		"uci -q commit dhcp",
-		"/etc/init.d/network restart 2>/dev/null",
+		// ifup applies ONLY this interface. A full "/etc/init.d/network
+		// restart" has been observed to leave network.lan without an address
+		// (br-lan up but no IPv4) — which drops the operator's LAN access — and
+		// is otherwise unnecessarily disruptive. Fall back to a restart only
+		// if ifup is unavailable.
+		"/sbin/ifup "+netSection+" 2>/dev/null || /etc/init.d/network restart 2>/dev/null",
 		"sleep 2")
 	sshRun(client, strings.Join(cmds, " && "))
 	client.Close()
