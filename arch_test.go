@@ -79,7 +79,7 @@ func TestSelectPkgURL(t *testing.T) {
 // publishes is pinned here as a literal, so a change to the tag, the version
 // spelling, or the name layout is caught offline (no network) and named.
 func TestFeedAssetURL(t *testing.T) {
-	const prefix = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre4/tollgate-wrt_0.6.0_alpha2_pre4_"
+	const prefix = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre5/tollgate-wrt_0.6.0_alpha2_pre5_"
 	cases := []struct{ arch, ext, want string }{
 		{"aarch64_cortex-a53", ".ipk", prefix + "aarch64_cortex-a53.ipk"},
 		{"aarch64_cortex-a53", ".apk", prefix + "aarch64_cortex-a53.apk"},
