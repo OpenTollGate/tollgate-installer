@@ -492,9 +492,37 @@ func runDeployment(job *Job, req deployRequest) {
 			job.setStep(6, "error", "opkg refused to downgrade tollgate-wrt")
 			return
 		}
+		// apk prints failures to stdout; the pipeline above hides the exit code,
+		// and a failed UPGRADE leaves the OLD binary in place — so the
+		// binary-existence check below would pass while the router still runs
+		// the previous package. Fail loudly on apk's error signatures.
+		if pkgMgr == "apk" && apkInstallFailed(installOut) {
+			job.addLog("ERROR: apk reported an installation failure: " + truncate(installOut, 200))
+			jobFail(job, 6, "tollgate-wrt install failed (apk error)",
+				"apk could not install/upgrade tollgate-wrt — the previous package (with its OLD captive portal) is still in place:\n"+truncate(installOut, 400))
+			return
+		}
 		// Verify the binary actually exists (secondary check)
 		verifyOut := sshRun(client, "ls /usr/bin/tollgate-wrt 2>/dev/null || ls /usr/sbin/tollgate-wrt 2>/dev/null || which tollgate-wrt 2>/dev/null || echo 'NOT FOUND'")
 		if !strings.Contains(verifyOut, "NOT FOUND") {
+			// The feed release URL pins a specific package version; when that
+			// URL supplied the package, the INSTALLED version MUST reflect it.
+			// Without this assertion a no-op upgrade (or an old /tmp package)
+			// passes, shipping the previous files while reporting success.
+			if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
+				job.addLog("Installed tollgate-wrt package version: " + pkgVer)
+				if strings.Contains(pkgSourceURL, "/releases/download/"+feedReleaseTag+"/") {
+					if want := feedPkgVersion(); !strings.HasPrefix(pkgVer, want) {
+						jobFail(job, 6, "tollgate-wrt version mismatch",
+							"Installed package is "+pkgVer+" but the pinned feed release "+feedReleaseTag+" provides "+want+
+								" — the upgrade did not take effect (previous package/files still present).")
+						return
+					}
+					job.addLog("Package version verified against " + feedReleaseTag + ": " + pkgVer)
+				}
+			} else {
+				job.addLog("WARNING: could not read the installed package version to verify the upgrade")
+			}
 			// NOTE (SW4a): the fw4/nftables enforcement rules (PR #283) ship
 			// inside the package under /etc/nftables.d/{20-nds-enforce,30-backend-firewall}.nft —
 			// no separate overlay download is performed (the old overlay URL 404'd).
@@ -652,18 +680,52 @@ func runDeployment(job *Job, req deployRequest) {
 	}
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 8: Verify the captive portal shipped by the tollgate-wrt package.
-	// The wizard no longer embeds a portal/ directory — the tollgate-wrt
-	// .ipk installs tollgate-captive-portal-site via its uci-defaults, so
-	// this step is a lightweight verification that the portal is present.
+	// Step 8: Verify the captive portal shipped by the tollgate-wrt package AND
+	// that it can actually load. Checking only that the directory exists let the
+	// "dead portal" regression through: the package shipped splash.html
+	// referencing /assets/*.js|css that were never installed, so the SPA never
+	// booted (browser: "disallowed MIME type (text/html)" / CORRUPTED_CONTENT).
+	// Verify every /assets ref in splash.html resolves to a real file.
 	job.setStep(8, "running", "")
-	portalCheck := sshRun(client, "test -d /etc/tollgate/tollgate-captive-portal-site && echo ok || echo missing")
-	if strings.TrimSpace(portalCheck) == "ok" {
-		job.addLog("Captive portal present at /etc/tollgate/tollgate-captive-portal-site")
-		job.setStep(8, "done", "portal shipped by tollgate-wrt package")
-	} else {
+	portalCheck := sshRun(client, `D=/etc/tollgate/tollgate-captive-portal-site
+[ -d "$D" ] || { echo MISSING_DIR; exit 0; }
+[ -f "$D/splash.html" ] || { echo MISSING_SPLASH; exit 0; }
+refs=$(grep -oE '/assets/[A-Za-z0-9._-]+' "$D/splash.html" 2>/dev/null | sort -u)
+[ -n "$refs" ] || { echo NO_REFS; exit 0; }
+miss=""
+for r in $refs; do [ -f "$D$r" ] || miss="$miss $r"; done
+if [ -n "$miss" ]; then echo "MISSING_ASSETS:$miss"; exit 0; fi
+n=$(ls "$D/assets" 2>/dev/null | wc -l | tr -d ' ')
+if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
+	out := strings.TrimSpace(portalCheck)
+	switch {
+	case out == "MISSING_DIR":
 		job.addLog("WARNING: captive portal directory not found on router")
-		job.setStep(8, "done", "portal not found (installed by .ipk)")
+		job.setStep(8, "done", "portal not found (installed by package)")
+	case out == "MISSING_SPLASH":
+		job.addLog("WARNING: captive portal has no splash.html")
+		job.setStep(8, "done", "portal incomplete (no splash.html)")
+	case out == "NO_REFS":
+		job.addLog("WARNING: splash.html references no /assets bundles")
+		job.setStep(8, "done", "portal present (no asset refs)")
+	case strings.HasPrefix(out, "MISSING_ASSETS:"):
+		missing := strings.Join(portalMissingAssets(out), " ")
+		job.addLog("ERROR: captive portal references missing assets: " + truncate(missing, 200))
+		jobFail(job, 8, "captive portal assets missing",
+			"splash.html references /assets bundles that are not installed, so the portal cannot boot. Missing: "+
+				missing+"\nThis is the \"dead portal\" regression (a feed release built without its portal assets).")
+		return
+	case strings.HasPrefix(out, "OK_NO_ICON:"):
+		n := strings.TrimPrefix(out, "OK_NO_ICON:")
+		job.addLog("Captive portal verified: /assets refs resolve (" + n + " files); WARNING: logo192.png missing")
+		job.setStep(8, "done", "portal + "+n+" assets verified (no icon)")
+	case strings.HasPrefix(out, "OK:"):
+		n := strings.TrimPrefix(out, "OK:")
+		job.addLog("Captive portal verified: /assets refs resolve (" + n + " files)")
+		job.setStep(8, "done", "portal + "+n+" assets verified")
+	default:
+		job.addLog("WARNING: unexpected portal check output: " + truncate(out, 120))
+		job.setStep(8, "done", "portal check inconclusive")
 	}
 	time.Sleep(500 * time.Millisecond)
 
