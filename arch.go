@@ -566,3 +566,96 @@ func installStepDetail(build, pkgMgr, source string) string {
 	}
 	return detail
 }
+
+// ── post-install verification ───────────────────────────────────────────────
+// These exist because "the binary exists" is NOT proof the upgrade happened: a
+// failed apk install leaves the OLD binary in place and the step passed anyway
+// (2026-09-17 MT3000 field report: pre4 was reported installed while the router
+// still served the pre3 portal). Verify the apk output AND the package version.
+
+// apkInstallFailed reports whether apk's output indicates the install/upgrade
+// did not happen. apk prints errors to stdout while the shell pipeline
+// (`... | tail -5`) masks the exit status. Signatures are deliberately narrow
+// to avoid failing on benign warnings.
+func apkInstallFailed(out string) bool {
+	low := strings.ToLower(out)
+	for _, sig := range []string{
+		"unable to select packages",
+		"transaction failed",
+		"conflicting dependencies",
+		"failed to install",
+	} {
+		if strings.Contains(low, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// parsePkgVersionFromApkDB extracts the installed version of name from the
+// contents of /lib/apk/db/installed (apk-tools 3), whose per-package stanza is
+// "P:<name>\nV:<version>". Returns "" when the package is absent.
+func parsePkgVersionFromApkDB(db, name string) string {
+	want := "P:" + name
+	for _, stanza := range strings.Split(db, "\n\n") {
+		lines := strings.Split(stanza, "\n")
+		if len(lines) == 0 || strings.TrimSpace(lines[0]) != want {
+			continue
+		}
+		for _, l := range lines {
+			if strings.HasPrefix(l, "V:") {
+				return strings.TrimSpace(strings.TrimPrefix(l, "V:"))
+			}
+		}
+	}
+	return ""
+}
+
+// parsePkgVersionFromOpkg extracts the installed version of name from
+// `opkg list-installed <name>` output ("tollgate-wrt - 0.6.0_alpha2_pre4-r1").
+func parsePkgVersionFromOpkg(out, name string) string {
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 3 && f[0] == name && f[1] == "-" {
+			return f[2]
+		}
+	}
+	return ""
+}
+
+// readInstalledPkgVersion reads the installed tollgate-wrt PACKAGE version off
+// the router (apk on 25+, opkg on <=24.10). Unlike the CLI's own version
+// (readInstalledTollgateBuild — the source tag, identical across preN), this
+// distinguishes feed releases and is what proves an upgrade took effect.
+// Best-effort: "" when the router cannot report one.
+func readInstalledPkgVersion(client *ssh.Client) string {
+	if client == nil {
+		return ""
+	}
+	if v := parsePkgVersionFromApkDB(
+		sshRun(client, "cat /lib/apk/db/installed 2>/dev/null"),
+		tollgatePackage,
+	); v != "" {
+		return v
+	}
+	return parsePkgVersionFromOpkg(
+		sshRun(client, "opkg list-installed "+tollgatePackage+" 2>/dev/null"),
+		tollgatePackage,
+	)
+}
+
+// portalMissingAssets extracts the /assets paths reported missing by the step-8
+// portal probe (marker "MISSING_ASSETS:<a> <b> ..."). Returns nil when the
+// marker is absent (i.e. nothing known missing).
+func portalMissingAssets(out string) []string {
+	const marker = "MISSING_ASSETS:"
+	i := strings.Index(out, marker)
+	if i < 0 {
+		return nil
+	}
+	rest := strings.TrimSpace(out[i+len(marker):])
+	if rest == "" {
+		return nil
+	}
+	return strings.Fields(rest)
+}
