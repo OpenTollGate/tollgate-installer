@@ -154,7 +154,7 @@ sshpass -p "${ROUTER_PASS}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 
     echo "--- ports ---";             netstat -tln 2>/dev/null | grep -E ":80 |:2050|:2121" || true
     echo "--- DNS tollgate.lan ---";  nslookup tollgate.lan 127.0.0.1 2>/dev/null | tail -3 || true
     echo "--- LNURL ---";             jq -r ".public_identities[] | select(.name==\"owner\") | .lightning_address" /etc/tollgate/identities.json 2>/dev/null || true
-    echo "--- captive portal ---";    ls -la /etc/nodogsplash/htdocs/index.html 2>/dev/null || echo MISSING
+    echo "--- captive portal ---";    ls -la /etc/tollgate/tollgate-captive-portal-site/splash.html /etc/nodogsplash/htdocs/splash.html 2>/dev/null || echo MISSING
     echo "--- TollGate health ---";   wget -qO- --timeout=5 http://127.0.0.1:2121/ 2>/dev/null | head -c 200 || echo "health ad unreachable"
 ' 2>&1 || echo "(ssh verification failed — check password/host)"
 
