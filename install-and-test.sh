@@ -130,20 +130,85 @@ fi
 
 echo "Job: ${JOB_ID}"
 echo "Polling status..."
+SEEN_FILE="$(mktemp /tmp/tollgate-seen.XXXXXX)"
+STATUS_FILE="$(mktemp /tmp/tollgate-status.XXXXXX)"
+
+# Print the deploy state + step summary, and echo provenance lines (package
+# source + installed build) exactly once as they appear in the job log.
+print_status() {
+    printf '%s' "$1" > "${STATUS_FILE}"
+    python3 - "${SEEN_FILE}" "${STATUS_FILE}" <<'PY'
+import sys, json
+seen_path, status_path = sys.argv[1], sys.argv[2]
+try:
+    with open(status_path) as fh:
+        data = json.load(fh)
+except Exception:
+    print("  (status unavailable)")
+    sys.exit(0)
+
+state = data.get("status", "")
+steps = data.get("steps", []) or []
+summary = ", ".join(
+    f"{s.get('desc') or s.get('name') or '?'}:{s.get('status', '?')}" for s in steps
+)
+print(f"  {state}: {summary}")
+
+try:
+    with open(seen_path) as fh:
+        seen = set(fh.read().splitlines())
+except FileNotFoundError:
+    seen = set()
+
+markers = ("tollgate-wrt source", "Installed tollgate-wrt build")
+try:
+    with open(seen_path, "a") as fh:
+        for entry in data.get("logs", []) or []:
+            msg = entry.get("msg", "")
+            if any(m in msg for m in markers) and msg not in seen:
+                print(f"    | {msg}")
+                seen.add(msg)
+                fh.write(msg + "\n")
+except Exception:
+    pass
+PY
+}
+
 while true; do
     STATUS="$(curl -s "http://127.0.0.1:${PORT}/api/status/${JOB_ID}")"
-    STATE="$(echo "${STATUS}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("status",""))' 2>/dev/null || true)"
-    echo "  ${STATE}: $(echo "${STATUS}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(", ".join([f"{s.get(chr(115)+chr(116)+chr(101)+chr(112))}:{s.get(chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))}" for s in d.get("steps",[])]))' 2>/dev/null || echo "")"
+    STATE="$(echo "${STATUS}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+    print_status "${STATUS}"
     if [ "${STATE}" = "done" ]; then
         echo "=== DEPLOY COMPLETE ==="
+        echo
+        echo "=== package provenance ==="
+        printf '%s' "${STATUS}" > "${STATUS_FILE}"
+        python3 - "${STATUS_FILE}" <<'PY'
+import sys, json
+try:
+    with open(sys.argv[1]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+for entry in data.get("logs", []) or []:
+    msg = entry.get("msg", "")
+    if "tollgate-wrt source" in msg or "Installed tollgate-wrt build" in msg:
+        print(f"  {msg}")
+step = next((s for s in data.get("steps", []) or []
+             if "Installing tollgate-wrt" in (s.get("desc") or "")), None)
+if step and step.get("detail"):
+    print(f"  {step['detail']}")
+PY
         break
     elif [ "${STATE}" = "failed" ] || [ "${STATE}" = "error" ]; then
         echo "=== DEPLOY FAILED ===" >&2
         echo "${STATUS}" | python3 -m json.tool >&2
+        rm -f "${SEEN_FILE}" "${STATUS_FILE}"
         exit 1
     fi
     sleep 3
 done
+rm -f "${SEEN_FILE}" "${STATUS_FILE}"
 
 # --- 6. post-deploy router verification --------------------------------------
 echo
