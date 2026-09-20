@@ -22,8 +22,8 @@ func TestApkInstallFailed(t *testing.T) {
 	}
 	good := []string{
 		"OK: 46.5 MiB in 203 packages",
-		"(1/1) Installing tollgate-wrt (0.6.0_alpha2_pre8-r1)",
-		"Executing tollgate-wrt-0.6.0_alpha2_pre8-r1.post-upgrade",
+		"(1/1) Installing tollgate-wrt (0.6.0_alpha2_pre9-r1)",
+		"Executing tollgate-wrt-0.6.0_alpha2_pre9-r1.post-upgrade",
 	}
 	for _, s := range good {
 		if apkInstallFailed(s) {
@@ -34,9 +34,9 @@ func TestApkInstallFailed(t *testing.T) {
 
 // TestParsePkgVersionFromApkDB pins parsing of /lib/apk/db/installed stanzas.
 func TestParsePkgVersionFromApkDB(t *testing.T) {
-	db := "P:busybox\nV:1.37.0-r1\n\nP:tollgate-wrt\nV:0.6.0_alpha2_pre8-r1\nA:aarch64_cortex-a53\n\nP:jq\nV:1.8.1-r1\n"
-	if got := parsePkgVersionFromApkDB(db, "tollgate-wrt"); got != "0.6.0_alpha2_pre8-r1" {
-		t.Errorf("parsePkgVersionFromApkDB = %q, want 0.6.0_alpha2_pre8-r1", got)
+	db := "P:busybox\nV:1.37.0-r1\n\nP:tollgate-wrt\nV:0.6.0_alpha2_pre9-r1\nA:aarch64_cortex-a53\n\nP:jq\nV:1.8.1-r1\n"
+	if got := parsePkgVersionFromApkDB(db, "tollgate-wrt"); got != "0.6.0_alpha2_pre9-r1" {
+		t.Errorf("parsePkgVersionFromApkDB = %q, want 0.6.0_alpha2_pre9-r1", got)
 	}
 	if got := parsePkgVersionFromApkDB(db, "nope"); got != "" {
 		t.Errorf("parsePkgVersionFromApkDB(absent) = %q, want empty", got)
@@ -49,9 +49,9 @@ func TestParsePkgVersionFromApkDB(t *testing.T) {
 
 // TestParsePkgVersionFromOpkg pins parsing of `opkg list-installed` output.
 func TestParsePkgVersionFromOpkg(t *testing.T) {
-	out := "jq - 1.8.1-r1\ntollgate-wrt - 0.6.0_alpha2_pre8-r1\nnodogsplash - 5.0.2-r1\n"
-	if got := parsePkgVersionFromOpkg(out, "tollgate-wrt"); got != "0.6.0_alpha2_pre8-r1" {
-		t.Errorf("parsePkgVersionFromOpkg = %q, want 0.6.0_alpha2_pre8-r1", got)
+	out := "jq - 1.8.1-r1\ntollgate-wrt - 0.6.0_alpha2_pre9-r1\nnodogsplash - 5.0.2-r1\n"
+	if got := parsePkgVersionFromOpkg(out, "tollgate-wrt"); got != "0.6.0_alpha2_pre9-r1" {
+		t.Errorf("parsePkgVersionFromOpkg = %q, want 0.6.0_alpha2_pre9-r1", got)
 	}
 	if got := parsePkgVersionFromOpkg(out, "missing"); got != "" {
 		t.Errorf("parsePkgVersionFromOpkg(absent) = %q, want empty", got)
@@ -74,16 +74,16 @@ func TestPortalMissingAssets(t *testing.T) {
 
 // TestFeedPkgVersionPrefixMatchesInstalled documents why the install step
 // compares with HasPrefix: the feed PKG_VERSION has no "release" suffix while
-// the installed package does ("0.6.0_alpha2_pre8" vs "0.6.0_alpha2_pre8-r1").
+// the installed package does ("0.6.0_alpha2_pre9" vs "0.6.0_alpha2_pre9-r1").
 func TestFeedPkgVersionPrefixMatchesInstalled(t *testing.T) {
-	want := feedPkgVersion() // derived from feedReleaseTagDefault (pre8)
+	want := feedPkgVersion() // derived from feedReleaseTagDefault (pre9)
 	if want == "" {
 		t.Fatal("feedPkgVersion() returned empty")
 	}
-	if !strings.HasPrefix("0.6.0_alpha2_pre8-r1", want) {
+	if !strings.HasPrefix("0.6.0_alpha2_pre9-r1", want) {
 		t.Errorf("installed version does not start with %q", want)
 	}
 	if strings.HasPrefix("0.6.0_alpha2_pre6-r1", want) {
-		t.Errorf("pre6 must NOT match the pre8 prefix %q", want)
+		t.Errorf("pre6 must NOT match the pre9 prefix %q", want)
 	}
 }

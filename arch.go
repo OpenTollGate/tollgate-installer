@@ -95,7 +95,7 @@ const (
 	// feedReleaseTagDefault is the feed release tag selected by default. pre4
 	// ships the vendored, working captive portal (the pre3 package had no
 	// /assets bundles); its source pin is still module main's tip, 373770a.
-	feedReleaseTagDefault = "v0.6.0-alpha2-pre8"
+	feedReleaseTagDefault = "v0.6.0-alpha2-pre9"
 	// feedReleaseTagEnv is the environment variable that overrides
 	// feedReleaseTagDefault. Set it to select another published release tag
 	// (e.g. a newer pre-release, or an older tag to reproduce an old build)
