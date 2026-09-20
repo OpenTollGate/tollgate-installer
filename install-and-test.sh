@@ -99,6 +99,31 @@ if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/"; then
 fi
 echo "Installer UI is up: http://localhost:${PORT}/"
 
+# Show the installer build + the exact feed release/feed it will install, from
+# /api/config. Older installer binaries lack the endpoint → say so, don't fail.
+print_config() {
+    local cfg
+    cfg="$(curl -s --max-time 5 "http://127.0.0.1:${PORT}/api/config" 2>/dev/null || true)"
+    if [ -z "${cfg}" ] || ! printf '%s' "${cfg}" | grep -q '"feed_release_tag"'; then
+        echo "Version info: /api/config unavailable on this installer build"
+        return 0
+    fi
+    printf '%s' "${cfg}" | python3 -c '
+import sys, json
+try:
+    c = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+mod = (" module " + c["feed_module_pin7"]) if c.get("feed_module_pin7") else ""
+print("Installing: %s %s%s" % (c.get("feed_repo", "?"), c.get("feed_release_tag", "?"), mod))
+pkg = c.get("feed_pkg_version", "?")
+err = ("  [" + c["feed_pin_error"] + "]") if c.get("feed_pin_error") else ""
+print("            package %s%s" % (pkg, err))
+print("            installer %s (%s)" % (c.get("installer_version", "?"), c.get("installer_commit", "?")))
+' 2>/dev/null || true
+}
+print_config
+
 # --- 5. optional headless deploy --------------------------------------------
 ROUTER_IP="${1:-}"
 ROUTER_PASS="${2:-}"
