@@ -3,9 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -106,6 +110,18 @@ const (
 	// An empty or implausible value is ignored in favour of the default, so a
 	// typo cannot turn into a malformed download URL for every arch.
 	feedReleaseTagEnv = "TOLLGATE_FEED_RELEASE_TAG"
+	// feedChannelEnv selects the newest feed release in a CHANNEL instead of a
+	// fixed tag. It is consulted only when feedReleaseTagEnv is unset, and it
+	// is OFF by default: no channel env means no network at startup and the
+	// compiled feedReleaseTagDefault is used, keeping builds reproducible. The
+	// curl|bash launcher resolves the tag itself and passes the exact tag, so
+	// this is for a directly-run binary:
+	//
+	//	TOLLGATE_FEED_CHANNEL=alpha ./tollgate-installer   # newest pre-release
+	//
+	// alpha = newest tag matching (pre|alpha|beta|rc); beta = (beta|rc);
+	// stable = no pre-release marker; any/latest = newest overall.
+	feedChannelEnv = "TOLLGATE_FEED_CHANNEL"
 )
 
 // feedReleaseTagRe matches a plausible GitHub release tag (v0.6.0-alpha2-pre3,
@@ -116,12 +132,13 @@ const (
 // can never be interpolated into a download URL.
 var feedReleaseTagRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// feedReleaseTag is the effective release tag: feedReleaseTagDefault, or the
-// TOLLGATE_FEED_RELEASE_TAG override when it is set to a plausible tag. It is
-// resolved once at startup (the PreStage pins in deploy.go are derived from it
-// at init time), so set the override before starting the wizard, not per
-// deploy.
-var feedReleaseTag = resolveFeedReleaseTag(os.Getenv)
+// feedReleaseTag is the effective release tag: the TOLLGATE_FEED_RELEASE_TAG
+// override, else the newest release in TOLLGATE_FEED_CHANNEL, else
+// feedReleaseTagDefault. It is resolved once at startup (the PreStage pins in
+// deploy.go are derived from it at init time), so set the override/channel
+// before starting the wizard, not per deploy. With neither env set there is no
+// network call and the compiled default applies, keeping builds reproducible.
+var feedReleaseTag = resolveFeedTagWithChannel(os.Getenv, githubResolveChannel)
 
 // resolveFeedReleaseTag returns the effective feed release tag. Unset, empty,
 // whitespace-only, and implausibly-shaped overrides all fall back to the
@@ -133,6 +150,123 @@ func resolveFeedReleaseTag(getenv func(string) string) string {
 	}
 	if tag := strings.TrimSpace(getenv(feedReleaseTagEnv)); tag != "" && feedReleaseTagRe.MatchString(tag) {
 		return tag
+	}
+	return feedReleaseTagDefault
+}
+
+// feedChannelRe matches a plausible channel name. Strict about the SHAPE so a
+// stray value can never be interpolated into an API query.
+var feedChannelRe = regexp.MustCompile(`^(alpha|beta|stable|any|latest)$`)
+
+// feedReleaseRef is the subset of a GitHub release object the channel resolver
+// needs. PublishedAt is preferred over CreatedAt for ordering (a release can be
+// created as a draft long before it is published; GitHub's own "latest" flag is
+// stale for this feed, so we sort ourselves).
+type feedReleaseRef struct {
+	TagName     string `json:"tag_name"`
+	PublishedAt string `json:"published_at"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// selectFeedTagForChannel returns the newest release tag in channel, or "" if
+// none match. Pure, so the channel semantics are unit-tested without network.
+func selectFeedTagForChannel(rels []feedReleaseRef, channel string) string {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	isPre := func(t string) bool {
+		return strings.Contains(strings.ToLower(t), "pre") ||
+			strings.Contains(strings.ToLower(t), "alpha") ||
+			strings.Contains(strings.ToLower(t), "beta") ||
+			strings.Contains(strings.ToLower(t), "rc")
+	}
+	ok := func(t string) bool {
+		switch channel {
+		case "", "any", "latest":
+			return true
+		case "alpha":
+			return isPre(t)
+		case "beta":
+			lt := strings.ToLower(t)
+			return strings.Contains(lt, "beta") || strings.Contains(lt, "rc")
+		case "stable":
+			return !isPre(t)
+		default:
+			return false
+		}
+	}
+	var matches []feedReleaseRef
+	for _, r := range rels {
+		if r.TagName != "" && feedReleaseTagRe.MatchString(r.TagName) && ok(r.TagName) {
+			matches = append(matches, r)
+		}
+	}
+	if len(matches) == 0 {
+		return ""
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		ki, kj := matches[i].PublishedAt, matches[j].PublishedAt
+		if ki == "" {
+			ki = matches[i].CreatedAt
+		}
+		if kj == "" {
+			kj = matches[j].CreatedAt
+		}
+		return ki > kj // newest first
+	})
+	return matches[0].TagName
+}
+
+// githubResolveChannel fetches the feed repo's releases and returns the newest
+// tag in channel, or "" on any failure (network, rate limit, bad payload). The
+// caller falls back to the compiled default, so a resolver failure never breaks
+// a deploy — it only means the pin is used instead of the channel tip.
+func githubResolveChannel(channel string) string {
+	if !feedChannelRe.MatchString(strings.ToLower(strings.TrimSpace(channel))) {
+		return ""
+	}
+	url := "https://api.github.com/repos/" + feedRepoSlug + "/releases?per_page=100"
+	client := &http.Client{Timeout: 6 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if tok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var rels []feedReleaseRef
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rels); err != nil {
+		return ""
+	}
+	return selectFeedTagForChannel(rels, channel)
+}
+
+// resolveFeedTagWithChannel is the full precedence used at startup:
+//
+//	TOLLGATE_FEED_RELEASE_TAG (explicit) > TOLLGATE_FEED_CHANNEL > compiled default
+//
+// Injecting getenv and fetch keeps it pure for tests: with no channel env set
+// it never calls fetch, so unit tests stay network-free and deterministic.
+func resolveFeedTagWithChannel(getenv func(string) string, fetch func(string) string) string {
+	if getenv == nil {
+		return feedReleaseTagDefault
+	}
+	if tag := strings.TrimSpace(getenv(feedReleaseTagEnv)); tag != "" && feedReleaseTagRe.MatchString(tag) {
+		return tag
+	}
+	if ch := strings.ToLower(strings.TrimSpace(getenv(feedChannelEnv))); feedChannelRe.MatchString(ch) {
+		if fetch != nil {
+			if tag := fetch(ch); tag != "" && feedReleaseTagRe.MatchString(tag) {
+				return tag
+			}
+		}
 	}
 	return feedReleaseTagDefault
 }
