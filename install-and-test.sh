@@ -36,6 +36,103 @@ PORT="${PORT:-8099}"
 # felixfelix-bot fork pre-merge build.
 GH_REPO="OpenTollGate/tollgate-installer"
 FORK_REPO="felixfelix-bot/tollgate-installer"
+# Feed release selection. Default: the newest pre-release (alpha channel), so
+# the launcher never lags behind the packages repo the way a compiled pin does.
+# Override with --tag / --channel, or TOLLGATE_FEED_RELEASE_TAG. The chosen tag
+# is exported as TOLLGATE_FEED_RELEASE_TAG, which the installer binary resolves
+# at startup, so the whole run targets that exact release.
+FEED_REPO="FreedomTechFeed/packages"
+FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-alpha}"
+FEED_TAG_OVERRIDE="${TOLLGATE_FEED_RELEASE_TAG:-}"
+LIST_RELEASES=0
+POSITIONAL=()
+
+usage() {
+    sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+    cat <<'USAGE'
+
+Options:
+  --tag <tag>        Install an exact feed release tag (e.g. v0.6.0-alpha2-pre12).
+                     Same as TOLLGATE_FEED_RELEASE_TAG=<tag>.
+  --channel <name>   Newest feed release in a channel: alpha (default, newest
+                     pre-release), beta, stable, or any.
+  --list             List recent feed releases (newest first) and exit.
+  -h, --help         Show this help.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tag)     FEED_TAG_OVERRIDE="${2:-}"; shift 2 ;;
+        --channel) FEED_CHANNEL="${2:-}"; shift 2 ;;
+        --list)    LIST_RELEASES=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *)         POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+# gh_api_json <url> — curl the GitHub API, optionally authenticated via
+# GITHUB_TOKEN (raising the 60/hr unauthenticated limit when present).
+gh_api_json() {
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        curl -fsSL --retry 2 -H "Authorization: Bearer ${GITHUB_TOKEN}" "$1"
+    else
+        curl -fsSL --retry 2 "$1"
+    fi
+}
+
+# feed_releases_json — the feed repo's recent releases (JSON array).
+feed_releases_json() {
+    gh_api_json "https://api.github.com/repos/${FEED_REPO}/releases?per_page=100"
+}
+
+# print_feed_releases — tag + published date, newest first.
+print_feed_releases() {
+    feed_releases_json | python3 -c '
+import sys, json
+try:
+    rel = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+rel.sort(key=lambda r: r.get("published_at") or r.get("created_at") or "", reverse=True)
+for r in rel:
+    print("  %-30s %s" % (r.get("tag_name", ""), (r.get("published_at") or "")[:10]))
+'
+}
+
+# resolve_feed_tag — the newest tag in FEED_CHANNEL, or empty if it cannot be
+# resolved (the caller then falls back to the installer's compiled pin).
+resolve_feed_tag() {
+    if [ -n "${FEED_TAG_OVERRIDE}" ]; then
+        printf '%s' "${FEED_TAG_OVERRIDE}"
+        return 0
+    fi
+    feed_releases_json | FEED_CHANNEL="${FEED_CHANNEL}" python3 -c '
+import sys, json, os, re
+ch = os.environ.get("FEED_CHANNEL", "alpha").lower()
+try:
+    rel = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(rel, list):
+    sys.exit(1)
+def is_pre(t):
+    return bool(re.search(r"(pre|alpha|beta|rc)", t, re.I))
+def ok(t):
+    if ch in ("any", "latest", ""):
+        return True
+    if ch == "alpha":
+        return is_pre(t)
+    if ch == "beta":
+        return bool(re.search(r"(beta|rc)", t, re.I))
+    if ch == "stable":
+        return not is_pre(t)
+    return True
+c = [r for r in rel if ok(r.get("tag_name", ""))]
+c.sort(key=lambda r: r.get("published_at") or r.get("created_at") or "", reverse=True)
+print(c[0]["tag_name"] if c else "")
+'
+}
 
 # --- 1. detect platform ---------------------------------------------------
 detect_platform() {
@@ -51,7 +148,27 @@ detect_platform() {
 
 detect_platform
 
-echo "Detected platform: ${PLATFORM}"# --- 2. find + download binary -----------------------------------------------
+echo "Detected platform: ${PLATFORM}"
+
+# --- feed release resolution ----------------------------------------------
+if [ "${LIST_RELEASES}" = 1 ]; then
+    echo "Feed releases (${FEED_REPO}), newest first:"
+    print_feed_releases || echo "  (could not fetch releases)" >&2
+    exit 0
+fi
+
+RESOLVED_FEED_TAG="$(resolve_feed_tag 2>/dev/null || true)"
+if [ -n "${RESOLVED_FEED_TAG}" ]; then
+    export TOLLGATE_FEED_RELEASE_TAG="${RESOLVED_FEED_TAG}"
+    echo "Feed release: ${RESOLVED_FEED_TAG} (channel ${FEED_CHANNEL})"
+elif [ -n "${FEED_TAG_OVERRIDE}" ]; then
+    export TOLLGATE_FEED_RELEASE_TAG="${FEED_TAG_OVERRIDE}"
+    echo "Feed release: ${FEED_TAG_OVERRIDE} (explicit)"
+else
+    echo "Feed release: could not resolve channel '${FEED_CHANNEL}' from ${FEED_REPO}; using the installer's pinned default" >&2
+fi
+
+# --- 2. find + download binary -----------------------------------------------
 download() {
     local repo="$1" url tries
     url="https://github.com/${repo}/releases/latest/download/${BIN_NAME}-${PLATFORM}"
@@ -125,9 +242,9 @@ print("            installer %s (%s)" % (c.get("installer_version", "?"), c.get(
 print_config
 
 # --- 5. optional headless deploy --------------------------------------------
-ROUTER_IP="${1:-}"
-ROUTER_PASS="${2:-}"
-LNURL="${3:-}"
+ROUTER_IP="${POSITIONAL[0]:-}"
+ROUTER_PASS="${POSITIONAL[1]:-}"
+LNURL="${POSITIONAL[2]:-}"
 
 if [ -z "${ROUTER_IP}" ]; then
     echo
