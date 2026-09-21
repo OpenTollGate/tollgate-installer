@@ -28,6 +28,14 @@ var (
 	lnurlRe = regexp.MustCompile(`^lnurl1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}$`)
 )
 
+// Build metadata, injected at build time:
+//
+//	-ldflags "-X main.version=<tag> -X main.commit=<sha7>"
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 // validLightningAddress reports whether s is a plausible Lightning payout
 // target. Two forms are accepted:
 //  1. Lightning address — email-shaped: localpart@domain.tld
@@ -813,6 +821,16 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
 	job := newJob(req.IP)
 
+	// State WHICH feed release this deploy targets, before any download — the
+	// package-source / version-verified lines only appear once the deploy is
+	// underway, and a tester should see the target up front.
+	pinSuffix := ""
+	if pin, ok := cachedFeedPin(feedReleaseTag); ok && pin.SourceSHA7 != "" {
+		pinSuffix = ", module " + pin.SourceSHA7
+	}
+	job.addLog(fmt.Sprintf("Feed: %s release %s (package %s%s)",
+		feedRepoSlug, feedReleaseTag, feedPkgVersion(), pinSuffix))
+
 	// Adopt assets pre-downloaded by a /api/prestage job (started when the
 	// router was selected) so the deploy reuses them instead of re-fetching.
 	if pid := strings.TrimSpace(req.PrestageJobID); pid != "" {
@@ -870,6 +888,52 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(indexHTML)
 }
 
+// configResponse is the installer's build + feed identity, served at
+// /api/config so the UI and the curl|bash launcher can show exactly which
+// release/feed is being installed — before a deploy starts, not only in the
+// deploy log.
+type configResponse struct {
+	InstallerVersion string `json:"installer_version"`
+	InstallerCommit  string `json:"installer_commit"`
+	FeedRepo         string `json:"feed_repo"`
+	FeedReleaseTag   string `json:"feed_release_tag"`
+	FeedPkgVersion   string `json:"feed_pkg_version"`
+	FeedReleaseURL   string `json:"feed_release_url"`
+	FeedModulePin    string `json:"feed_module_pin,omitempty"`
+	FeedModulePin7   string `json:"feed_module_pin7,omitempty"`
+	FeedModuleTag    string `json:"feed_module_tag,omitempty"`
+	FeedPkgHash      string `json:"feed_pkg_hash,omitempty"`
+	FeedMakefileURL  string `json:"feed_makefile_url"`
+	FeedPinError     string `json:"feed_pin_error,omitempty"`
+}
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	// The module pin comes from the feed recipe at the effective tag (cached,
+	// fail-soft): a missing/offline fetch leaves the pin empty + an error note
+	// but still returns the rest of the identity.
+	pin := resolveFeedModulePin(feedReleaseTag)
+	resp := configResponse{
+		InstallerVersion: version,
+		InstallerCommit:  commit,
+		FeedRepo:         feedRepoSlug,
+		FeedReleaseTag:   feedReleaseTag,
+		FeedPkgVersion:   feedPkgVersion(),
+		FeedReleaseURL:   "https://github.com/" + feedRepoSlug + "/releases/tag/" + feedReleaseTag,
+		FeedModulePin:    pin.SourceVersion,
+		FeedModulePin7:   pin.SourceSHA7,
+		FeedModuleTag:    pin.SourceTag,
+		FeedPkgHash:      pin.PKGHash,
+		FeedMakefileURL:  pin.URL,
+		FeedPinError:     pin.Error,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -925,6 +989,7 @@ func main() {
 	mux.HandleFunc("/api/prestage", handlePreStage)
 	mux.HandleFunc("/api/deploy", handleDeploy)
 	mux.HandleFunc("/api/status/", handleStatus)
+	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/", handleIndex)
 
 	// CORS for local dev
@@ -939,7 +1004,8 @@ func main() {
 		mux.ServeHTTP(w, r)
 	})
 
-	fmt.Printf("TollGate setup wizard running on http://localhost%s\n", listenAddr)
+	fmt.Printf("TollGate setup wizard %s (%s) on http://localhost%s\n", version, commit, listenAddr)
+	fmt.Printf("Feed: %s release %s (package %s)\n", feedRepoSlug, feedReleaseTag, feedPkgVersion())
 	fmt.Println("Open this URL in your browser to set up a router.")
 	log.Fatal(http.ListenAndServe(listenAddr, handler))
 	_ = io.Discard // keep import
