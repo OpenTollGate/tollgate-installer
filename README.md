@@ -164,6 +164,72 @@ The tollgate-wrt `.ipk`/`.apk` ships the captive portal
 nftables enforcement rules — the wizard only installs the package and points
 nodogsplash/uhttpd at it.
 
+### Which `tollgate-wrt` package gets installed
+
+Step 5 downloads the **feed-built** package from
+`FreedomTechFeed/packages`, so a wizard run is also an end-to-end test of the
+feed's package build:
+
+| | |
+|---|---|
+| Selected release tag | `v0.6.0-alpha2-pre3` (the main-tip pre-release) |
+| Package version | `0.6.0_alpha2_pre3` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre3-r1` |
+| Source commit | `373770a` of `tollgate-module-basic-go` |
+| Asset name | `tollgate-wrt_0.6.0_alpha2_pre3_<arch>.{ipk,apk}` for 7 arches |
+
+The installed binary reports `v0.6.0-alpha2-g373770a` — the version string plus
+the **source commit**. That string is not the package version, on purpose: the
+commit identifies the build, the version string only identifies the release
+line. The wizard reads the installed build back off the router and logs it
+(`Installed tollgate-wrt build: …`).
+
+To install a different published release tag — a newer pre-release, or an older
+tag to reproduce an old build — set the override before launching the wizard:
+
+```sh
+TOLLGATE_FEED_RELEASE_TAG=v0.6.0-alpha1 ./tollgate-installer
+```
+
+An empty or malformed value is ignored in favour of the default. If the feed
+does not publish the selected tag, the wizard falls back to the pinned
+`v0.5.0` GitHub release asset (aarch64 only) and the deploy log names which
+source was used. `go test ./...` fails if the selected tag does not exist on the
+feed. See [docs/package-provenance.md](docs/package-provenance.md).
+
+### Pre-download (staging) + on-disk re-deploy cache
+
+The wizard has an optional **PreStage** phase (checkbox in the deploy UI —
+"Pre-download required packages before deploy"): before running the
+flash/install steps it downloads the OpenWrt sysupgrade image (for stock
+GL.iNet routers being flashed) and the tollgate-wrt package into an in-memory
+cache, so the actual deploy runs entirely offline from the laptop's
+perspective. This matters when the laptop's only internet path is *via* the
+router being flashed/reconfigured (STA/repeater mode).
+
+Staged binaries are also persisted to an **on-disk cache** so a second deploy
+to a different router re-uses them instead of re-downloading:
+
+| | |
+|---|---|
+| **Location** | `~/.tollgate-stage/` (`$HOME/.tollgate-stage`) |
+| **File name** | hex `sha256` of the asset URL |
+| **What is persisted** | ONLY the version-pinned OpenWrt flash image (consultant RISK 3). Package binaries (.ipk/.apk, nodogsplash, jq) are **never** written to the disk cache — they can change between releases, and a stale cached copy could shadow a newer package. |
+| **Invalidation** | None needed — see note below. |
+
+**Clearing the cache:** delete the directory — it is always safe to remove;
+the wizard re-stages the flash image on the next deploy:
+
+```sh
+rm -rf ~/.tollgate-stage
+```
+
+The installer never writes outside `~/.tollgate-stage`. TTL/invalidation is
+deliberately minimal: because only the version-pinned flash image is
+persisted, a cache entry is either correct (exact image for that pinned
+release) or superseded when the plan bumps `openWrtVersion` — at which point
+the image URL changes, the sha256 filename changes, and the old entry is
+simply orphaned (harmless, remove with `rm -rf` above).
+
 ## Build from source
 
 ```sh

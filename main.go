@@ -29,6 +29,14 @@ var (
 	lnurlRe = regexp.MustCompile(`^lnurl1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}$`)
 )
 
+// Build metadata, injected at build time:
+//
+//	-ldflags "-X main.version=<tag> -X main.commit=<sha7>"
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 // validLightningAddress reports whether s is a plausible Lightning payout
 // target. Two forms are accepted:
 //  1. Lightning address — email-shaped: localpart@domain.tld
@@ -133,6 +141,19 @@ type Job struct {
 	Steps  []Step     `json:"steps"`
 	Log    []LogEntry `json:"log"`
 	Error  string     `json:"error,omitempty"`
+	// stageCache holds pre-downloaded deploy assets keyed by the exact
+	// asset URL, populated by the PreStage phase (stageAssets) so the
+	// flash/install steps can consume staged bytes without live network.
+	// Guarded by j.mu — the cache deliberately lives on the Job (which may
+	// outlive a single deployRequest), NOT on deployRequest. Not serialized
+	// to JSON (unexported; handleStatus builds an explicit snapshot).
+	stageCache map[string][]byte
+	// progress drives the UI progress bar during a pre-download. current/total
+	// are asset counts (total==0 => indeterminate); label is a short verb.
+	// Guarded by mu; exported via the handleStatus snapshot.
+	progressCurrent int
+	progressTotal   int
+	progressLabel   string
 }
 
 var (
@@ -142,11 +163,26 @@ var (
 
 func newJob(ip string) *Job {
 	return &Job{
-		IP:     ip,
-		Status: "running",
-		Step:   0,
-		Steps:  deploySteps(),
-		Log:    []LogEntry{},
+		IP:         ip,
+		Status:     "running",
+		Step:       0,
+		Steps:      deploySteps(),
+		Log:        []LogEntry{},
+		stageCache: map[string][]byte{},
+	}
+}
+
+// newPreStageJob creates a job for a selection-time pre-download
+// (/api/prestage). Same Job type (so /api/status works unchanged) but a short
+// prestageSteps() list.
+func newPreStageJob(ip string) *Job {
+	return &Job{
+		IP:         ip,
+		Status:     "running",
+		Step:       0,
+		Steps:      prestageSteps(),
+		Log:        []LogEntry{},
+		stageCache: map[string][]byte{},
 	}
 }
 
@@ -168,12 +204,103 @@ func (j *Job) setStep(i int, status, detail string) {
 	j.mu.Unlock()
 }
 
+// stageAsset stores pre-downloaded asset bytes in the Job's stage cache,
+// keyed by the exact source URL. Guarded by j.mu. A zero-length payload is
+// not cached — an empty body means the fetch produced nothing usable.
+func (j *Job) stageAsset(url string, data []byte) {
+	if url == "" || len(data) == 0 {
+		return
+	}
+	j.mu.Lock()
+	if j.stageCache == nil {
+		j.stageCache = map[string][]byte{}
+	}
+	j.stageCache[url] = data
+	j.mu.Unlock()
+}
+
+// stagedAsset returns the staged bytes for url and whether the URL is
+// present in the cache. Guarded by j.mu.
+func (j *Job) stagedAsset(url string) ([]byte, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	data, ok := j.stageCache[url]
+	return data, ok
+}
+
+// setProgress records pre-download progress for the UI progress bar. total==0
+// means "indeterminate" (nothing to report yet). Guarded by j.mu.
+func (j *Job) setProgress(current, total int, label string) {
+	j.mu.Lock()
+	j.progressCurrent = current
+	j.progressTotal = total
+	j.progressLabel = label
+	j.mu.Unlock()
+}
+
+// adoptStageCache copies every staged asset from src into dst and returns how
+// many it moved. It hands a /api/prestage job's downloads to the deploy job so
+// the install/flash steps reuse them instead of re-fetching. Safe with a nil
+// src or dst (returns 0). Locks are taken one at a time (never nested) to
+// avoid any lock-order deadlock.
+func adoptStageCache(dst, src *Job) int {
+	if dst == nil || src == nil {
+		return 0
+	}
+	src.mu.Lock()
+	staged := make(map[string][]byte, len(src.stageCache))
+	for u, d := range src.stageCache {
+		staged[u] = d
+	}
+	src.mu.Unlock()
+	for u, d := range staged {
+		dst.stageAsset(u, d)
+	}
+	return len(staged)
+}
+
 // ─── API handlers ─────────────────────────────────────────────
 
 func handleScan(w http.ResponseWriter, r *http.Request) {
 	routers := discoverRouters()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"routers": routers})
+}
+
+// identifyRequest is the JSON body for /api/identify.
+type identifyRequest struct {
+	IP       string `json:"ip"`
+	Password string `json:"password"`
+}
+
+// handleIdentify re-identifies a router (vendor/model/firmware/name) using the
+// supplied root password. The LAN scan only tries passwordless SSH, so a
+// password-protected router shows as "Router" until the operator types the
+// password; this endpoint lets the UI refresh the label then. Read-only: it
+// probes ports and runs one SSH identification, never changes the router.
+func handleIdentify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req identifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" {
+		writeError(w, 400, "IP required")
+		return
+	}
+	info := probeRouterWithPassword(req.IP, req.Password)
+	for _, a := range readARPTable() {
+		if a.IP == req.IP && info.MAC == "" {
+			info.MAC = a.MAC
+		}
+	}
+	info.Name = friendlyRouterName(info)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
 }
 
 // wifiScanRequest is the JSON body for /api/wifi-scan.
@@ -186,7 +313,72 @@ type wifiScanRequest struct {
 type wifiSSID struct {
 	Name       string `json:"name"`
 	Encryption string `json:"encryption"`
-	Signal     int    `json:"signal"` // dBm, e.g. -45 (0 if unknown)
+	Signal     int    `json:"signal"`         // dBm, e.g. -45 (0 if unknown)
+	Band       string `json:"band,omitempty"` // "2.4", "5", "6" (empty = unknown)
+}
+
+// bandFromGHz extracts the band from an iwinfo "Channel: 36 (5 GHz)" style
+// fragment: "2.4", "5", "6", or "" when no band token is present.
+func bandFromGHz(s string) string {
+	i := strings.Index(s, "GHz")
+	if i < 0 {
+		return ""
+	}
+	j := i - 1
+	for j >= 0 && s[j] == ' ' {
+		j--
+	}
+	end := j + 1
+	for j >= 0 && (s[j] == '.' || (s[j] >= '0' && s[j] <= '9')) {
+		j--
+	}
+	switch strings.TrimSpace(s[j+1 : end]) {
+	case "2.4":
+		return "2.4"
+	case "5":
+		return "5"
+	case "6":
+		return "6"
+	}
+	return ""
+}
+
+// bandFromFreq maps an 802.11 centre frequency (MHz) to a band label.
+func bandFromFreq(freq int) string {
+	switch {
+	case freq >= 2400 && freq < 2500:
+		return "2.4"
+	case freq >= 4900 && freq < 5925:
+		return "5"
+	case freq >= 5925 && freq <= 7125:
+		return "6"
+	}
+	return ""
+}
+
+// bandFromChannel infers a band from an 802.11 channel number, for iwinfo
+// output that prints "Channel: 36" WITHOUT the "(5 GHz)" suffix (common on
+// some builds — this is why a 5 GHz SSID was being configured on the 2.4 GHz
+// radio). Channels 1-14 are 2.4 GHz; 32-177 are 5 GHz. 6 GHz reuses 1-233, so
+// it is only inferred when the "(6 GHz)" token is present (see bandFromGHz).
+func bandFromChannel(ch int) string {
+	switch {
+	case ch >= 1 && ch <= 14:
+		return "2.4"
+	case ch >= 32 && ch <= 177:
+		return "5"
+	}
+	return ""
+}
+
+// normalizeBand returns b only if it is exactly one of "2.4", "5", "6" — used
+// before interpolating a band into the STA shell script.
+func normalizeBand(b string) string {
+	switch strings.TrimSpace(b) {
+	case "2.4", "5", "6":
+		return strings.TrimSpace(b)
+	}
+	return ""
 }
 
 // parseIwinfoScan parses `iwinfo scan` output and returns deduplicated SSIDs
@@ -201,16 +393,17 @@ type wifiSSID struct {
 func parseIwinfoScan(output string) []wifiSSID {
 	seen := map[string]bool{}
 	ssids := []wifiSSID{}
-	var currentName, currentEnc string
+	var currentName, currentEnc, currentBand string
 	var currentSignal int
 
 	flush := func() {
 		if currentName != "" && !seen[currentName] {
 			seen[currentName] = true
-			ssids = append(ssids, wifiSSID{Name: currentName, Encryption: currentEnc, Signal: currentSignal})
+			ssids = append(ssids, wifiSSID{Name: currentName, Encryption: currentEnc, Signal: currentSignal, Band: currentBand})
 		}
 		currentName = ""
 		currentEnc = ""
+		currentBand = ""
 		currentSignal = 0
 	}
 
@@ -253,6 +446,24 @@ func parseIwinfoScan(output string) []wifiSSID {
 			currentEnc = val
 			continue
 		}
+
+		// Band: iwinfo prints "Channel: 36 (5 GHz)" — or just "Channel: 36"
+		// on some builds, in which case infer from the channel number.
+		if b := bandFromGHz(trimmed); b != "" {
+			currentBand = b
+			continue
+		}
+		if idx := strings.Index(trimmed, "Channel:"); idx >= 0 {
+			fields := strings.Fields(strings.TrimSpace(trimmed[idx+len("Channel:"):]))
+			if len(fields) > 0 {
+				if ch, err := strconv.Atoi(fields[0]); err == nil {
+					if b := bandFromChannel(ch); b != "" {
+						currentBand = b
+					}
+				}
+			}
+			continue
+		}
 	}
 	flush()
 
@@ -276,16 +487,26 @@ func parseIwinfoScan(output string) []wifiSSID {
 func parseIwScan(output string) []wifiSSID {
 	seen := map[string]bool{}
 	ssids := []wifiSSID{}
-	var currentName string
+	var currentName, currentBand string
 
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "BSS ") {
 			if currentName != "" && !seen[currentName] {
 				seen[currentName] = true
-				ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown"})
+				ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown", Band: currentBand})
 			}
 			currentName = ""
+			currentBand = ""
+			continue
+		}
+		if strings.HasPrefix(line, "freq:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if f, err := strconv.Atoi(fields[1]); err == nil {
+					currentBand = bandFromFreq(f)
+				}
+			}
 			continue
 		}
 		if strings.HasPrefix(line, "SSID:") {
@@ -297,7 +518,7 @@ func parseIwScan(output string) []wifiSSID {
 	}
 	if currentName != "" && !seen[currentName] {
 		seen[currentName] = true
-		ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown"})
+		ssids = append(ssids, wifiSSID{Name: currentName, Encryption: "unknown", Band: currentBand})
 	}
 	return ssids
 }
@@ -525,21 +746,129 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handlePreStage starts a background pre-download of the deploy assets for a
+// router, so the download begins as soon as the operator selects it. The
+// resulting job id can be passed to /api/deploy as prestageJobId to reuse the
+// cached bytes. The router is not modified.
+func handlePreStage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req prestageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" {
+		writeError(w, 400, "IP required")
+		return
+	}
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
+	job := newPreStageJob(req.IP)
+	jobsMutex.Lock()
+	jobs[jobID] = job
+	jobsMutex.Unlock()
+	go runPreStageJob(job, req)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// wifiTestRequest is the JSON body for /api/wifi-test.
+type wifiTestRequest struct {
+	IP       string `json:"ip"`
+	Password string `json:"password"`
+	SSID     string `json:"ssid"`
+	WifiPass string `json:"wifiPass"`
+	// Band is the scan-derived band of the selected SSID ("2.4"/"5"/"6"), so
+	// the STA is configured on the radio that can actually see it.
+	Band string `json:"band"`
+}
+
+// handleWifiTest proactively verifies the upstream WiFi (SSID + password)
+// before deploy: it applies the STA config, waits for association, then rolls
+// the wireless config back, so a wrong password surfaces on the form instead
+// of after the flash/install steps. Blocks up to ~40s. Read-only-ish: the
+// router's wireless config is restored before returning.
+func handleWifiTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req wifiTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" || req.SSID == "" {
+		writeError(w, 400, "ip and ssid are required")
+		return
+	}
+	ok, msg := testSTAConfig(req.IP, req.Password, req.SSID, req.WifiPass, req.Band)
+	w.Header().Set("Content-Type", "application/json")
+	if !ok {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": msg})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
+}
+
 type deployRequest struct {
 	IP       string `json:"ip"`
 	Password string `json:"password"`
 	Mode     string `json:"mode"`     // wan | sta
 	SSID     string `json:"ssid"`     // for sta mode
 	WifiPass string `json:"wifiPass"` // for sta mode
+	Band     string `json:"band"`     // sta mode: scan-derived band of SSID ("2.4"/"5"/"6")
 	LNURL    string `json:"lnurl"`    // Lightning address or raw LNURL
-	DevSplit int    `json:"devSplit"` // advanced: % to dev fund (0-50, default 10)
-	Margin   int    `json:"margin"`   // advanced: operator markup % (0-100, default 0)
+	DevSplit *int   `json:"devSplit"` // advanced: % to dev fund (0-50); nil => defaultDevSplit
+	Margin   *int   `json:"margin"`   // advanced: operator markup % (0-100); nil => defaultMargin
 	Mint     string `json:"mint"`     // advanced: preferred Cashu mint URL
 	// TestMints is OPT-IN: when false/absent (the default for real customer
 	// deployments) the wizard configures ONLY the 7 production mints. When
 	// true it additionally appends the 2 testnut test mints, which fake
 	// Lightning payments for E2E purchase testing — never for production.
 	TestMints bool `json:"test_mints"` // advanced: include testnut test mints (E2E only, default false)
+	// PreStage asks the wizard to download all deploy binaries up-front into
+	// the Job's stageCache before running the flash/install steps, so the
+	// deploy can proceed even if the laptop's internet path dies mid-deploy
+	// (e.g. a STA-mode laptop whose only uplink is the router being flashed).
+	// This is a per-request FLAG ONLY — the cache itself lives on the Job
+	// struct (guarded by j.mu), NOT here (deployRequest is per-POST and
+	// synchronous).
+	PreStage bool `json:"preStage"`
+	// ForceFlash runs the OpenWrt sysupgrade even when the router is ALREADY
+	// running OpenWrt — the default flash step is skipped in that case. It
+	// moves a running OpenWrt install onto the pinned release in images.go
+	// (e.g. 24.10 -> 25.12) and ALWAYS wipes config (sysupgrade -n), then
+	// continues the normal deploy on a clean system. Explicit opt-in only.
+	ForceFlash bool `json:"forceFlash"`
+	// PrestageJobID optionally references a /api/prestage job whose stage
+	// cache should be adopted by this deploy, so the assets pre-downloaded
+	// when the router was selected are reused instead of fetched again.
+	PrestageJobID string `json:"prestageJobId"`
+}
+
+// Advanced-field defaults. The wizard pre-fills the sliders with these; the
+// server applies them too when the field is omitted (nil), so API callers get
+// the same defaults without having to know the values. An explicit 0
+// ("devSplit":0) is honoured — only ABSENCE means "use the default".
+const (
+	defaultDevSplit = 21
+	defaultMargin   = 21
+)
+
+// resolvedAdvanced returns the effective dev split / margin, substituting the
+// defaults for omitted (nil) fields.
+func (r deployRequest) resolvedAdvanced() (int, int) {
+	devSplit, margin := defaultDevSplit, defaultMargin
+	if r.DevSplit != nil {
+		devSplit = *r.DevSplit
+	}
+	if r.Margin != nil {
+		margin = *r.Margin
+	}
+	return devSplit, margin
 }
 
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
@@ -561,6 +890,29 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
 	job := newJob(req.IP)
+
+	// State WHICH feed release this deploy targets, before any download — the
+	// package-source / version-verified lines only appear once the deploy is
+	// underway, and a tester should see the target up front.
+	pinSuffix := ""
+	if pin, ok := cachedFeedPin(feedReleaseTag); ok && pin.SourceSHA7 != "" {
+		pinSuffix = ", module " + pin.SourceSHA7
+	}
+	job.addLog(fmt.Sprintf("Feed: %s release %s (package %s%s)",
+		feedRepoSlug, feedReleaseTag, feedPkgVersion(), pinSuffix))
+
+	// Adopt assets pre-downloaded by a /api/prestage job (started when the
+	// router was selected) so the deploy reuses them instead of re-fetching.
+	if pid := strings.TrimSpace(req.PrestageJobID); pid != "" {
+		jobsMutex.RLock()
+		pj, ok := jobs[pid]
+		jobsMutex.RUnlock()
+		if ok {
+			if n := adoptStageCache(job, pj); n > 0 {
+				job.addLog(fmt.Sprintf("Using %d pre-downloaded asset(s) from pre-stage job %s", n, pid))
+			}
+		}
+	}
 
 	jobsMutex.Lock()
 	jobs[jobID] = job
@@ -584,13 +936,17 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Return a snapshot for thread-safe JSON
 	job.mu.Lock()
 	snapshot := struct {
-		IP     string     `json:"ip"`
-		Status string     `json:"status"`
-		Step   int        `json:"step"`
-		Steps  []Step     `json:"steps"`
-		Log    []LogEntry `json:"log"`
-		Error  string     `json:"error,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error}
+		IP              string     `json:"ip"`
+		Status          string     `json:"status"`
+		Step            int        `json:"step"`
+		Steps           []Step     `json:"steps"`
+		Log             []LogEntry `json:"log"`
+		Error           string     `json:"error,omitempty"`
+		ProgressCurrent int        `json:"progressCurrent"`
+		ProgressTotal   int        `json:"progressTotal"`
+		ProgressLabel   string     `json:"progressLabel,omitempty"`
+	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error,
+		job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -600,6 +956,52 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(indexHTML)
+}
+
+// configResponse is the installer's build + feed identity, served at
+// /api/config so the UI and the curl|bash launcher can show exactly which
+// release/feed is being installed — before a deploy starts, not only in the
+// deploy log.
+type configResponse struct {
+	InstallerVersion string `json:"installer_version"`
+	InstallerCommit  string `json:"installer_commit"`
+	FeedRepo         string `json:"feed_repo"`
+	FeedReleaseTag   string `json:"feed_release_tag"`
+	FeedPkgVersion   string `json:"feed_pkg_version"`
+	FeedReleaseURL   string `json:"feed_release_url"`
+	FeedModulePin    string `json:"feed_module_pin,omitempty"`
+	FeedModulePin7   string `json:"feed_module_pin7,omitempty"`
+	FeedModuleTag    string `json:"feed_module_tag,omitempty"`
+	FeedPkgHash      string `json:"feed_pkg_hash,omitempty"`
+	FeedMakefileURL  string `json:"feed_makefile_url"`
+	FeedPinError     string `json:"feed_pin_error,omitempty"`
+}
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		return
+	}
+	// The module pin comes from the feed recipe at the effective tag (cached,
+	// fail-soft): a missing/offline fetch leaves the pin empty + an error note
+	// but still returns the rest of the identity.
+	pin := resolveFeedModulePin(feedReleaseTag)
+	resp := configResponse{
+		InstallerVersion: version,
+		InstallerCommit:  commit,
+		FeedRepo:         feedRepoSlug,
+		FeedReleaseTag:   feedReleaseTag,
+		FeedPkgVersion:   feedPkgVersion(),
+		FeedReleaseURL:   "https://github.com/" + feedRepoSlug + "/releases/tag/" + feedReleaseTag,
+		FeedModulePin:    pin.SourceVersion,
+		FeedModulePin7:   pin.SourceSHA7,
+		FeedModuleTag:    pin.SourceTag,
+		FeedPkgHash:      pin.PKGHash,
+		FeedMakefileURL:  pin.URL,
+		FeedPinError:     pin.Error,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
@@ -651,17 +1053,23 @@ func main() {
 	listenAddr = listenAddress(*listenBind, *listenPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/scan", handleScan)
+	mux.HandleFunc("/api/identify", handleIdentify)
 	mux.HandleFunc("/api/wifi-scan", handleWifiScan)
+	mux.HandleFunc("/api/wifi-test", handleWifiTest)
+	mux.HandleFunc("/api/prestage", handlePreStage)
 	mux.HandleFunc("/api/deploy", handleDeploy)
 	mux.HandleFunc("/api/status/", handleStatus)
+	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/", handleIndex)
 
 	// CORS: loopback origins only (see corsMiddleware) — never a wildcard.
 	handler := corsMiddleware(mux)
 
-	fmt.Printf("TollGate setup wizard running on http://%s\n", listenAddr)
+	fmt.Printf("TollGate setup wizard %s (%s) on http://%s\n", version, commit, listenAddr)
+	fmt.Printf("Feed: %s release %s (package %s)\n", feedRepoSlug, feedReleaseTag, feedPkgVersion())
+	fmt.Println("Open this URL in your browser to set up a router.")
 	if strings.HasPrefix(listenAddr, defaultBindHost+":") || strings.HasPrefix(listenAddr, "localhost:") {
-		fmt.Println("Bound to loopback (localhost only). Open this URL in your browser to set up a router.")
+		fmt.Println("Bound to loopback (localhost only).")
 	} else {
 		fmt.Println("Bound to a non-loopback interface — the deploy API is reachable from the network.")
 	}

@@ -1,0 +1,122 @@
+name: Feed release smoke
+
+# Closes the loop on "we cut pre-releases but never exercise them through the
+# installer": on a schedule (and on demand) resolve the newest release in the
+# packages repo, then
+#   1. assert the release publishes every per-arch asset (7 arches x apk/ipk),
+#   2. build the installer from this repo and assert its own channel resolution
+#      and /api/config report that release,
+#   3. sanity-check the admin setup script inside the built package.
+#
+# Needs no router and no KVM. A full VM deploy e2e (installer -> OpenWrt QEMU)
+# is the intended next step and requires a nested-KVM runner + cloud-lab
+# secrets.
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact feed tag to check (overrides channel)'
+        required: false
+        type: string
+      channel:
+        description: 'Feed channel: alpha|beta|stable|any'
+        required: false
+        default: alpha
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feed-release-smoke
+  cancel-in-progress: true
+
+env:
+  FEED_REPO: FreedomTechFeed/packages
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  INPUT_TAG: ${{ inputs.tag }}
+  INPUT_CHANNEL: ${{ inputs.channel }}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve the feed release under test
+        id: resolve
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-}"
+          if [ -z "$TAG" ]; then
+            TAG="$(FEED_CHANNEL="${INPUT_CHANNEL:-alpha}" python3 scripts/feed_release.py)"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::no release matched channel ${INPUT_CHANNEL:-alpha} in ${FEED_REPO}"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved feed release: $TAG"
+
+      - name: Assert every per-arch asset is published
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          PKG="$(printf '%s' "${TAG#v}" | tr '-' '_')"
+          assets="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${FEED_REPO}/releases/tags/${TAG}" | jq -r '.assets[].name')"
+          miss=0
+          for arch in aarch64_cortex-a53 aarch64_cortex-a72 arm_cortex-a7 mips64_octeonplus mipsel_24kc mips_24kc x86_64; do
+            for ext in apk ipk; do
+              name="tollgate-wrt_${PKG}_${arch}.${ext}"
+              if printf '%s\n' "$assets" | grep -qx "$name"; then
+                echo "ok   $name"
+              else
+                echo "::error::missing asset $name"
+                miss=1
+              fi
+            done
+          done
+          [ "$miss" = 0 ]
+
+      - name: Installer channel resolution + /api/config
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          go build -o tollgate-installer .
+          # Exercise the BINARY's own resolution (no explicit tag): it must pick
+          # the same newest release the resolver reported.
+          TOLLGATE_FEED_CHANNEL=alpha ./tollgate-installer -port 8099 >/tmp/inst.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do
+            if curl -s -o /dev/null "http://127.0.0.1:8099/"; then break; fi
+            sleep 1
+          done
+          got="$(curl -fsS http://127.0.0.1:8099/api/config | jq -r '.feed_release_tag // empty')"
+          echo "Installer resolved: ${got} (expected ${TAG})"
+          if [ "$got" != "$TAG" ]; then
+            echo "::error::installer resolved '${got}', expected '${TAG}'"
+            cat /tmp/inst.log
+            exit 1
+          fi
+
+      - name: Package sanity — admin :8090 (HTTP) + guarded :8443
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.resolve.outputs.tag }}"
+          PKG="$(printf '%s' "${TAG#v}" | tr '-' '_')"
+          url="https://github.com/${FEED_REPO}/releases/download/${TAG}/tollgate-wrt_${PKG}_aarch64_cortex-a53.ipk"
+          curl -fsSL -o /tmp/tg.ipk "$url"
+          tar xzOf /tmp/tg.ipk ./data.tar.gz | tar xzO ./etc/uci-defaults/92-tollgate-admin-setup > /tmp/92.sh
+          grep -q "listen_http='0.0.0.0:8090'" /tmp/92.sh || { echo "::error::92 missing HTTP :8090"; exit 1; }
+          grep -q "listen_https='0.0.0.0:8443'" /tmp/92.sh || { echo "::error::92 missing guarded HTTPS :8443"; exit 1; }
+          grep -q "/etc/uhttpd.crt" /tmp/92.sh || { echo "::error::92 does not gate :8443 on a cert"; exit 1; }
+          echo "Package admin setup looks correct."

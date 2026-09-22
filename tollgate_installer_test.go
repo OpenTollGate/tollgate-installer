@@ -123,6 +123,21 @@ func TestTcpProbe(t *testing.T) {
 	}
 }
 
+func TestWaitForRouterAfterFlashTimeout(t *testing.T) {
+	// With a non-routable original IP and a short timeout, the polling loop
+	// must give up and return an error (not hang, not panic).
+	ip, client, err := waitForRouterAfterFlash("192.0.2.1", "pw", 300*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitForRouterAfterFlash: expected timeout error, got nil")
+	}
+	if ip != "" {
+		t.Errorf("waitForRouterAfterFlash: ip = %q, want empty on timeout", ip)
+	}
+	if client != nil {
+		t.Error("waitForRouterAfterFlash: client should be nil on timeout")
+	}
+}
+
 func TestJobMutexSafety(t *testing.T) {
 	job := newJob("192.168.1.1")
 

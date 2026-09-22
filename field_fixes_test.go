@@ -145,7 +145,7 @@ func TestHTTPGetFile(t *testing.T) {
 // rollback snapshot taken, existing STAs disabled (not deleted), single
 // commit, and idempotent re-run support.
 func TestStaSetupScript(t *testing.T) {
-	s := staSetupScript("TollGate-Field", "correct horse")
+	s := staSetupScript("TollGate-Field", "correct horse", "")
 	for _, want := range []string{
 		// Snapshot for rollback BEFORE any change.
 		"cp /etc/config/wireless /tmp/wireless.pre-tollgate",
@@ -181,5 +181,35 @@ func TestStaSetupScript(t *testing.T) {
 	// Exactly ONE commit per config file (no partial applies).
 	if got := strings.Count(s, "uci commit"); got != 2 {
 		t.Errorf("staSetupScript has %d `uci commit` calls, want exactly 2 (wireless+network)", got)
+	}
+}
+
+// TestStaSetupScriptBandSelection pins the band-aware radio choice: a 5 GHz
+// SSID must be configured on the 5 GHz radio (the old script always used
+// radio0 = 2.4 GHz, which is why a 5 GHz uplink never associated).
+func TestStaSetupScriptBandSelection(t *testing.T) {
+	s := staSetupScript("Up-5G", "pw", "5")
+	for _, want := range []string{
+		`want_band="5"`,
+		`[ "$rb" = "$want_band" ]`,      // radio band match
+		`NO_BAND_RADIO`,                 // no matching radio marker
+		`wireless.$target.disabled='0'`, // target radio enabled before use
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("staSetupScript(band=5) missing %q", want)
+		}
+	}
+	if got := strings.Count(s, "uci commit"); got != 2 {
+		t.Errorf("band script has %d `uci commit` calls, want 2", got)
+	}
+
+	// The band is sanitized before interpolation: a hostile value must not
+	// reach the generated shell script.
+	hostile := staSetupScript("x", "y", `5"; rm -rf /`)
+	if strings.Contains(hostile, "rm -rf") {
+		t.Error("band must be normalized before interpolation")
+	}
+	if !strings.Contains(hostile, `want_band=""`) {
+		t.Errorf("hostile band should normalize to empty, got script without want_band=\"\"")
 	}
 }

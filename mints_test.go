@@ -409,7 +409,7 @@ func TestSecuritySurface(t *testing.T) {
 func TestStaSetupScriptUsesBase64Carriers(t *testing.T) {
 	const ssid = "MyNet`; rm -rf / #"
 	const key = "Pass'word$; id #"
-	script := staSetupScript(ssid, key)
+	script := staSetupScript(ssid, key, "")
 	if strings.Contains(script, ssid) {
 		t.Errorf("STA script must not contain the raw SSID (injection-prone):\n%s", script)
 	}
