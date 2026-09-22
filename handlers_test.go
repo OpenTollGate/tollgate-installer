@@ -182,12 +182,25 @@ func TestMainFunctionStructure(t *testing.T) {
 	// Test that the main function sets up routes correctly
 	// This is a basic structural test since we can't easily run the main function
 
+	// The wizard must default to LOOPBACK binding (127.0.0.1), not a
+	// wildcard ":<port>" — the deploy API drives a root SSH session on the
+	// router, so exposing it on all interfaces would let any LAN host drive
+	// deploys. This guards the security fix (previously ":8099").
+	if got := listenAddress(*listenBind, "8099"); got != "127.0.0.1:8099" {
+		t.Errorf("listenAddress(bind=%q, 8099) = %q, want %q (loopback default)", *listenBind, got, "127.0.0.1:8099")
+	}
+
 	// Check that the default listen port is properly set. listenAddr itself is
 	// only assigned inside main() (":8099" from the flag default), so it is
 	// always "" in a test binary — assert the flag default, the real source of
 	// truth for the listen address.
 	if *listenPort != "8099" {
 		t.Errorf("listenPort default = %q, want %q", *listenPort, "8099")
+	}
+
+	// An empty --bind must still resolve to loopback.
+	if got := listenAddress("", "8099"); got != "127.0.0.1:8099" {
+		t.Errorf("listenAddress(\"\", 8099) = %q, want loopback default %q", got, "127.0.0.1:8099")
 	}
 
 	// Verify the regex patterns are compiled

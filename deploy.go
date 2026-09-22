@@ -3,6 +3,7 @@ package main
 import (
 	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,134 @@ var (
 	// OpenWrt 25.12+ cannot install legacy .ipk (ar archive) packages.
 	tollgatePkgAPKURL = feedAssetURL("aarch64_cortex-a53", ".apk")
 )
+
+// ─── Secret carriers ─────────────────────────────────────────────
+//
+// Secrets that must reach the router (root password, WiFi STA passphrase)
+// cross as base64 carriers rather than shell string literals: the value is
+// base64-encoded host-side and decoded on the router via
+// `echo <b64> | base64 -d` into a shell variable. BusyBox ships the base64
+// applet with -d support. This keeps the plaintext out of the SSH command
+// string (process argv on the router) and makes shell injection through a
+// password/key impossible — the value never participates in shell parsing.
+
+// shellB64 returns s encoded for embedding as a base64 carrier.
+func shellB64(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+// passwdCommand returns the router-side command that sets the root
+// password. The password crosses as a base64 carrier and is decoded into a
+// shell variable; the plaintext never appears in the command string.
+func passwdCommand(password string) string {
+	return "pw=$(echo " + shellB64(password) + " | base64 -d) && " +
+		"printf '%s\\n%s\\n' \"$pw\" \"$pw\" | passwd root 2>&1"
+}
+
+// ─── Mint configuration ──────────────────────────────────────────
+
+// mintCfg mirrors one entry of the router's accepted_mints config.
+type mintCfg struct {
+	URL                     string `json:"url"`
+	MinBalance              int    `json:"min_balance"`
+	BalanceTolerancePercent int    `json:"balance_tolerance_percent"`
+	PayoutIntervalSeconds   int    `json:"payout_interval_seconds"`
+	MinPayoutAmount         int    `json:"min_payout_amount"`
+	PricePerStep            int    `json:"price_per_step"`
+	PriceUnit               string `json:"price_unit"`
+	MinPurchaseSteps        int    `json:"min_purchase_steps"`
+}
+
+// prodMintJSONTemplate is the 7 production mints every real deployment gets.
+const prodMintJSONTemplate = `{"url":"https://mint.coinos.io","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://mint.minibits.cash/Bitcoin","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://mint.lnserver.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://mint.macadamia.cash","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://mint.westernbtc.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://kashu.me","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://mint.cubabitcoin.org","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0}`
+
+// testMintJSONTemplate is the 2 testnut zero-fee test mints. They fake
+// Lightning payments and exist ONLY for E2E purchase testing — never for
+// real customer deployments.
+const testMintJSONTemplate = `{"url":"https://nofee.testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
+    {"url":"https://testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0}`
+
+// defaultMintsJSON returns the accepted_mints JSON array the wizard writes
+// to the router's /etc/tollgate/config.json. ALWAYS the 7 production mints;
+// the 2 testnut test mints (fake Lightning, E2E purchase testing only) are
+// appended ONLY when includeTestnut is true — test mints are strictly
+// opt-in, real customer deployments never get them by default.
+func defaultMintsJSON(includeTestnut bool) string {
+	if includeTestnut {
+		return "[\n    " + prodMintJSONTemplate + ",\n    " + testMintJSONTemplate + "\n  ]"
+	}
+	return "[\n    " + prodMintJSONTemplate + "\n  ]"
+}
+
+// shellQuoteSingle wraps s in single quotes for safe interpolation into a
+// router-side shell command, escaping embedded single quotes so a mint URL
+// containing a quote/space cannot break out of the quoted token.
+func shellQuoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// configJqFilter returns the jq filter used by deploy step 7 to merge
+// margin, profit_share and mints into /etc/tollgate/config.json.
+//
+// Semantics:
+//   - margin/profit_share factors are overwritten from the deploy payload;
+//   - the operator's chosen mint ($mu) is APPENDED if non-empty and not
+//     already present (it never replaces the default list);
+//   - every default mint ($dm) not already in accepted_mints is APPENDED
+//     (idempotent by URL — re-running a deploy adds nothing new);
+//   - a config.json without accepted_mints is handled via (// []).
+//
+// Fixes vs the previous filter, which NEVER wrote margin/profit_share/mints:
+//  1. the dedup check inside `($dm | map(...))` referenced .accepted_mints
+//     while `.` was bound to each $dm element (null) → "Cannot iterate over
+//     null" on every router; the fix snapshots the CURRENT url list into
+//     $have BEFORE appending defaults, and every access to .accepted_mints
+//     is null-coalesced with `// []`;
+//  2. `($mu != "" and $idx | not)` mis-parsed as `(cond) | not`, inverting
+//     the condition so an EMPTY mint appended a {"url":""} entry; the fix
+//     parenthesizes `(($mu != "") and (index == null))`;
+//  3. the operator mint now crosses the shell SINGLE-QUOTED (see
+//     shellQuoteSingle) — unquoted, an empty --arg value made jq consume the
+//     filter itself as $mu, and a mint with a space/shell char corrupted the
+//     whole command.
+//
+// This filter is exercised end-to-end against local jq by
+// TestMintConfigJqMerge (merge, dedup, idempotency, // [] fallback).
+func configJqFilter() string {
+	return ".margin=$m | " +
+		"(.profit_share[] | select(.identity == \"owner\") | .factor) = $of | " +
+		"(.profit_share[] | select(.identity == \"developer\") | .factor) = $df | " +
+		// Add operator's chosen mint if non-empty and not already present.
+		".accepted_mints = (if (($mu != \"\") and (((.accepted_mints // []) | map(.url) | index($mu)) == null)) then " +
+		"(.accepted_mints // []) + [{\"url\":$mu,\"min_balance\":64,\"balance_tolerance_percent\":10,\"payout_interval_seconds\":60,\"min_payout_amount\":128,\"price_per_step\":1,\"price_unit\":\"sats\",\"min_purchase_steps\":0}] " +
+		"else (.accepted_mints // []) end) | " +
+		// Add any default mints that aren't already present (idempotent by
+		// URL; map+index instead of unique_by for jq <1.7 on OpenWrt).
+		// $have = the CURRENT url list (after the $mu merge above), so a
+		// custom mint equal to a default URL is not appended twice.
+		"((.accepted_mints // []) | map(.url)) as $have | " +
+		".accepted_mints = ((.accepted_mints // []) + ($dm | map(.url as $u | select(($have | index($u)) == null))))"
+}
+
+// configJqCmd builds the full router-side command that rewrites
+// /etc/tollgate/config.json. Host-computed values ($m/$of/$df/$dm) cross as
+// jq --argjson; the operator mint crosses as a single-quoted jq --arg.
+func configJqCmd(margin int, ownerFactor, devFactor, mint string, includeTestnut bool) string {
+	return "jq --argjson m " + strconv.Itoa(margin) + " " +
+		"--argjson of " + ownerFactor + " " +
+		"--argjson df " + devFactor + " " +
+		"--argjson dm '" + defaultMintsJSON(includeTestnut) + "' " +
+		"--arg mu " + shellQuoteSingle(mint) + " " +
+		"'" + configJqFilter() + "' " +
+		"/etc/tollgate/config.json > /tmp/cfg.tmp 2>&1 && " +
+		"mv /tmp/cfg.tmp /etc/tollgate/config.json && echo 'config updated' || echo 'no config'"
+}
 
 // deploySteps returns the ordered deployment step definitions.
 func deploySteps() []Step {
@@ -265,7 +394,9 @@ func runDeployment(job *Job, req deployRequest) {
 	// Step 4: Set root password
 	job.setStep(4, "running", "")
 	if req.Password != "" {
-		passwdCmd := "echo -e '" + req.Password + "\\n" + req.Password + "' | passwd root 2>&1"
+		// The password crosses as a base64 carrier — the plaintext never
+		// appears in the SSH command string (see passwdCommand).
+		passwdCmd := passwdCommand(req.Password)
 		passwdOut := sshRun(client, passwdCmd)
 		if strings.Contains(passwdOut, "changed") || strings.Contains(passwdOut, "successfully") {
 			job.addLog("Root password set")
@@ -744,41 +875,17 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	lnOut := sshRun(client, lnCmd)
 
 	// 8b: Write margin + profit_share to config.json.
-	// Also ensure 9 default mints (7 production + 2 testnut zero-fee) are present (idempotent).
+	// Also ensure the default mints are present (idempotent):
+	//   7 production mints always;
+	//   2 testnut zero-fee test mints ONLY when the deploy payload opts in
+	//   (req.TestMints — E2E purchase testing, never a real customer default).
 	// Does NOT strip minibits (DLEQ keyset rotation bug fixed in gonuts v0.11.1).
 	devSplit, margin := req.resolvedAdvanced()
 	devSplit = clamp(devSplit, 0, 50)
 	margin = clamp(margin, 0, 100)
 	ownerFactor := strconv.FormatFloat(1.0-float64(devSplit)/100.0, 'f', 4, 64)
 	devFactor := strconv.FormatFloat(float64(devSplit)/100.0, 'f', 4, 64)
-	defaultMints := `[
-    {"url":"https://mint.coinos.io","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.minibits.cash/Bitcoin","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.lnserver.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.macadamia.cash","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.westernbtc.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://kashu.me","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.cubabitcoin.org","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://nofee.testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0}
-  ]`
-	cfgCmd := "jq --argjson m " + strconv.Itoa(margin) + " " +
-		"--argjson of " + ownerFactor + " " +
-		"--argjson df " + devFactor + " " +
-		"--argjson dm '" + defaultMints + "' " +
-		"--arg mu " + req.Mint + " " +
-		"'.margin=$m | " +
-		"(.profit_share[] | select(.identity == \"owner\") | .factor) = $of | " +
-		"(.profit_share[] | select(.identity == \"developer\") | .factor) = $df | " +
-		// Add operator's chosen mint if non-empty and not already present.
-		".accepted_mints = (if ($mu != \"\" and (.accepted_mints | map(.url) | index($mu)) | not) then " +
-		".accepted_mints + [{\"url\":$mu,\"min_balance\":64,\"balance_tolerance_percent\":10,\"payout_interval_seconds\":60,\"min_payout_amount\":128,\"price_per_step\":1,\"price_unit\":\"sats\",\"min_purchase_steps\":0}] " +
-		"else .accepted_mints end) | " +
-		// Add any of the 7 default mints that aren't already present (idempotent by URL).
-		// Uses map + index instead of unique_by for jq <1.7 compatibility on OpenWrt.
-		".accepted_mints = (.accepted_mints + ($dm | map(select(.url as $u | (.accepted_mints | map(.url) | index($u)) | not))))' " +
-		"/etc/tollgate/config.json > /tmp/cfg.tmp 2>&1 && " +
-		"mv /tmp/cfg.tmp /etc/tollgate/config.json && echo 'config updated' || echo 'no config'"
+	cfgCmd := configJqCmd(margin, ownerFactor, devFactor, req.Mint, req.TestMints)
 	cfgOut := sshRun(client, cfgCmd)
 
 	if strings.Contains(lnOut, "identities updated") {
@@ -786,7 +893,11 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	}
 	if strings.Contains(cfgOut, "config updated") {
 		job.addLog("config.json: margin=" + strconv.Itoa(margin) + "%, devSplit=" + strconv.Itoa(devSplit) + "% (profit_share updated)")
-		job.addLog("config.json: mints configured (coinos, minibits, lnserver, macadamia, westernbtc, kashu, cubabitcoin, testnut x2)")
+		mintsLog := "config.json: mints configured (coinos, minibits, lnserver, macadamia, westernbtc, kashu, cubabitcoin)"
+		if req.TestMints {
+			mintsLog += " + testnut x2 (E2E test mints — opt-in)"
+		}
+		job.addLog(mintsLog)
 	}
 
 	// 8c: Default mints already injected in 8b above (accepted_mints array).
@@ -1035,6 +1146,13 @@ func staSetupScript(ssid, wifiKey, band string) string {
 // target wifi-device is FORCED to it (used by the multi-radio retry); otherwise
 // the radio is chosen by band, falling back to radio0.
 func staSetupScriptFor(ssid, wifiKey, band, radio string) string {
+	// ssid/wifiKey cross as base64 carriers and are decoded into shell
+	// variables before any uci call — the plaintext never appears in the
+	// script text itself (keeps the STA passphrase out of the SSH command
+	// string and makes shell injection through the SSID/key impossible).
+	carriers := `
+sta_ssid=$(echo ` + shellB64(ssid) + ` | base64 -d)
+sta_key=$(echo ` + shellB64(wifiKey) + ` | base64 -d)`
 	selector := ""
 	if r := strings.TrimSpace(radio); r != "" {
 		selector = "target='" + r + "'\n" +
@@ -1060,7 +1178,7 @@ if [ -n "$want_band" ]; then
 	if [ -n "$rb" ] && [ "$rb" != "$want_band" ]; then echo "NO_BAND_RADIO target=$target band=$rb want=$want_band"; exit 0; fi
 fi`
 	}
-	return selector + `
+	return carriers + selector + `
 cp /etc/config/wireless /tmp/wireless.pre-tollgate &&
 uci -q set wireless.$target.disabled='0' &&
 for s in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)\.device='$target'$/\1/p"); do
@@ -1070,9 +1188,9 @@ uci set wireless.tollgate_uplink=wifi-iface &&
 uci set wireless.tollgate_uplink.network='wwan' &&
 uci set wireless.tollgate_uplink.device="$target" &&
 uci set wireless.tollgate_uplink.mode='sta' &&
-uci set wireless.tollgate_uplink.ssid='` + ssid + `' &&
+uci set wireless.tollgate_uplink.ssid="$sta_ssid" &&
 uci set wireless.tollgate_uplink.encryption='psk2' &&
-uci set wireless.tollgate_uplink.key='` + wifiKey + `' &&
+uci set wireless.tollgate_uplink.key="$sta_key" &&
 uci set wireless.tollgate_uplink.disabled='0' &&
 uci set network.wwan=interface &&
 uci set network.wwan.proto='dhcp' &&
