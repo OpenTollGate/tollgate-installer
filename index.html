@@ -285,6 +285,12 @@ let pollTimer = null;
 let upstreamMode = 'wan';
 let scannedSSIDs = [];
 let wifiScanned = false;
+// Latch: at most ONE /api/wifi-scan request in flight at a time. A password
+// keystroke must never be able to start a scan, and a second trigger (Rescan
+// clicked twice, STA mode toggled mid-scan) must not stack another one —
+// either way the ×6 repetition reported from the MT3000 cannot recur.
+let wifiScanInFlight = false;
+let wifiScanToken = 0;
 let prestageJobId = '';
 let wifiTestState = 'idle'; // idle | testing | ok | failed | unavailable
 
@@ -326,16 +332,19 @@ function selectMode(mode) {
 }
 
 function onPasswordChange() {
-  // If STA mode is active, reset scan so it re-triggers with new password.
-  // Empty password is valid (fresh-reset router) — always rescan.
   if (upstreamMode === 'sta') {
-    wifiScanned = false;
-    const ssidSelect = document.getElementById('ssid');
-    ssidSelect.innerHTML = '<option value="">Scanning...</option>';
-    ssidSelect.disabled = true;
-    // Debounce: only auto-scan after user stops typing briefly
+    // A keystroke must NOT start a scan. The password is only the SSH
+    // credential the scan uses; scanning is an explicit action ("Rescan", or
+    // (re-)selecting STA mode). Auto-scanning on a 600 ms typing debounce
+    // fired one scan per typing pause — and every scan makes the router scan
+    // every radio, which is where the ×6 repetition came from.
     clearTimeout(window._wifiScanTimer);
-    window._wifiScanTimer = setTimeout(wifiScan, 600);
+    window._wifiScanTimer = null;
+    // Keep the list that is already on screen; just say it may be stale.
+    if (scannedSSIDs.length > 0) {
+      const ssidHint = document.getElementById('ssid-hint');
+      if (ssidHint) ssidHint.textContent = 'Router password changed — press Rescan to refresh the network list.';
+    }
   }
   // Re-identify the selected router with the new password (debounced) so the
   // dropdown shows a real model name instead of "Router".
@@ -530,6 +539,14 @@ async function wifiScan() {
     return;
   }
 
+  // Latch: never run two scans at once (see wifiScanInFlight).
+  if (wifiScanInFlight) {
+    ssidHint.textContent = 'A scan is already running — waiting for it to finish...';
+    return;
+  }
+  wifiScanInFlight = true;
+  const scanToken = ++wifiScanToken;
+
   // Show scanning state
   ssidSelect.innerHTML = '<option value="">Scanning...</option>';
   ssidSelect.disabled = true;
@@ -544,6 +561,9 @@ async function wifiScan() {
     });
     const data = await resp.json();
 
+    // A newer scan owns the UI now — drop this (stale) response.
+    if (scanToken !== wifiScanToken) return;
+
     if (data.error) {
       ssidSelect.innerHTML = '<option value="">Scan failed</option>';
       ssidHint.textContent = data.error + ' — check router password and try Rescan.';
@@ -555,8 +575,12 @@ async function wifiScan() {
     scannedSSIDs = data.ssids || [];
     if (scannedSSIDs.length === 0) {
       ssidSelect.innerHTML = '<option value="">No networks found</option>';
-      ssidHint.textContent = data.debug
-        ? 'No WiFi networks detected. Router returned: ' + data.debug
+      // The server now reports which strategies it tried (data.log) and what
+      // the router last said (data.debug) — show them instead of a bare
+      // "not detected", so the real refusal is visible to the operator.
+      const detail = data.log || data.debug;
+      ssidHint.textContent = detail
+        ? 'No WiFi networks detected. Attempts: ' + detail
         : 'No WiFi networks detected. Try Rescan.';
       ssidSelect.disabled = true;
       wifiScanned = true;
@@ -584,7 +608,8 @@ async function wifiScan() {
 
     ssidSelect.disabled = false;
     wifiScanned = true;
-    ssidHint.textContent = 'Found ' + scannedSSIDs.length + ' network(s). Select one to repeat.';
+    ssidHint.textContent = 'Found ' + scannedSSIDs.length + ' network(s)'
+      + (data.strategy ? ' via ' + data.strategy : '') + '. Select one to repeat.';
     ssidSelect.onchange = function() {
       const sel = ssidSelect.options[ssidSelect.selectedIndex];
       const enc = sel ? sel.dataset.encryption : '';
@@ -607,6 +632,7 @@ async function wifiScan() {
     ssidSelect.disabled = true;
     wifiScanned = false;
   } finally {
+    wifiScanInFlight = false;
     rescanBtn.disabled = false;
   }
 }

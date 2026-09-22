@@ -458,19 +458,277 @@ func parseIwScan(output string) []wifiSSID {
 	return ssids
 }
 
-// scanFailedHeuristic returns true if the output text indicates a scan
-// failure rather than real scan results. Checks for common error strings
-// emitted by iwinfo and iw on OpenWrt when a device doesn't exist, is in
-// the wrong mode, or the command is unavailable.
+// scanFailureSignatures is the DATA list of strings that iwinfo/iw print
+// *instead of* scan results. A strategy attempt whose output matches any of
+// them is a FAILED attempt: the chain falls through to the next strategy
+// instead of reporting an empty SSID list as a successful scan.
+//
+// Provenance — do not extend this list without executed evidence:
+//   - "Scanning not possible"   iwinfo_cli.c:687 (printf -> STDOUT): the
+//     scanlist op FAILED (radio down/busy, phy not in a scanning state).
+//     This is the string the GL.iNet MT3000 reports; it was missing from the
+//     list, so the refusal was read as a successful scan and strategies 3-5
+//     never ran.
+//   - "No scan results"         iwinfo_cli.c:692 (printf -> STDOUT): the
+//     scanlist op succeeded with len <= 0 — not a single BSS was heard.
+//     Also not a result: the later strategies may still hear the network.
+//   - "No such wireless backend" / "No such wireless device"
+//     iwinfo_cli.c:1009 / :1036 (stderr): `iwinfo scan` without a device and
+//     an unknown interface name both land here.
+//   - "Operation not supported" / "Operation not permitted" /
+//     "Device or resource busy" / "No such device": nl80211/errno strings
+//     observed in the field (see docs/wifi-scan-fallthrough.md).
+//   - "command not found" / "Usage:": iwinfo/iw missing, or a command called
+//     with invalid syntax (e.g. `iw dev scan`).
+//
+// iwinfo line numbers: openwrt/iwinfo @ 66bdd1a.
+var scanFailureSignatures = []string{
+	"command not found",
+	"No such device",
+	"No such wireless device",
+	"No such wireless backend",
+	"Operation not supported",
+	"Operation not permitted",
+	"Device or resource busy",
+	"Scanning not possible",
+	"No scan results",
+	"Usage:",
+}
+
+// scanFailedHeuristic reports whether a strategy's output is a refusal or an
+// error rather than scan results. It is a lookup over scanFailureSignatures
+// (data), so recognising a newly observed iwinfo refusal is a one-line data
+// change instead of a new branch.
 func scanFailedHeuristic(out string) bool {
-	return strings.TrimSpace(out) == "" ||
-		strings.Contains(out, "command not found") ||
-		strings.Contains(out, "No such device") ||
-		strings.Contains(out, "No such wireless device") ||
-		strings.Contains(out, "Operation not supported") ||
-		strings.Contains(out, "Operation not permitted") ||
-		strings.Contains(out, "Device or resource busy") ||
-		strings.Contains(out, "Usage:")
+	if strings.TrimSpace(out) == "" {
+		return true
+	}
+	for _, sig := range scanFailureSignatures {
+		if strings.Contains(out, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// strategyNone is the reported strategy when every attempt failed.
+const strategyNone = "none"
+
+// scanRunner runs one shell command on the router and returns its combined
+// output. sshRun satisfies it; tests inject a fake router.
+type scanRunner func(cmd string) string
+
+// scanCommand is one executed router command and the output it produced.
+type scanCommand struct {
+	cmd string
+	out string
+}
+
+// scanStrategy is one link of the WiFi-scan fallback chain: a named attempt
+// with its own command(s) and its own parser. A strategy may run several
+// commands (one per interface/phy); each command's output is judged
+// separately, so one refusing interface cannot poison the whole attempt.
+type scanStrategy struct {
+	name   string
+	parser func(string) []wifiSSID
+	run    func(run scanRunner) (cmds []scanCommand, detail string)
+}
+
+// scanResult is the outcome of walking the chain.
+type scanResult struct {
+	SSIDs    []wifiSSID // networks found by the winning strategy (nil: none)
+	Strategy string     // name of the winning strategy; strategyNone otherwise
+	Log      []string   // one line per attempt, in execution order
+	LastRaw  string     // output of the last attempt that produced any output
+}
+
+// wirelessInterfaces extracts interface names from `iwinfo` (no arguments)
+// output, which prints one info block per interface, prefixed by its name:
+//
+//	phy0-ap0  ESSID: "TollGate-F794"
+//	          Access Point: 94:83:C4:8C:59:C3
+//	          Mode: Master  Channel: 1 (2.4 GHz)  HT Mode: HT20
+func wirelessInterfaces(iwinfoOut string) []string {
+	var devs []string
+	for _, line := range strings.Split(iwinfoOut, "\n") {
+		trimmed := strings.TrimSpace(line)
+		idx := strings.Index(trimmed, "ESSID:")
+		if idx <= 0 {
+			continue
+		}
+		iface := strings.TrimSpace(trimmed[:idx])
+		if iface == "" || strings.HasPrefix(iface, "Usage") {
+			continue
+		}
+		devs = append(devs, iface)
+	}
+	return devs
+}
+
+// runCmd executes one command and records it.
+func runCmd(run scanRunner, cmd string) scanCommand {
+	return scanCommand{cmd: cmd, out: run(cmd)}
+}
+
+// scanChain is the ordered strategy list. Every attempt runs with stderr
+// MERGED into stdout (2>&1): now that the failure class is recognised as
+// data, the router's real error message stays visible in the log/debug
+// fields instead of being discarded by 2>/dev/null.
+func scanChain() []scanStrategy {
+	return []scanStrategy{
+		{
+			// Retained first: some vendor iwinfo builds accept a device-less
+			// scan. Upstream iwinfo needs the device argument, which now logs
+			// as an explicit refusal instead of an empty result.
+			name:   "iwinfo scan",
+			parser: parseIwinfoScan,
+			run: func(run scanRunner) ([]scanCommand, string) {
+				return []scanCommand{runCmd(run, "iwinfo scan 2>&1")}, "no device argument"
+			},
+		},
+		{
+			name:   "iwinfo <dev> scan",
+			parser: parseIwinfoScan,
+			run: func(run scanRunner) ([]scanCommand, string) {
+				list := runCmd(run, "iwinfo 2>&1")
+				devs := wirelessInterfaces(list.out)
+				if len(devs) == 0 {
+					return []scanCommand{list}, "no wireless interfaces reported by iwinfo"
+				}
+				cmds := make([]scanCommand, 0, len(devs))
+				for _, dev := range devs {
+					cmds = append(cmds, runCmd(run, "iwinfo "+dev+" scan 2>&1"))
+				}
+				return cmds, "ifaces=" + strings.Join(devs, ",")
+			},
+		},
+		{
+			// phy-level scan works regardless of interface mode.
+			name:   "iw phy <phy> scan",
+			parser: parseIwScan,
+			run: func(run scanRunner) ([]scanCommand, string) {
+				var cmds []scanCommand
+				for _, phy := range []string{"phy0", "phy1"} {
+					cmds = append(cmds, runCmd(run, "iw phy "+phy+" scan 2>&1"))
+				}
+				return cmds, "phy0,phy1"
+			},
+		},
+		{
+			name:   "iwinfo wlan0/wlan1 scan",
+			parser: parseIwinfoScan,
+			run: func(run scanRunner) ([]scanCommand, string) {
+				return []scanCommand{runCmd(run, "iwinfo wlan0 scan 2>&1 || iwinfo wlan1 scan 2>&1")}, "wlan0,wlan1"
+			},
+		},
+		{
+			// Last resort. `iw dev scan` is invalid syntax in iw >= 6 and
+			// prints its usage text; that text is now recognised as a
+			// refusal like any other, so it can never again be reported as a
+			// successful empty scan.
+			name:   "iw dev scan",
+			parser: parseIwScan,
+			run: func(run scanRunner) ([]scanCommand, string) {
+				return []scanCommand{runCmd(run, "iw dev scan 2>&1")}, "all wireless devices"
+			},
+		},
+	}
+}
+
+// scanViaChain walks scanChain() and returns the first attempt that yields at
+// least one network. An attempt is a SUCCESS only when at least one of its
+// commands produced output that is not a recognised iwinfo/iw refusal and
+// that parses to >= 1 network. Anything else — no output, a refusal like
+// "Scanning not possible", or output that parses to zero networks — NEVER
+// ends the walk: the next strategy runs. When every strategy fails, the
+// result reports Strategy strategyNone with the per-attempt log and the last
+// raw output, so the operator can see which methods were tried and why each
+// one failed.
+func scanViaChain(run scanRunner) scanResult {
+	res := scanResult{Strategy: strategyNone}
+	for i, st := range scanChain() {
+		cmds, detail := st.run(run)
+		label := fmt.Sprintf("[%d] %s", i+1, st.name)
+		if detail != "" {
+			label += " (" + detail + ")"
+		}
+
+		var good []string
+		refusal := ""
+		for _, c := range cmds {
+			if strings.TrimSpace(c.out) == "" {
+				continue
+			}
+			res.LastRaw = c.out
+			if scanFailedHeuristic(c.out) {
+				if refusal == "" {
+					refusal = firstLine(c.out)
+				}
+				continue
+			}
+			good = append(good, c.out)
+		}
+
+		if len(good) == 0 {
+			if refusal != "" {
+				res.Log = append(res.Log, label+": refused: "+refusal)
+			} else {
+				res.Log = append(res.Log, label+": no output")
+			}
+			continue
+		}
+
+		raw := strings.Join(good, "\n")
+		ssids := st.parser(raw)
+		if len(ssids) == 0 {
+			res.Log = append(res.Log, label+": parsed 0 networks")
+			continue
+		}
+
+		res.Log = append(res.Log, fmt.Sprintf("%s: %d network(s)", label, len(ssids)))
+		res.SSIDs = ssids
+		res.Strategy = st.name
+		return res
+	}
+	return res
+}
+
+// firstLine returns the first non-blank line of s, trimmed — used to keep the
+// per-attempt log readable.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// buildScanResponse maps a chain outcome onto the /api/wifi-scan body and
+// HTTP status. Pure — unit-tested without a router.
+//
+//   - networks found           -> 200 {ssids:[...], strategy:"<winner>", log}
+//   - every strategy refused   -> 200 {ssids:[], strategy:"none", log, debug}
+//   - nothing came back at all -> 500 {ssids:[], strategy:"none", log, error}
+func buildScanResponse(res scanResult) (int, map[string]any) {
+	ssids := res.SSIDs
+	if ssids == nil {
+		ssids = []wifiSSID{}
+	}
+	body := map[string]any{
+		"ssids":    ssids,
+		"strategy": res.Strategy,
+		"log":      truncate(strings.Join(res.Log, "\n"), 700),
+	}
+	if len(ssids) > 0 {
+		return http.StatusOK, body
+	}
+	if strings.TrimSpace(res.LastRaw) != "" {
+		body["debug"] = truncate(res.LastRaw, 200)
+		return http.StatusOK, body
+	}
+	body["error"] = "WiFi scan failed — no wireless interfaces found or iwinfo/iw not available. The router may have been left in a partially-configured state by a previous deployment. Try factory resetting the router."
+	return http.StatusInternalServerError, body
 }
 
 func handleWifiScan(w http.ResponseWriter, r *http.Request) {
@@ -506,179 +764,18 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	// radio reports up before scanning (see enableWifiAndWait).
 	enableWifiAndWait(client)
 
-	// ---- WiFi scan with prioritised fallback chain ----
-	//
-	// Priority:
-	//   1. `iwinfo scan` (no device arg) — scans ALL radios, works on
-	//      OpenWrt 25.12 / GL-MT3000 without needing to pick a specific
-	//      interface. This is what worked in the July version.
-	//   2. Per-interface: only Client/Managed mode interfaces (skip
-	//      Master/AP mode interfaces like phy0-ap0 which can't scan).
-	//   3. `iw phy phy0 scan` + `iw phy phy1 scan` — phy-level scan
-	//      works regardless of interface mode.
-	//   4. Existing fallbacks: iwinfo wlan0/wlan1 scan, iw dev scan.
-	//
-	// parseIwinfoScan and parseIwScan are kept as-is.
-
-	var debugLog strings.Builder
-
-	// --- Strategy 1: iwinfo scan (no args) — scans all radios ---
-	scanOut := sshRun(client, "iwinfo scan 2>/dev/null")
-	debugLog.WriteString("[1] iwinfo scan (no args): ")
-	if strings.TrimSpace(scanOut) != "" && !scanFailedHeuristic(scanOut) {
-		debugLog.WriteString("got results\n")
-		ssids := parseIwinfoScan(scanOut)
-		w.Header().Set("Content-Type", "application/json")
-		if len(ssids) == 0 {
-			json.NewEncoder(w).Encode(map[string]any{
-				"ssids": ssids,
-				"debug": truncate(scanOut, 200),
-			})
-		} else {
-			json.NewEncoder(w).Encode(map[string]any{"ssids": ssids})
-		}
-		return
+	// Walk the WiFi-scan fallback chain. scanViaChain falls through on
+	// empty output, on any recognised iwinfo/iw refusal (see
+	// scanFailureSignatures) and on output that parses to zero networks,
+	// and reports which strategy produced the SSIDs.
+	res := scanViaChain(func(cmd string) string { return sshRun(client, cmd) })
+	for _, line := range res.Log {
+		log.Printf("wifi-scan %s %s", req.IP, line)
 	}
-	debugLog.WriteString("no results\n")
-
-	// --- Strategy 2: per-interface scan (Client/Managed only) ---
-	// Auto-detect wireless interfaces from `iwinfo` (no args) listing.
-	// For each interface, check `iwinfo <dev> info` Mode: field and skip
-	// Master (AP) mode interfaces — they can't scan.
-	iwinfoOut := sshRun(client, "iwinfo 2>/dev/null")
-	var clientDevs []string
-	for _, line := range strings.Split(iwinfoOut, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if idx := strings.Index(trimmed, "ESSID:"); idx > 0 {
-			iface := strings.TrimSpace(trimmed[:idx])
-			if iface == "" || strings.HasPrefix(iface, "Usage") {
-				continue
-			}
-			// Check mode: skip Master (AP) interfaces.
-			infoOut := sshRun(client, "iwinfo "+iface+" info 2>/dev/null")
-			mode := ""
-			for _, infoLine := range strings.Split(infoOut, "\n") {
-				infoLine = strings.TrimSpace(infoLine)
-				if strings.HasPrefix(infoLine, "Mode:") {
-					mode = strings.TrimSpace(strings.TrimPrefix(infoLine, "Mode:"))
-					break
-				}
-			}
-			debugLog.WriteString("[2] iface " + iface + " mode=" + mode + " — will scan\n")
-			// Don't skip Master (AP) interfaces — iwinfo <dev> scan works
-			// on AP interfaces on many OpenWrt versions (e.g. GL-MT3000
-			// with OpenWrt 25.12). The scan triggers a passive/active
-			// scan on the underlying phy regardless of interface mode.
-			clientDevs = append(clientDevs, iface)
-		}
-	}
-
-	if len(clientDevs) > 0 {
-		var perIfaceScan string
-		for _, dev := range clientDevs {
-			out := sshRun(client, "iwinfo "+dev+" scan 2>/dev/null")
-			if strings.TrimSpace(out) != "" && !scanFailedHeuristic(out) {
-				perIfaceScan += out + "\n"
-			}
-		}
-		if strings.TrimSpace(perIfaceScan) != "" {
-			debugLog.WriteString("[2] per-interface scan: got results\n")
-			scanOut = perIfaceScan
-			ssids := parseIwinfoScan(scanOut)
-			w.Header().Set("Content-Type", "application/json")
-			if len(ssids) == 0 {
-				json.NewEncoder(w).Encode(map[string]any{
-					"ssids": ssids,
-					"debug": truncate(scanOut, 200),
-				})
-			} else {
-				json.NewEncoder(w).Encode(map[string]any{"ssids": ssids})
-			}
-			return
-		}
-	}
-	debugLog.WriteString("[2] per-interface scan: no results\n")
-
-	// --- Strategy 3: phy-level scan (mode-independent) ---
-	// `iw phy phy0 scan` works regardless of interface mode — it creates
-	// a temporary scan request on the physical device. Try phy0 and phy1.
-	var phyScanOut string
-	for _, phy := range []string{"phy0", "phy1"} {
-		out := sshRun(client, "iw phy "+phy+" scan 2>/dev/null")
-		if strings.TrimSpace(out) != "" && !strings.Contains(out, "command not found") {
-			phyScanOut += out + "\n"
-		}
-	}
-	if strings.TrimSpace(phyScanOut) != "" {
-		debugLog.WriteString("[3] phy-level scan: got results\n")
-		ssids := parseIwScan(phyScanOut)
-		w.Header().Set("Content-Type", "application/json")
-		if len(ssids) == 0 {
-			json.NewEncoder(w).Encode(map[string]any{
-				"ssids": ssids,
-				"debug": truncate(phyScanOut, 200),
-			})
-		} else {
-			json.NewEncoder(w).Encode(map[string]any{"ssids": ssids})
-		}
-		return
-	}
-	debugLog.WriteString("[3] phy-level scan: no results\n")
-
-	// --- Strategy 4: existing fallbacks ---
-	// Try common interface names (wlan0/wlan1) then iw dev scan.
-	scanOut = sshRun(client, "iwinfo wlan0 scan 2>/dev/null || iwinfo wlan1 scan 2>/dev/null")
-	if strings.TrimSpace(scanOut) != "" && !scanFailedHeuristic(scanOut) {
-		debugLog.WriteString("[4] iwinfo wlan0/wlan1 fallback: got results\n")
-		ssids := parseIwinfoScan(scanOut)
-		w.Header().Set("Content-Type", "application/json")
-		if len(ssids) == 0 {
-			json.NewEncoder(w).Encode(map[string]any{
-				"ssids": ssids,
-				"debug": truncate(scanOut, 200),
-			})
-		} else {
-			json.NewEncoder(w).Encode(map[string]any{"ssids": ssids})
-		}
-		return
-	}
-
-	// Last resort: iw dev scan
-	scanOut = sshRun(client, "iw dev scan 2>/dev/null")
-	if strings.TrimSpace(scanOut) != "" && !strings.Contains(scanOut, "command not found") {
-		debugLog.WriteString("[4] iw dev scan: got results\n")
-		ssids := parseIwScan(scanOut)
-		w.Header().Set("Content-Type", "application/json")
-		if len(ssids) == 0 {
-			json.NewEncoder(w).Encode(map[string]any{
-				"ssids": ssids,
-				"debug": truncate(scanOut, 200),
-			})
-		} else {
-			json.NewEncoder(w).Encode(map[string]any{"ssids": ssids})
-		}
-		return
-	}
-	debugLog.WriteString("[4] all fallbacks exhausted\n")
-
-	// All strategies failed — return diagnostic info.
+	status, body := buildScanResponse(res)
 	w.Header().Set("Content-Type", "application/json")
-	// If 0 SSIDs found despite non-empty scan output from the last strategy,
-	// include diagnostic info so the operator can see what the router returned.
-	// This catches format mismatches (new iwinfo output) and error text that
-	// slipped past the checks above.
-	if strings.TrimSpace(scanOut) != "" {
-		json.NewEncoder(w).Encode(map[string]any{
-			"ssids": []string{},
-			"debug": truncate(scanOut, 200),
-		})
-		return
-	}
-	w.WriteHeader(500)
-	json.NewEncoder(w).Encode(map[string]any{
-		"error": "WiFi scan failed — no wireless interfaces found or iwinfo/iw not available. The router may have been left in a partially-configured state by a previous deployment. Try factory resetting the router.",
-		"debug": truncate(debugLog.String(), 500),
-	})
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(body)
 }
 
 // handlePreStage starts a background pre-download of the deploy assets for a
