@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,9 +160,13 @@ func TestStaSetupScript(t *testing.T) {
 		"uci commit network",
 		// Success marker parsed by configureSTA.
 		"STA_CFG_OK target=$target",
-		// Operator-supplied credentials land in the right sections.
-		"ssid='TollGate-Field'",
-		"key='correct horse'",
+		// Operator-supplied credentials now cross as base64 carriers and are
+		// decoded into shell variables — never string-interpolated into the
+		// UCI commands (injection-safe; plaintext out of argv).
+		"sta_ssid=$(echo " + base64.StdEncoding.EncodeToString([]byte("TollGate-Field")) + " | base64 -d)",
+		"sta_key=$(echo " + base64.StdEncoding.EncodeToString([]byte("correct horse")) + " | base64 -d)",
+		"wireless.tollgate_uplink.ssid=\"$sta_ssid\"",
+		"wireless.tollgate_uplink.key=\"$sta_key\"",
 	} {
 		if want == "rm /etc/config/wireless" {
 			if strings.Contains(s, want) {

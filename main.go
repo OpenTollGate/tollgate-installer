@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -42,9 +43,73 @@ func validLightningAddress(s string) bool {
 }
 
 var (
-	listenPort  = flag.String("port", "8099", "HTTP listen port")
-	listenAddr  string
+	listenPort = flag.String("port", "8099", "HTTP listen port")
+	// listenBind is the interface the wizard binds to. Defaults to loopback
+	// (127.0.0.1) so the deploy API — which drives a root SSH session on the
+	// router — is NOT reachable from other hosts on the LAN. Operators who
+	// accept that risk can override with --bind=0.0.0.0 or a specific IP.
+	listenBind = flag.String("bind", defaultBindHost, "HTTP bind address (default loopback-only)")
+	listenAddr string
 )
+
+// defaultBindHost is the loopback interface the wizard serves on by default.
+// The setup wizard drives a root SSH session on the router, so a wildcard
+// bind (":8099" on all interfaces) would let any host on the LAN drive
+// deploys against it.
+const defaultBindHost = "127.0.0.1"
+
+// listenAddress returns the host:port the wizard serves on: loopback by
+// default, or the operator's --bind override. An empty bind falls back to
+// loopback so a misconfigured flag can never widen the exposure.
+func listenAddress(bind, port string) string {
+	if strings.TrimSpace(bind) == "" {
+		bind = defaultBindHost
+	}
+	return bind + ":" + port
+}
+
+// corsAllowedOrigin reports whether origin is a loopback origin the wizard
+// trusts for cross-origin reads. Only the wizard's own localhost/127.0.0.1
+// origins (any port) are allowlisted; a wildcard Access-Control-Allow-Origin
+// on this service would let any website the operator visits drive the deploy
+// API from their browser.
+func corsAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
+
+// corsMiddleware dispatches to next after setting CORS headers.
+// Access-Control-Allow-Origin is echoed only for allowlisted loopback
+// origins — foreign origins get no ACAO header at all, so browsers block
+// cross-origin reads. Methods/headers advertisement is unchanged.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); corsAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // ─── Job tracking ─────────────────────────────────────────────
 
@@ -470,6 +535,11 @@ type deployRequest struct {
 	DevSplit int    `json:"devSplit"` // advanced: % to dev fund (0-50, default 10)
 	Margin   int    `json:"margin"`   // advanced: operator markup % (0-100, default 0)
 	Mint     string `json:"mint"`     // advanced: preferred Cashu mint URL
+	// TestMints is OPT-IN: when false/absent (the default for real customer
+	// deployments) the wizard configures ONLY the 7 production mints. When
+	// true it additionally appends the 2 testnut test mints, which fake
+	// Lightning payments for E2E purchase testing — never for production.
+	TestMints bool `json:"test_mints"` // advanced: include testnut test mints (E2E only, default false)
 }
 
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
@@ -578,7 +648,7 @@ func allRadiosUp(statusJSON string) bool {
 
 func main() {
 	flag.Parse()
-	listenAddr = ":" + *listenPort
+	listenAddr = listenAddress(*listenBind, *listenPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/scan", handleScan)
 	mux.HandleFunc("/api/wifi-scan", handleWifiScan)
@@ -586,20 +656,15 @@ func main() {
 	mux.HandleFunc("/api/status/", handleStatus)
 	mux.HandleFunc("/", handleIndex)
 
-	// CORS for local dev
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(204)
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
+	// CORS: loopback origins only (see corsMiddleware) — never a wildcard.
+	handler := corsMiddleware(mux)
 
-	fmt.Printf("TollGate setup wizard running on http://localhost%s\n", listenAddr)
-	fmt.Println("Open this URL in your browser to set up a router.")
+	fmt.Printf("TollGate setup wizard running on http://%s\n", listenAddr)
+	if strings.HasPrefix(listenAddr, defaultBindHost+":") || strings.HasPrefix(listenAddr, "localhost:") {
+		fmt.Println("Bound to loopback (localhost only). Open this URL in your browser to set up a router.")
+	} else {
+		fmt.Println("Bound to a non-loopback interface — the deploy API is reachable from the network.")
+	}
 	log.Fatal(http.ListenAndServe(listenAddr, handler))
 	_ = io.Discard // keep import
 }

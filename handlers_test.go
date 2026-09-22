@@ -146,9 +146,15 @@ func TestMainFunctionStructure(t *testing.T) {
 	// Test that the main function sets up routes correctly
 	// This is a basic structural test since we can't easily run the main function
 
-	// Check that listenAddr is properly set
-	if listenAddr != ":8099" {
-		t.Errorf("listenAddr = %q, want %q", listenAddr, ":8099")
+	// The wizard must default to LOOPBACK binding (127.0.0.1), not a
+	// wildcard ":<port>" — the deploy API drives a root SSH session on the
+	// router, so exposing it on all interfaces would let any LAN host drive
+	// deploys. This guards the security fix (previously ":8099").
+	if got := listenAddress(*listenBind, "8099"); got != "127.0.0.1:8099" {
+		t.Errorf("listenAddress(bind=%q, 8099) = %q, want %q (loopback default)", *listenBind, got, "127.0.0.1:8099")
+	}
+	if got := listenAddress("", "8099"); got != "127.0.0.1:8099" {
+		t.Errorf("listenAddress(\"\", 8099) = %q, want loopback default %q", got, "127.0.0.1:8099")
 	}
 
 	// Verify the regex patterns are compiled
