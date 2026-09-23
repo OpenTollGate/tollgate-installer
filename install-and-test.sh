@@ -575,9 +575,20 @@ done
 rm -f "${SEEN_FILE}" "${STATUS_FILE}"
 
 # --- 6. post-deploy router verification --------------------------------------
-echo
-echo "=== Verifying router ${ROUTER_IP} post-deploy ==="
-sshpass -p "${ROUTER_PASS}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@"${ROUTER_IP}" '
+#
+# sshpass is NOT installed on macOS (it is not in Homebrew core either), and the
+# deploy itself never needs it: the Go installer opens SSH with
+# golang.org/x/crypto/ssh, not by shelling out. So this step is a *verification*
+# step, and its tooling being absent must not be reported as an authentication
+# failure after a deploy that plainly completed. Three ways in, in order:
+#
+#   1. sshpass, when installed (password through the environment, not argv, so
+#      it stays out of `ps`);
+#   2. ssh's own SSH_ASKPASS helper on OpenSSH >= 8.4. The helper reads the
+#      password from the environment, so it is never written to disk, and ssh
+#      gets </dev/null because OpenSSH ignores a password handed to it on a pipe;
+#   3. an explicit "not performed on this host" line — never a failure.
+ROUTER_PROBE='
     echo "--- hostname ---";          cat /proc/sys/kernel/hostname
     echo "--- tollgate-wrt build ---"; tollgate version 2>/dev/null || opkg list-installed tollgate-wrt 2>/dev/null || apk info -v tollgate-wrt 2>/dev/null || echo "build version unavailable"
     echo "--- ports ---";             netstat -tln 2>/dev/null | grep -E ":80 |:2050|:2121" || true
@@ -585,9 +596,91 @@ sshpass -p "${ROUTER_PASS}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 
     echo "--- LNURL ---";             jq -r ".public_identities[] | select(.name==\"owner\") | .lightning_address" /etc/tollgate/identities.json 2>/dev/null || true
     echo "--- captive portal ---";    ls -la /etc/tollgate/tollgate-captive-portal-site/splash.html /etc/nodogsplash/htdocs/splash.html 2>/dev/null || echo MISSING
     echo "--- TollGate health ---";   wget -qO- --timeout=5 http://127.0.0.1:2121/ 2>/dev/null | head -c 200 || echo "health ad unreachable"
-' 2>&1 || echo "(ssh verification failed — check password/host)"
+'
+
+# ssh_askpass_require_supported — SSH_ASKPASS_REQUIRE (which makes ssh use an
+# askpass helper without a DISPLAY) arrived in OpenSSH 8.4.
+ssh_askpass_require_supported() {
+    local ver major minor
+    ver="$("${SSH_BIN}" -V 2>&1 | sed -n 's/^OpenSSH_\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+    [ -n "${ver}" ] || return 1
+    major="${ver%%.*}"
+    minor="${ver#*.}"
+    if [ "${major}" -gt 8 ]; then return 0; fi
+    if [ "${major}" -eq 8 ] && [ "${minor}" -ge 4 ]; then return 0; fi
+    return 1
+}
+
+# router_verify <ip> <password> — 0 = verified, 1 = the attempt failed,
+# 2 = this host has no way to send a password (nothing was attempted).
+router_verify() {
+    local ip="$1" pass="$2" helper
+
+    [ -n "${SSH_BIN}" ] || return 2
+
+    # Empty password (many routers, and every key-only one): batch mode so ssh
+    # can never stop to prompt, which would hang an unattended run.
+    if [ -z "${pass}" ]; then
+        "${SSH_BIN}" -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            -o BatchMode=yes "root@${ip}" "${ROUTER_PROBE}" 2>&1
+        return $?
+    fi
+
+    if [ -n "${SSHPASS_BIN}" ]; then
+        SSHPASS="${pass}" "${SSHPASS_BIN}" -e "${SSH_BIN}" \
+            -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            "root@${ip}" "${ROUTER_PROBE}" 2>&1
+        return $?
+    fi
+
+    if ssh_askpass_require_supported; then
+        helper="$(mktemp "${TMPDIR:-/tmp}/tollgate-askpass.XXXXXX")"
+        printf '%s\n' '#!/bin/sh' \
+            'printf "%s\n" "${TOLLGATE_ROUTER_PASS}"' > "${helper}"
+        chmod 700 "${helper}"
+        TOLLGATE_ROUTER_PASS="${pass}" \
+        SSH_ASKPASS="${helper}" SSH_ASKPASS_REQUIRE=force \
+            "${SSH_BIN}" -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+            -o NumberOfPasswordPrompts=1 "root@${ip}" "${ROUTER_PROBE}" \
+            </dev/null 2>&1
+        local rc=$?
+        rm -f "${helper}"
+        return "${rc}"
+    fi
+
+    return 2
+}
+
+echo
+echo "=== Verifying router ${ROUTER_IP} post-deploy ==="
+verify_rc=0
+if router_verify "${ROUTER_IP}" "${ROUTER_PASS}"; then
+    verify_rc=0
+else
+    verify_rc=$?
+fi
+
+case "${verify_rc}" in
+    0) ;;
+    2) if [ -z "${SSH_BIN}" ]; then
+           echo "skipped: no ssh client on this host — router-side verification not performed here"
+       else
+           echo "skipped: sshpass is not installed and this ssh cannot use SSH_ASKPASS"
+           echo "         (sshpass is not part of macOS; the askpass route needs OpenSSH >= 8.4)"
+           echo "         router-side verification not performed on this host — the deploy"
+           echo "         itself does not need sshpass. To check by hand:"
+           echo "           ssh root@${ROUTER_IP}    # hostname, ports :2050/:2121, LNURL"
+       fi ;;
+    *)  echo "(router verification failed — wrong password or host unreachable;"
+        echo " the deploy itself reported done)" >&2 ;;
+esac
 
 echo
 echo "Done. Installer log: /tmp/${BIN_NAME}.log"
 echo "Router: Telnet/SSH root@${ROUTER_IP} — TollGate API :2121, portal :2050"
 kill "${SERVER_PID}" 2>/dev/null || true
+# What this script reports on is the deploy. A post-deploy probe that could not
+# run, on a host that simply lacks sshpass, must not turn a completed deploy
+# into a non-zero exit.
+exit 0
