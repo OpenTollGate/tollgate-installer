@@ -94,22 +94,66 @@ func readARPTable() []arpEntry {
 	return parseARPTable(string(out))
 }
 
+// ARP line classification. The three shapes parsed here are:
+//
+//	BSD/macOS  arp -a :  ? (192.168.1.1) at a8:a0:92:a5:39:7a on en0 ifscope [ethernet]
+//	Linux      arp -a :  gateway (192.168.1.1) at e8:8f:6f:df:9e:11 [ether] on eth0
+//	Linux    ip neigh :  192.168.1.1 dev eth0 lladdr e8:8f:6f:df:9e:11 REACHABLE
+var (
+	// IPv4 in the parenthesised column both BSD and net-tools print.
+	arpParenIPv4Re = regexp.MustCompile(`\((\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\)`)
+	// Any dotted quad on the line (covers `ip neigh`, which prints the
+	// address as a bare first field).
+	arpIPv4Re = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
+	// A hardware address field. Groups are 1-2 hex digits because BSD `arp`
+	// prints each octet with %x — `0a:1b:...` comes out as `a:1b:...` and
+	// multicast addresses look like `1:0:5e:0:0:fb`. Anchored, so only a
+	// whole field qualifies.
+	arpMACRe = regexp.MustCompile(`^([0-9a-fA-F]{1,2}[:-]){5}[0-9a-fA-F]{1,2}$`)
+)
+
 // parseARPTable extracts IP/MAC pairs from `arp -a` (BSD/macOS and net-tools)
 // or `ip neigh` output. Split out of readARPTable so the parser is testable
 // without shelling out.
+//
+// The MAC is taken positionally (the field after `lladdr`, else after `at`)
+// rather than by scanning the whole line, so unroutable entries
+// (`at (incomplete)`, `<incomplete>`, `FAILED`) and IPv6-only neighbours are
+// dropped instead of being paired with an unrelated address.
 func parseARPTable(out string) []arpEntry {
 	var entries []arpEntry
-	lines := strings.Split(out, "\n")
-	macRe := regexp.MustCompile(`([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}`)
-	ipRe := regexp.MustCompile(`(\d+\.\d+\.\d+\.\d+)`)
-	for _, line := range lines {
-		macMatch := macRe.FindString(line)
-		ipMatch := ipRe.FindString(line)
-		if macMatch != "" && ipMatch != "" {
-			entries = append(entries, arpEntry{IP: ipMatch, MAC: macMatch})
+	for _, line := range strings.Split(out, "\n") {
+		mac := tokenAfter(line, "lladdr")
+		if mac == "" {
+			mac = tokenAfter(line, "at")
 		}
+		if !arpMACRe.MatchString(mac) {
+			continue
+		}
+		ip := ""
+		if m := arpParenIPv4Re.FindStringSubmatch(line); m != nil {
+			ip = m[1]
+		} else if m := arpIPv4Re.FindString(line); m != "" {
+			ip = m
+		}
+		if ip == "" {
+			continue
+		}
+		entries = append(entries, arpEntry{IP: ip, MAC: mac})
 	}
 	return entries
+}
+
+// tokenAfter returns the whitespace-delimited field following the first
+// case-insensitive occurrence of kw, or "" when kw is absent or trailing.
+func tokenAfter(line, kw string) string {
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		if strings.EqualFold(f, kw) && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 // probeRouter probes ip with passwordless SSH (the LAN scan path).
