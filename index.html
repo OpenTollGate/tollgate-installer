@@ -69,10 +69,12 @@
   .step-icon.running { color: var(--tg-red); animation: pulse 1s ease-in-out infinite; }
   .step-icon.done { color: var(--tg-green); }
   .step-icon.failed { color: #f56565; }
+  .step-icon.warn { color: #f6ad55; }
   .step-desc { flex: 1; }
   .step-desc.pending { color: #4a5568; }
   .step-desc.running { color: #e8eaf6; }
   .step-desc.done { color: var(--tg-green); }
+  .step-desc.warn { color: #f6ad55; }
   .step-detail { font-size: 0.72rem; color: #8892b0; margin-top: 0.15rem; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   .log {
@@ -889,7 +891,7 @@ async function pollStatus(jobId) {
   stepsList.innerHTML = '';
   job.steps.forEach(step => {
     const div = document.createElement('div');
-    const icon = step.status === 'done' ? '\u2713' : step.status === 'running' ? '\u25CF' : step.status === 'failed' ? '\u2717' : '\u25CB';
+    const icon = step.status === 'done' ? '\u2713' : step.status === 'warn' ? '\u26A0' : step.status === 'running' ? '\u25CF' : step.status === 'failed' ? '\u2717' : '\u25CB';
     div.innerHTML =
       '<div class="step">' +
       '<span class="step-icon ' + step.status + '">' + icon + '</span>' +
