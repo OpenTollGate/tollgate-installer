@@ -207,3 +207,93 @@ Not verified by this change:
 - `tollgate version` output was confirmed by reading the module source
   (`src/cli/version.go`) and by finding the same strings in the published
   binaries — not by executing the aarch64 build on a router.
+
+---
+
+# Package integrity verification (audit C2-I-03)
+
+**Status:** implemented, unit-tested, and verified against the LIVE pinned
+release (see the evidence below). Not yet observed on a physical router.
+
+## Why
+
+Nothing in the install path checked that the bytes about to be installed were
+the bytes the release published. `deploy.go` downloaded the package and handed
+it straight to a package manager whose own verification is deliberately
+disabled for this path:
+
+```
+opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt.ipk
+apk  add    --allow-untrusted --force-overwrite                                       /tmp/tollgate-wrt.apk
+```
+
+The only `crypto/sha256` call in the repository hashed the URL *string*, to name
+a cache file. So a truncated download, an HTML error page saved as "the
+package", a substituted file left in the staging cache, or a mirror/redirect
+serving different bytes all installed as root — and the step still rendered
+green, because the post-install check only compared version strings.
+
+## What runs now — `pkgverify.go`
+
+Immediately before the package is pushed to the router (and again on the
+router's own `wget` path, hashing the file on the router), the bytes are checked:
+
+1. **Structural gate (always, no network):** the payload must be at least
+   100 KiB and carry the format's magic — gzip (`1f 8b`) for `.ipk`, the
+   apk-tools 3 ADB magic (`ADBd`) for `.apk`. This rejects a truncated transfer
+   and an error page saved as the package before any lookup happens.
+2. **Published-digest gate**, trying three sources in order:
+   1. `<release>/SHA256SUMS` — the release manifest, once the feed publishes it;
+   2. `<asset-URL>.sha256` — a per-asset sidecar;
+   3. the GitHub release API's per-asset `digest`
+      (`GET /api.github.com/repos/<owner>/<repo>/releases/tags/<tag>`).
+
+   Source 3 is what makes verification real **today**: the feed release
+   `v0.6.0-alpha2-pre9` carries 14 assets and no `SHA256SUMS`, but GitHub
+   publishes a `sha256:` digest for every asset.
+
+## Policy — fail closed, never a silent pass
+
+| Condition | Result |
+|---|---|
+| Published digest matches the bytes | step 6 renders **done** with `[sha256 verified]` |
+| Published digest differs | **deploy FAILS** (`jobFail`, step 6 = failed), naming the asset, both digests and which source the expected digest came from |
+| Bytes cannot be the expected format | **deploy FAILS**, naming the reason |
+| No digest published anywhere | step 6 renders **warn** with `NOT VERIFIED`; logged as a WARNING |
+| No digest published, and `TOLLGATE_REQUIRE_PACKAGE_DIGEST=1` | **deploy FAILS** |
+
+The last two rows exist so that "we could not check what we installed" is never
+presented as an unqualified success. Nothing is ever *silently* unverified, and
+a release that stops publishing digests turns into a visible warning (or a hard
+failure with the env var) instead of a green install.
+
+### What this does and does not defend against
+
+Catches: a partial/corrupted download; a wrong or substituted file at rest in
+the staging cache; a redirect or mirror serving different bytes; a swapped
+`/tmp/tollgate-wrt.*` on the router. Each becomes a failed deploy.
+
+Does **not** catch: a compromise of the GitHub release itself, where the digest
+and the bytes would be replaced together. Closing that needs the digest to come
+from a signed manifest published by the feed with a key pinned in the binary
+(audit finding C3-05: publish `SHA256SUMS` plus the apk signing public key as
+release assets). The verifier already prefers that manifest the moment it
+exists — no code change will be needed.
+
+## Evidence
+
+```
+# live: the pinned release asset, verified and then tampered with
+$ go test -count=1 -run TestLivePackageDigestRejectsCorruptedBytes -v .
+--- PASS: TestLivePackageDigestRejectsCorruptedBytes (4.05s)
+    verified tollgate-wrt_0.6.0_alpha2_pre9_aarch64_cortex-a53.ipk (8789585 bytes)
+      against GitHub release API asset digest: sha256 23add42c18…b2a3c49
+    corrupted copy rejected as expected: sha256 MISMATCH … expected 23add42c18…b2a3c49
+      (from the GitHub release API asset digest) but the bytes hash to 4655ecddb2…6dc018
+      — refusing to install altered or corrupted package bytes
+```
+
+`TestCheckPackageBytesPolicy` additionally pins that a tampered payload makes
+`checkPackageBytes` return a fatal error and an `ERROR … MISMATCH` log line,
+and that an unverifiable payload is fatal under
+`TOLLGATE_REQUIRE_PACKAGE_DIGEST=1`.

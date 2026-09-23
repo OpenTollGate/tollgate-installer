@@ -501,7 +501,25 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 	}
 	pkgSourceURL := ""
+	// integrity is the verdict on the package bytes (see pkgverify.go). It is
+	// carried to the install step detail so a package that could not be checked
+	// — or that came from a different release — can never render as an
+	// unqualified green "done".
+	var integrity pkgIntegrity
 	if pkgErr == nil && len(pkgData) > 0 {
+		// INTEGRITY GATE (audit C2-I-03). The bytes are about to be installed
+		// as root by a package manager whose own verification is disabled
+		// (--allow-untrusted / --force-*), so this is the last point at which
+		// "are these the bytes the release published?" can be answered. A
+		// mismatch or a structurally impossible package stops the deploy here;
+		// unverifiable bytes are logged, marked in the UI, and fatal when
+		// TOLLGATE_REQUIRE_PACKAGE_DIGEST=1.
+		v, err := checkPackageBytes(job, pkgLaptopURL, pkgExtension, pkgData)
+		integrity = v
+		if err != nil {
+			jobFail(job, 6, "package integrity check failed", err.Error())
+			return
+		}
 		push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
 		if strings.Contains(push, "PUSH_OK") {
 			pkgOnRouter = true
@@ -528,6 +546,15 @@ func runDeployment(job *Job, req deployRequest) {
 			wgetOut := sshRun(client, "wget -O /tmp/tollgate-wrt"+pkgExtension+" '"+candURL+"' 2>&1; [ -s /tmp/tollgate-wrt"+pkgExtension+" ] && echo WGET_OK || echo WGET_FAIL")
 			job.addLog("wget: " + truncate(wgetOut, 120))
 			if strings.Contains(wgetOut, "WGET_OK") {
+				// Same integrity gate as the laptop path, applied to the bytes
+				// the ROUTER fetched: hash the file on the router and compare
+				// with the published digest (pkgverify.go).
+				v, err := checkRouterFileDigest(job, client, candURL, pkgExtension, "/tmp/tollgate-wrt"+pkgExtension)
+				if err != nil {
+					jobFail(job, 6, "package integrity check failed", err.Error())
+					return
+				}
+				integrity = v
 				pkgOnRouter = true
 				pkgSourceURL = candURL
 				break
@@ -663,7 +690,16 @@ func runDeployment(job *Job, req deployRequest) {
 			// "which build am I running, and did this run exercise the feed?"
 			// is answerable from the deploy log alone.
 			build := reportInstalledBuild(job, client)
-			job.setStep(6, "done", installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL)))
+			// The step detail carries the integrity verdict. An install whose
+			// bytes were never checked against a published digest renders as
+			// "warn" — visibly different from a verified install — so the
+			// operator cannot mistake "we installed something" for "we installed
+			// the right bytes" (audit C2-I-03).
+			installStatus := "done"
+			if integrity.Status == "unverified" {
+				installStatus = "warn"
+			}
+			job.setStep(6, installStatus, installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL))+integrity.suffix())
 			installedOK = true
 		}
 	}
