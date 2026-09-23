@@ -587,6 +587,34 @@ func TestInstallStepStatusNeverGreensAnUnverifiedInstall(t *testing.T) {
 	}
 }
 
+// TestInstallStepStatusForCombinesVersionAndIntegrityVerdicts pins the merge
+// resolution of the two independent verdicts on step 6 (C2-I-02 version verdict
+// from pkgVersionVerdict, C2-I-03 integrity verdict from pkgverify.go): GREEN
+// requires BOTH, so neither an opted-in downgrade with verified bytes nor an
+// unverified install of the requested release can render as an unqualified
+// success.
+func TestInstallStepStatusForCombinesVersionAndIntegrityVerdicts(t *testing.T) {
+	verified := pkgIntegrity{Status: "verified"}
+	unverified := pkgIntegrity{Status: "unverified"}
+	cases := []struct {
+		name          string
+		versionStatus string
+		v             pkgIntegrity
+		want          string
+	}{
+		{"requested release, bytes verified", "done", verified, "done"},
+		{"requested release, bytes NOT verified", "done", unverified, "warn"},
+		{"downgrade (opted-in fallback), bytes verified", "warn", verified, "warn"},
+		{"downgrade, bytes NOT verified", "warn", unverified, "warn"},
+		{"zero-value integrity verdict (gate never ran)", "done", pkgIntegrity{}, "warn"},
+	}
+	for _, c := range cases {
+		if got := installStepStatusFor(c.versionStatus, c.v); got != c.want {
+			t.Errorf("installStepStatusFor(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestRouterFeedInstallVerdictIsUnverifiedAndLegible pins that the last-resort
 // install from the ROUTER's own configured feeds cannot be reported as verified:
 // those bytes never passed through this installer, so no published digest was

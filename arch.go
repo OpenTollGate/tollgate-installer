@@ -348,6 +348,137 @@ func githubFallbackURL(arch, ext string) string {
 	return asset.IPK
 }
 
+// githubFallbackEnv is the environment variable that opts a run into the GitHub
+// release fallback — the same explicit opt-in as --allow-fallback. It exists
+// because the curl|bash launcher starts the wizard for the operator and does not
+// forward CLI flags:
+//
+//	TOLLGATE_ALLOW_GITHUB_FALLBACK=1 ./tollgate-installer
+const githubFallbackEnv = "TOLLGATE_ALLOW_GITHUB_FALLBACK"
+
+// githubFallbackAllowed reports whether the operator EXPLICITLY opted into the
+// GitHub release fallback: the --allow-fallback flag, or a truthy
+// TOLLGATE_ALLOW_GITHUB_FALLBACK. OFF by default. The fallback asset is a
+// different, OLDER release than the requested one, so taking it without asking
+// is a silent downgrade — see githubFallbackSelection.
+func githubFallbackAllowed() bool {
+	if allowFallback != nil && *allowFallback {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(githubFallbackEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// pkgVersionFromReleaseURL extracts the package-version spelling named by a
+// GitHub release asset URL:
+//
+//	https://github.com/<owner>/<repo>/releases/download/v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.ipk
+//	  → 0.5.0
+//
+// It goes through feedPkgVersionForTag, the single place the tag spelling and
+// the package-version spelling are related, so a fallback version can never
+// drift from the asset it names. "" when the URL carries no release path.
+func pkgVersionFromReleaseURL(url string) string {
+	const marker = "/releases/download/"
+	i := strings.Index(url, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := url[i+len(marker):]
+	j := strings.Index(rest, "/")
+	if j <= 0 {
+		return ""
+	}
+	return feedPkgVersionForTag(rest[:j])
+}
+
+// githubFallbackPkgVersion is the package version the GitHub fallback asset for
+// an arch would install (0.5.0 for the current pin — while the effective feed
+// release is feedReleaseTag). "" when the arch has no fallback.
+func githubFallbackPkgVersion(arch, ext string) string {
+	return pkgVersionFromReleaseURL(githubFallbackURL(arch, ext))
+}
+
+// githubFallbackSelection returns the GitHub fallback URL to download for an
+// arch — but ONLY when the operator explicitly allowed it. Without that opt-in
+// it returns an error naming BOTH the requested release/tag and the version the
+// fallback would install instead, so the caller can stop and say so rather than
+// quietly shipping an older package and reporting success.
+//
+// The fallback exists for a feed outage; it is NOT a drop-in substitute, because
+// it is pinned to a different (older) release than the effective feed tag — for
+// aarch64_cortex-a53 the feed DOES publish, so this entry is only ever a
+// downgrade path. ("", nil) when the arch has no fallback at all: nothing to
+// select and nothing to refuse.
+func githubFallbackSelection(arch, ext string, allowFallback bool) (string, error) {
+	fb := githubFallbackURL(arch, ext)
+	if fb == "" {
+		return "", nil
+	}
+	if allowFallback {
+		return fb, nil
+	}
+	fbVer := githubFallbackPkgVersion(arch, ext)
+	return "", fmt.Errorf(
+		"requested release %s (%s) is not downloadable for %s, and the GitHub fallback asset is %s "+
+			"(a different, OLDER package). Refusing to downgrade silently — re-run with --allow-fallback "+
+			"or %s=1 to accept %s, or fix the feed/tag and retry. Fallback URL: %s",
+		feedReleaseTag, feedPkgVersion(), arch, fbVer, githubFallbackEnv, fbVer, fb)
+}
+
+// expectedPkgVersionForSource is the package version named by the source URL
+// that actually supplied the tollgate-wrt bytes: the requested feed release for
+// the feed asset, the pinned fallback release for the GitHub fallback asset.
+// "" for a URL that is neither — notably the router-feed last-resort path, where
+// nothing was pushed and there is no URL to name.
+func expectedPkgVersionForSource(sourceURL, arch, ext string) string {
+	if sourceURL == "" {
+		return ""
+	}
+	if sourceURL == feedAssetURL(arch, ext) {
+		return feedPkgVersion()
+	}
+	if fb := githubFallbackURL(arch, ext); fb != "" && sourceURL == fb {
+		return githubFallbackPkgVersion(arch, ext)
+	}
+	return ""
+}
+
+// pkgVersionVerdict classifies the post-install version readback against the
+// source that supplied the package. It replaces a check that was gated on the
+// source URL (`strings.Contains(pkgSourceURL, "/releases/download/"+feedReleaseTag+"/")`,
+// deploy.go:645), which meant a GitHub-fallback install was NEVER compared to
+// anything: no comparison, no failure, and the step still rendered green.
+//
+//	fatal — the installed version does not match the version the SUPPLYING
+//	        source names: the upgrade did not take effect (a no-op install, or
+//	        a stale package in /tmp). The step MUST fail.
+//	warn  — the installed version is not the REQUESTED release (an explicitly
+//	        opted-in fallback, or an install from the router's own feeds). The
+//	        step MUST NOT render as an unqualified success.
+//
+// Both are "" when there is nothing to assert (no version was read back) or
+// when the installed version is exactly the requested release.
+func pkgVersionVerdict(installed, sourceURL, arch, ext string) (fatal, warn string) {
+	if installed == "" {
+		return "", ""
+	}
+	if want := expectedPkgVersionForSource(sourceURL, arch, ext); want != "" && !strings.HasPrefix(installed, want) {
+		return fmt.Sprintf("installed package is %s but the source that supplied it (%s) provides %s — "+
+			"the upgrade did not take effect (previous package/files still present)",
+			installed, pkgSourceLabel(arch, ext, sourceURL), want), ""
+	}
+	if !strings.HasPrefix(installed, feedPkgVersion()) {
+		return "", fmt.Sprintf("installed package is %s, NOT the requested release %s (%s) — "+
+			"the router is running a different, older build than the one this deploy asked for",
+			installed, feedReleaseTag, feedPkgVersion())
+	}
+	return "", ""
+}
+
 // pkgArchTupleRe matches a plausible canonical OpenWrt arch tuple: at least one
 // alphanumeric, then letters/digits/underscore/hyphen (e.g. aarch64_cortex-a53,
 // mipsel_24kc, arm_cortex-a7). It is deliberately permissive about WHICH tuple

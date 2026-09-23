@@ -466,6 +466,19 @@ func installStepStatus(v pkgIntegrity) string {
 	return "warn"
 }
 
+// installStepStatusFor combines the C2-I-02 version verdict (versionStatus:
+// "done", or "warn" when the package that landed is NOT the requested release)
+// with a C2-I-03 integrity verdict. GREEN is reserved for an install of the
+// requested release whose bytes were verified against a published digest;
+// either verdict failing renders "warn", so a partial guarantee can never be
+// read as a full one.
+func installStepStatusFor(versionStatus string, v pkgIntegrity) string {
+	if versionStatus == "warn" {
+		return "warn"
+	}
+	return installStepStatus(v)
+}
+
 // routerFeedInstallVerdict is the verdict for the last-resort install from the
 // ROUTER'S OWN configured package feeds: the bytes never passed through this
 // process, so nothing about them was verified here. It exists so that path also
