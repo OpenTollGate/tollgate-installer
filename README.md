@@ -128,6 +128,41 @@ go build -o tollgate-installer .
 ./tollgate-installer -port 8200
 ```
 
+### 4. macOS (Intel and Apple Silicon)
+
+The launcher runs on a Mac. The installer host only has to reach the router over
+the network — it does not need to be Linux, and it does not act as a gateway:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \
+    192.168.1.1 '' you@walletofsatoshi.com
+```
+
+Nothing to install first: `curl`, `bash` (the 3.2.57 that ships with macOS) and
+`mktemp` are all that the script requires, and it reports up front which of them
+is missing and how to get it.
+
+- **python3 is not required.** On macOS it only exists with the Xcode Command
+  Line Tools, so the launcher parses every JSON field it needs (feed release,
+  `job_id`, deploy status, `/api/config`) with `awk`/`sed`. Without python3 you
+  lose pretty-printed JSON and nothing else; `xcode-select --install` adds it.
+- **`sshpass` is not part of macOS**, so the optional post-deploy router probe
+  (step 6) either uses ssh's own `SSH_ASKPASS` (OpenSSH ≥ 8.4, i.e. macOS 12
+  and later) or is skipped with an explicit message. The deploy itself never
+  uses sshpass — the binary speaks SSH in-process. A skipped probe is not a
+  failed deploy: the script still exits 0 once the deploy reports done.
+- **Gatekeeper**: the binary arrives via `curl`, so macOS does not set the
+  quarantine flag and it just runs. A copy saved through a browser *is*
+  quarantined — if macOS refuses to open it, either allow it in System Settings
+  → Privacy & Security → "Open Anyway", or run
+  `xattr -d com.apple.quarantine ./tollgate-installer`.
+- Everything the run writes goes into one private directory under `$TMPDIR`
+  (its path is printed at the end, e.g. `/var/folders/…/tollgate-installer.ab12cd/`)
+  — installer log included.
+
+See [`docs/macos.md`](docs/macos.md) for the full walkthrough and the
+troubleshooting table.
+
 ### API endpoints (what the wizard exposes)
 
 | Endpoint | Method | Purpose |
@@ -239,14 +274,26 @@ go build -o tollgate-installer .
 ./tollgate-installer
 ```
 
-Cross-compile for all platforms:
+### Release binaries (reproducible, all platforms)
 
 ```sh
-GOOS=darwin  GOARCH=arm64 go build -o dist/tollgate-installer-darwin-arm64 .
-GOOS=darwin  GOARCH=amd64 go build -o dist/tollgate-installer-darwin-amd64 .
-GOOS=linux   GOARCH=amd64 go build -o dist/tollgate-installer-linux-amd64 .
-GOOS=windows GOARCH=amd64 go build -o dist/tollgate-installer-windows-amd64.exe .
+scripts/release-binaries.sh                  # build every target into dist/
+scripts/release-binaries.sh --repro-check    # + assert a byte-identical rebuild
+scripts/release-binaries.sh --tag v0.7.0 --publish   # create/update the release
 ```
+
+It builds linux/darwin × amd64/arm64 plus windows/amd64 with `CGO_ENABLED=0`,
+`-trimpath` and `-buildvcs=false`, stamps `-X main.version` / `-X main.commit`,
+and writes `SHA256SUMS` (verify with `shasum -a 256 -c SHA256SUMS` on macOS or
+`sha256sum -c SHA256SUMS` on Linux) and `REPRODUCE.txt` (the exact toolchain and
+flags, so anyone can repeat the build). `--publish` needs `gh` with write access
+and uploads with `--clobber`, so re-running after a fix updates the release in
+place. Nothing here depends on GitHub Actions.
+
+Asset names are `tollgate-installer-<os>-<arch>[.exe]` — exactly what
+`install-and-test.sh` fetches from `releases/latest/download/`. For a one-off
+single binary, `GOOS=darwin GOARCH=arm64 go build -o dist/tollgate-installer-darwin-arm64 .`
+still works.
 
 ## Prerequisites
 
