@@ -466,17 +466,32 @@ func pkgVersionVerdict(installed, sourceURL, arch, ext string) (fatal, warn stri
 	if installed == "" {
 		return "", ""
 	}
-	if want := expectedPkgVersionForSource(sourceURL, arch, ext); want != "" && !strings.HasPrefix(installed, want) {
+	got := normalizePkgVersionSpelling(installed)
+	if want := expectedPkgVersionForSource(sourceURL, arch, ext); want != "" && !strings.HasPrefix(got, normalizePkgVersionSpelling(want)) {
 		return fmt.Sprintf("installed package is %s but the source that supplied it (%s) provides %s — "+
 			"the upgrade did not take effect (previous package/files still present)",
 			installed, pkgSourceLabel(arch, ext, sourceURL), want), ""
 	}
-	if !strings.HasPrefix(installed, feedPkgVersion()) {
+	if !strings.HasPrefix(got, normalizePkgVersionSpelling(feedPkgVersion())) {
 		return "", fmt.Sprintf("installed package is %s, NOT the requested release %s (%s) — "+
 			"the router is running a different, older build than the one this deploy asked for",
 			installed, feedReleaseTag, feedPkgVersion())
 	}
 	return "", ""
+}
+
+// normalizePkgVersionSpelling strips the leading "v" that some packages report
+// and the feed's own derive away.
+//
+// The two spellings coexist in the wild: the pinned GitHub v0.5.0 .ipk carries
+// `Version: v0.5.0` in its control file, while the feed's packages report the
+// derived spelling (`0.6.0_alpha4_pre15-r1`). Both may be read back from the
+// router (deploy_test.go pins both), and both must compare equal to the version
+// the supplying source names — otherwise the opted-in fallback install, which is
+// the recovery route the refusal message tells the operator to re-run with, is
+// reported as "the upgrade did not take effect" on a downgrade that succeeded.
+func normalizePkgVersionSpelling(v string) string {
+	return strings.TrimPrefix(strings.TrimSpace(v), "v")
 }
 
 // pkgArchTupleRe matches a plausible canonical OpenWrt arch tuple: at least one
