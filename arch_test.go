@@ -107,21 +107,19 @@ func TestFeedAssetURL(t *testing.T) {
 	}
 }
 
-// TestPkgCandidateURLs verifies the ordered download candidates: the generic
-// feed URL first, then the GitHub release fallback for aarch64 (the only arch
-// with published GitHub assets). Non-aarch64 arches get only the feed URL.
+// TestPkgCandidateURLs verifies the download candidate list is TAG-CONSISTENT:
+// the feed URL for the effective tag, and nothing else. The GitHub fallback
+// belongs to a different (older) release and must not appear here — see
+// pkgCandidateURLsWithFallback and candidate_tag_consistency_test.go.
 func TestPkgCandidateURLs(t *testing.T) {
-	// aarch64: feed first, then GitHub fallback.
+	// aarch64 (the arch with a pinned GitHub fallback): feed URL only.
 	got := pkgCandidateURLs("aarch64_cortex-a53", ".ipk")
-	want := []string{
-		feedAssetURL("aarch64_cortex-a53", ".ipk"),
-		tollgateGithubFallback["aarch64_cortex-a53"].IPK,
-	}
-	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("pkgCandidateURLs(aarch64, .ipk) = %v, want %v", got, want)
+	want := []string{feedAssetURL("aarch64_cortex-a53", ".ipk")}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("pkgCandidateURLs(aarch64, .ipk) = %v, want %v (the pinned GitHub fallback is a different release — opt-in only)", got, want)
 	}
 
-	// Non-aarch64: feed only (no GitHub fallback exists).
+	// Non-aarch64: feed only too.
 	for _, arch := range []string{"mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
 		got := pkgCandidateURLs(arch, ".ipk")
 		if len(got) != 1 || got[0] != feedAssetURL(arch, ".ipk") {

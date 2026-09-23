@@ -324,8 +324,12 @@ func feedAssetURL(arch, ext string) string {
 // tollgateGithubFallback is the GitHub tollgate-module-basic-go release assets,
 // kept as a FALLBACK for arches the feed does not publish yet (or a feed
 // outage). Only aarch64_cortex-a53 has published GitHub release assets today.
-// pkgCandidateURLs consults this map only to append a second download attempt
-// after the feed URL.
+//
+// These assets belong to a DIFFERENT (older) release than the effective feed
+// tag, so they are NOT part of pkgCandidateURLs: the download candidate list is
+// tag-consistent and a 404 is never answered with another release's build.
+// The map is consulted only by githubFallbackSelection, i.e. after an explicit
+// operator opt-in — see pkgCandidateURLsWithFallback (C2-I-02).
 var tollgateGithubFallback = map[string]struct{ IPK, APK string }{
 	"aarch64_cortex-a53": {
 		IPK: "https://github.com/OpenTollGate/tollgate-module-basic-go/releases/download/v0.5.0/tollgate-wrt_v0.5.0_aarch64_cortex-a53.ipk",
@@ -335,8 +339,10 @@ var tollgateGithubFallback = map[string]struct{ IPK, APK string }{
 
 // githubFallbackURL returns the GitHub release fallback URL for a canonical
 // arch tuple and package extension, or "" if none exists. Only
-// aarch64_cortex-a53 has published GitHub release assets today; used as a
-// second download attempt when the feed URL 404s (feed outage).
+// aarch64_cortex-a53 has published GitHub release assets today. It is a
+// different, OLDER release than feedReleaseTag, so it only ever reaches a
+// download candidate list through pkgCandidateURLsWithFallback after an
+// explicit opt-in — never as a silent second attempt.
 func githubFallbackURL(arch, ext string) string {
 	asset, ok := tollgateGithubFallback[arch]
 	if !ok {
@@ -488,9 +494,15 @@ func pkgVersionVerdict(installed, sourceURL, arch, ext string) (fatal, warn stri
 var pkgArchTupleRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // pkgCandidateURLs returns the ordered download URLs to try for a canonical
-// arch tuple and package extension: the feed URL (derived generically from the
-// tuple) first, then the GitHub release fallback (aarch64 only) if one exists.
-// The first URL that yields bytes wins.
+// arch tuple and package extension: the feed URL derived generically from the
+// tuple for the EFFECTIVE tag. The first URL that yields bytes wins.
+//
+// The list is TAG-CONSISTENT: every URL it returns names the same release as
+// feedReleaseTag, so a missing asset can never be answered by downloading a
+// different (older) build. The GitHub fallback asset belongs to a different
+// release and is therefore NOT here — offering it is an explicit operator
+// decision, see pkgCandidateURLsWithFallback. (Before this, a 404 on the feed
+// URL silently fell through to the pinned v0.5.0 asset: C2-I-02.)
 //
 // An UNMAPPED arch (empty, whitespace, or anything that is not tuple-shaped)
 // yields NO candidates. Returning a URL built from a bad arch would be worse
@@ -502,11 +514,36 @@ func pkgCandidateURLs(arch, ext string) []string {
 	if !pkgArchTupleRe.MatchString(arch) {
 		return nil
 	}
-	urls := []string{feedAssetURL(arch, ext)}
-	if fb := githubFallbackURL(arch, ext); fb != "" && fb != urls[0] {
+	return []string{feedAssetURL(arch, ext)}
+}
+
+// pkgCandidateURLsWithFallback is pkgCandidateURLs plus, ONLY when allowFallback
+// is true, the GitHub release fallback asset for the arch. That asset is a
+// DIFFERENT, OLDER release than feedReleaseTag, so it is never appended
+// silently:
+//
+//   - allowFallback=false: the tag-consistent feed list is returned together
+//     with an error naming the requested tag, the arch and the version the
+//     fallback would install instead. The caller MUST stop and fail loudly
+//     (deploy.go step 6) — that error is the whole point of this function.
+//   - allowFallback=true: [feed URL, fallback URL]. The operator asked for the
+//     downgrade, so the caller also reports the version it installs.
+//
+// An arch with no pinned fallback yields the feed list and a nil error: there
+// is nothing to offer and nothing to refuse.
+func pkgCandidateURLsWithFallback(arch, ext string, allowFallback bool) ([]string, error) {
+	urls := pkgCandidateURLs(arch, ext)
+	if len(urls) == 0 {
+		return nil, nil
+	}
+	fb, err := githubFallbackSelection(arch, ext, allowFallback)
+	if err != nil {
+		return urls, err
+	}
+	if fb != "" && fb != urls[0] {
 		urls = append(urls, fb)
 	}
-	return urls
+	return urls, nil
 }
 
 // selectPkgURL returns the tollgate-wrt download URL and file extension for
