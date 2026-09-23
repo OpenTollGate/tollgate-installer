@@ -690,16 +690,14 @@ func runDeployment(job *Job, req deployRequest) {
 			// "which build am I running, and did this run exercise the feed?"
 			// is answerable from the deploy log alone.
 			build := reportInstalledBuild(job, client)
-			// The step detail carries the integrity verdict. An install whose
-			// bytes were never checked against a published digest renders as
-			// "warn" — visibly different from a verified install — so the
-			// operator cannot mistake "we installed something" for "we installed
-			// the right bytes" (audit C2-I-03).
-			installStatus := "done"
-			if integrity.Status == "unverified" {
-				installStatus = "warn"
-			}
-			job.setStep(6, installStatus, installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL))+integrity.suffix())
+			// The step detail carries the integrity verdict. GREEN is reserved
+			// for a verdict that verified the bytes against an independent
+			// published digest; every other state (including the zero value,
+			// i.e. a path that never consulted the gate) renders "warn" — so
+			// the operator cannot mistake "we installed something" for "we
+			// installed the right bytes" (audit C2-I-03; cold cross-family
+			// review 2026-09-23, finding 1).
+			job.setStep(6, installStepStatus(integrity), installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL))+integrity.suffix())
 			installedOK = true
 		}
 	}
@@ -726,9 +724,15 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 		// This path installed from the ROUTER's own configured package feeds —
 		// not the FreedomTechFeed release asset — so the provenance label says
-		// so explicitly rather than reusing "feed" for both meanings.
+		// so explicitly rather than reusing "feed" for both meanings, AND the
+		// step is rendered as a warning with a NOT VERIFIED suffix: the bytes
+		// never passed through this installer, so nothing about them was
+		// checked (cold cross-family review 2026-09-23, finding 1 — this path
+		// used to render a green "done" with no integrity suffix at all).
 		build := reportInstalledBuild(job, client)
-		job.setStep(6, "done", installStepDetail(build, pkgMgr, pkgSourceRouterFeed))
+		feedVerdict := routerFeedInstallVerdict()
+		job.addLog("WARNING: " + feedVerdict.Detail)
+		job.setStep(6, installStepStatus(feedVerdict), installStepDetail(build, pkgMgr, pkgSourceRouterFeed)+feedVerdict.suffix())
 	}
 
 	// The .ipk now ships gonuts v0.11.1 with all keyset/multimint/existing-wallet

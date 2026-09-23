@@ -33,6 +33,22 @@ package main
 //     `sha256:<hex>`). GitHub computes this server-side and publishes it today
 //     for every feed release, so verification is REAL now, not aspirational.
 //
+// Only (3) is an INDEPENDENT anchor (cold cross-family review 2026-09-23,
+// finding 2 — the original claim was too broad):
+//
+//   - (3) is served by a DIFFERENT origin (api.github.com) over its own
+//     connection, so a redirect/mirror/host substituting different package
+//     bytes cannot satisfy it.
+//   - (1) and (2) are fetched from the SAME origin as the package bytes. A
+//     matching digest from there proves only that one origin served consistent
+//     bytes: it still catches truncation and at-rest corruption, but an
+//     attacker who controls (or MITMs) that host serves the package and its
+//     digest together and satisfies the check trivially. A same-origin digest
+//     is therefore reported as UNVERIFIED, never as a pass — the step says so
+//     explicitly, and TOLLGATE_REQUIRE_PACKAGE_DIGEST=1 rejects it. Making (1)
+//     a real anchor needs the feed to SIGN the manifest with a pinned key
+//     (audit C3-05); until then it is same-origin by construction.
+//
 // What (3) does and does not buy, stated honestly: the digest does not arrive
 // over the connection that carried the package bytes, so it catches a partial
 // or corrupted download, a wrong/substituted file at rest in the staging cache,
@@ -343,29 +359,35 @@ func githubReleaseAssetDigest(assetURL, assetName string) (string, bool) {
 
 // publishedDigestForAsset resolves the digest a release publishes for the asset
 // at assetURL, trying the release manifest, then a per-asset sidecar, then the
-// GitHub API. Returns ("", "") when the release publishes no digest for it —
-// which is reported as NOT VERIFIED, never as a pass.
-func publishedDigestForAsset(assetURL string) (digest, source string) {
+// GitHub API. Returns ("", "", false) when the release publishes no digest for
+// it — which is reported as NOT VERIFIED, never as a pass.
+//
+// independent reports whether the digest came from an origin DIFFERENT from the
+// one serving the package bytes. Only the GitHub API is independent; the
+// manifest and the sidecar are fetched from the asset's own host, so a hostile
+// (or MITMed) host serves both and defeats them (cold review finding 2). The
+// caller treats a non-independent match as UNVERIFIED.
+func publishedDigestForAsset(assetURL string) (digest, source string, independent bool) {
 	name := assetNameFromURL(assetURL)
 	if name == "" {
-		return "", ""
+		return "", "", false
 	}
 	if dir := releaseAssetDir(assetURL); dir != "" {
 		if body, status, err := httpGetBytesForDigest(dir+sha256SumsAssetName, nil); err == nil && status == http.StatusOK {
 			if d := parseChecksumManifestFor(body, name); d != "" {
-				return d, sha256SumsAssetName + " manifest on " + dir
+				return d, sha256SumsAssetName + " manifest on " + dir, false
 			}
 		}
 	}
 	if body, status, err := httpGetBytesForDigest(assetURL+sha256SidecarSuffix, nil); err == nil && status == http.StatusOK {
 		if d := firstDigestToken(body); d != "" {
-			return d, "per-asset " + sha256SidecarSuffix + " sidecar"
+			return d, "per-asset " + sha256SidecarSuffix + " sidecar", false
 		}
 	}
 	if d, ok := githubReleaseAssetDigest(assetURL, name); ok {
-		return d, "GitHub release API asset digest"
+		return d, "GitHub release API asset digest", true
 	}
-	return "", ""
+	return "", "", false
 }
 
 // packageLooksStructural reports whether data can be the package format ext
@@ -428,6 +450,34 @@ func (v pkgIntegrity) suffix() string {
 	return ""
 }
 
+// installStepStatus maps a package-integrity verdict to the step-6 status.
+//
+// GREEN ("done") is reserved for a verdict that actually verified the bytes
+// against an INDEPENDENT published digest. Every other state renders "warn":
+// unverified, mismatch/malformed, and above all the ZERO VALUE — an install
+// path that never consulted the gate at all renders no suffix, so a green
+// "done" there would be indistinguishable from a verified install (cold
+// cross-family review 2026-09-23, finding 1: the router-feed path used to do
+// exactly that).
+func installStepStatus(v pkgIntegrity) string {
+	if v.verified() {
+		return "done"
+	}
+	return "warn"
+}
+
+// routerFeedInstallVerdict is the verdict for the last-resort install from the
+// ROUTER'S OWN configured package feeds: the bytes never passed through this
+// process, so nothing about them was verified here. It exists so that path also
+// renders "warn" with an explicit NOT VERIFIED suffix rather than a green
+// "done" with none.
+func routerFeedInstallVerdict() pkgIntegrity {
+	return pkgIntegrity{
+		Status: "unverified",
+		Detail: "installed from the router's own package feeds — these bytes never passed through this installer, so no published digest was checked",
+	}
+}
+
 // requirePackageDigest reports whether a missing published digest must stop the
 // deploy (TOLLGATE_REQUIRE_PACKAGE_DIGEST=1).
 func requirePackageDigest(getenv func(string) string) bool {
@@ -451,7 +501,7 @@ func verifyPackageBytes(assetURL, ext string, data []byte) pkgIntegrity {
 			Got:    got,
 		}
 	}
-	want, source := publishedDigestForAsset(assetURL)
+	want, source, independent := publishedDigestForAsset(assetURL)
 	if want == "" {
 		return pkgIntegrity{
 			Status: "unverified",
@@ -465,6 +515,19 @@ func verifyPackageBytes(assetURL, ext string, data []byte) pkgIntegrity {
 			Status: "mismatch",
 			Detail: fmt.Sprintf("sha256 MISMATCH for %s from %s: expected %s (from the %s) but the bytes hash to %s — refusing to install altered or corrupted package bytes",
 				assetNameFromURL(assetURL), assetURL, want, source, got),
+			Want:   want,
+			Got:    got,
+			Source: source,
+		}
+	}
+	if !independent {
+		// Same-origin digest: a hostile (or intercepted) host that served the
+		// package also served this expected value, so a match proves only
+		// self-consistency, not authenticity. Never rendered as a pass.
+		return pkgIntegrity{
+			Status: "unverified",
+			Detail: fmt.Sprintf("the %s for %s matches the package bytes, but that digest is served from the SAME HOST as the package itself — a host that served altered bytes could serve a matching digest, so this is not an independent anchor: installed bytes are UNVERIFIED (%s)",
+				source, assetNameFromURL(assetURL), got),
 			Want:   want,
 			Got:    got,
 			Source: source,
@@ -538,7 +601,7 @@ func checkRouterFileDigest(job *Job, client *ssh.Client, assetURL, ext, remotePa
 		job.addLog("WARNING: " + v.Detail)
 		return v, nil
 	}
-	want, source := publishedDigestForAsset(assetURL)
+	want, source, independent := publishedDigestForAsset(assetURL)
 	switch {
 	case want == "":
 		v := pkgIntegrity{
@@ -564,6 +627,22 @@ func checkRouterFileDigest(job *Job, client *ssh.Client, assetURL, ext, remotePa
 		}
 		job.addLog("ERROR: " + v.Detail)
 		return v, fmt.Errorf("%s", v.Detail)
+	}
+	if !independent {
+		v := pkgIntegrity{
+			Status: "unverified",
+			Detail: fmt.Sprintf("the %s for %s matches the bytes wget left on the router, but that digest is served from the SAME HOST as the package itself — not an independent anchor: installed bytes are UNVERIFIED (%s)",
+				source, name, got),
+			Want:   want,
+			Got:    got,
+			Source: source,
+		}
+		if requirePackageDigest(os.Getenv) {
+			job.addLog("ERROR: " + v.Detail)
+			return v, fmt.Errorf("%s (and %s=1 requires a verified digest)", v.Detail, requirePkgDigestEnv)
+		}
+		job.addLog("WARNING: " + v.Detail)
+		return v, nil
 	}
 	v := pkgIntegrity{
 		Status: "verified",

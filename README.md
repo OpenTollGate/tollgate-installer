@@ -276,11 +276,19 @@ bytes itself right before pushing them to the router:
 - the bytes must match the sha256 the release publishes — taken from the release
   manifest, a per-asset sidecar, or the GitHub release API's per-asset digest,
   which every feed release publishes today, so this works with no feed change.
-  The digest is fetched separately, so it does not travel with the package;
+  Only the API digest is an **independent** anchor: the manifest and the sidecar
+  are fetched from the *same host* that served the package, so a host (or a
+  MITM) serving altered bytes could serve a matching digest too — a match from
+  those two sources is reported as not-verified, never as a pass;
 - a mismatch FAILS the deploy, naming the asset and both digests;
-- with no published digest the install step renders as a warning rather than a
-  green "done", and the `TOLLGATE_REQUIRE_PACKAGE_DIGEST` environment variable
-  turns that into a hard failure for unattended release runs;
+- with no published digest — or only a same-origin one — the install step renders
+  as a warning rather than a green "done", and the
+  `TOLLGATE_REQUIRE_PACKAGE_DIGEST` environment variable turns that into a hard
+  failure for unattended release runs;
+- an install that came from the ROUTER's own package feeds (the last-resort feed
+  path, where the bytes never pass through the wizard) also renders as a warning
+  carrying an explicit not-verified marker: step 6 is green only for a verdict
+  that actually verified the bytes against an independent published digest;
 - the router-side wget path is covered too, by hashing the file on the router.
 
 Not covered: a compromise of the release itself, where the digest and the package

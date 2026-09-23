@@ -207,38 +207,44 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 	const assetName = "tollgate-wrt_0.6.0_alpha2_pre9_aarch64_cortex-a53.ipk"
 	want := digestOf([]byte("package"))
 
-	t.Run("SHA256SUMS manifest wins", func(t *testing.T) {
+	t.Run("SHA256SUMS manifest wins, but is same-origin so NOT independent", func(t *testing.T) {
 		srv, assetURL, apiBase := fakeReleaseServer(t, assetName, want, true, true, true)
 		_ = srv
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source := publishedDigestForAsset(assetURL)
+		got, source, independent := publishedDigestForAsset(assetURL)
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
 		if !strings.Contains(source, sha256SumsAssetName) {
 			t.Errorf("source = %q, want it to name the %s manifest (the preferred, signable source)", source, sha256SumsAssetName)
 		}
+		if independent {
+			t.Errorf("the %s manifest was reported as an INDEPENDENT anchor; it is fetched from the asset's own host, so a host serving altered bytes also serves the digest (cold review finding 2)", sha256SumsAssetName)
+		}
 	})
 
-	t.Run("sidecar used when no manifest is published", func(t *testing.T) {
+	t.Run("sidecar used when no manifest is published, and is same-origin too", func(t *testing.T) {
 		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, false, true, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source := publishedDigestForAsset(assetURL)
+		got, source, independent := publishedDigestForAsset(assetURL)
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
 		if !strings.Contains(source, sha256SidecarSuffix) {
 			t.Errorf("source = %q, want the per-asset sidecar", source)
 		}
+		if independent {
+			t.Errorf("the per-asset sidecar was reported as an INDEPENDENT anchor; it is same-origin (cold review finding 2)")
+		}
 	})
 
-	t.Run("GitHub API digest used when the release publishes no manifest", func(t *testing.T) {
+	t.Run("GitHub API digest used when the release publishes no manifest, and IS independent", func(t *testing.T) {
 		// This is the state of every feed release today (verified 2026-09-23:
 		// v0.6.0-alpha2-pre9 carries 14 assets, no SHA256SUMS).
 		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, false, false, true)
@@ -246,12 +252,15 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source := publishedDigestForAsset(assetURL)
+		got, source, independent := publishedDigestForAsset(assetURL)
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
 		if !strings.Contains(source, "GitHub release API") {
 			t.Errorf("source = %q, want the GitHub release API", source)
+		}
+		if !independent {
+			t.Errorf("the GitHub release API digest must be reported as an independent anchor (different origin from the package bytes)")
 		}
 	})
 
@@ -263,9 +272,9 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase + "/nonexistent"
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source := publishedDigestForAsset(assetURL)
-		if got != "" || source != "" {
-			t.Errorf("publishedDigestForAsset = (%q, %q), want (\"\", \"\") so the caller reports UNVERIFIED", got, source)
+		got, source, independent := publishedDigestForAsset(assetURL)
+		if got != "" || source != "" || independent {
+			t.Errorf("publishedDigestForAsset = (%q, %q, %v), want (\"\", \"\", false) so the caller reports UNVERIFIED", got, source, independent)
 		}
 	})
 
@@ -280,9 +289,9 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = srv.URL
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source := publishedDigestForAsset("https://github.com/o/r/releases/download/v1/" + assetName)
-		if got != "" || source != "" {
-			t.Errorf("publishedDigestForAsset = (%q, %q), want (\"\", \"\") — an empty digest is not a pass", got, source)
+		got, source, independent := publishedDigestForAsset("https://github.com/o/r/releases/download/v1/" + assetName)
+		if got != "" || source != "" || independent {
+			t.Errorf("publishedDigestForAsset = (%q, %q, %v), want (\"\", \"\", false) — an empty digest is not a pass", got, source, independent)
 		}
 	})
 }
@@ -292,8 +301,10 @@ func TestVerifyPackageBytesVerdicts(t *testing.T) {
 	good := fakeIPK(minPackageBytes + 512)
 	goodDigest := digestOf(good)
 
-	t.Run("matching digest is verified", func(t *testing.T) {
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, true, false, true)
+	t.Run("matching digest from the independent API anchor is verified", func(t *testing.T) {
+		// The API digest is the ONLY independent source today (different origin
+		// from the package bytes), so it is what a green verdict must rest on.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, false, false, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
@@ -307,6 +318,31 @@ func TestVerifyPackageBytesVerdicts(t *testing.T) {
 		}
 		if !strings.Contains(v.suffix(), "verified") {
 			t.Errorf("suffix = %q, want a verified marker for the install step detail", v.suffix())
+		}
+	})
+
+	t.Run("same-origin manifest digest is UNVERIFIED, never a pass", func(t *testing.T) {
+		// Cold cross-family review 2026-09-23, finding 2: the manifest/sidecar
+		// are fetched from the same host that served the package, so a host
+		// serving altered bytes would serve a matching digest too. A match
+		// there must not be reported as verification.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, true, true, false)
+		old := githubAPIBase
+		githubAPIBase = apiBase + "/nonexistent" // no API answer: manifest/sidecar only
+		t.Cleanup(func() { githubAPIBase = old })
+
+		v := verifyPackageBytes(assetURL, ".ipk", good)
+		if v.verified() {
+			t.Fatalf("a same-origin digest match was reported as VERIFIED: %+v", v)
+		}
+		if v.Status != "unverified" || v.fatal() {
+			t.Fatalf("verdict = %+v, want unverified and non-fatal", v)
+		}
+		if !strings.Contains(v.Detail, "SAME HOST") {
+			t.Errorf("detail = %q, want it to explain the same-origin limitation", v.Detail)
+		}
+		if !strings.Contains(v.suffix(), "NOT VERIFIED") {
+			t.Errorf("suffix = %q, want the install step to mark this as not verified", v.suffix())
 		}
 	})
 
@@ -494,10 +530,13 @@ func TestLivePackageDigestRejectsCorruptedBytes(t *testing.T) {
 	}
 	assetURL := feedAssetURL("aarch64_cortex-a53", ".ipk")
 
-	published, source := publishedDigestForAsset(assetURL)
+	published, source, independent := publishedDigestForAsset(assetURL)
 	if published == "" {
 		t.Fatalf("the pinned feed release %s publishes no sha256 for %s (checked %s, the per-asset .sha256 sidecar, and the GitHub release API) — package integrity cannot be verified at deploy time",
 			feedReleaseTag, assetNameFromURL(assetURL), sha256SumsAssetName)
+	}
+	if !independent {
+		t.Fatalf("the digest for the pinned feed release came from %q and is NOT an independent anchor — a green verdict must not rest on same-origin data (cold review finding 2)", source)
 	}
 
 	data, err := httpGetFile(assetURL)
@@ -519,5 +558,51 @@ func TestLivePackageDigestRejectsCorruptedBytes(t *testing.T) {
 		t.Fatalf("a one-byte-corrupted copy of the release asset was NOT rejected: %+v", got)
 	} else {
 		t.Logf("corrupted copy rejected as expected: %s", got.Detail)
+	}
+}
+
+// TestInstallStepStatusNeverGreensAnUnverifiedInstall pins finding 1 of the cold
+// cross-family review (2026-09-23): step 6 may render GREEN only for a verdict
+// that verified the bytes against an INDEPENDENT published digest. Before this,
+// the render demoted exactly one status ("unverified") and nothing else, so a
+// zero-value verdict — an install path that never consulted the gate at all,
+// e.g. the router's own package feed — rendered a green "done" with NO integrity
+// suffix, indistinguishable from a verified install.
+func TestInstallStepStatusNeverGreensAnUnverifiedInstall(t *testing.T) {
+	cases := []struct {
+		name string
+		v    pkgIntegrity
+		want string
+	}{
+		{"verified", pkgIntegrity{Status: "verified"}, "done"},
+		{"unverified", pkgIntegrity{Status: "unverified"}, "warn"},
+		{"zero value: the gate never ran", pkgIntegrity{}, "warn"},
+		{"mismatch", pkgIntegrity{Status: "mismatch"}, "warn"},
+		{"malformed", pkgIntegrity{Status: "malformed"}, "warn"},
+	}
+	for _, c := range cases {
+		if got := installStepStatus(c.v); got != c.want {
+			t.Errorf("installStepStatus(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRouterFeedInstallVerdictIsUnverifiedAndLegible pins that the last-resort
+// install from the ROUTER's own configured feeds cannot be reported as verified:
+// those bytes never passed through this installer, so no published digest was
+// ever checked against them.
+func TestRouterFeedInstallVerdictIsUnverifiedAndLegible(t *testing.T) {
+	v := routerFeedInstallVerdict()
+	if v.verified() || v.fatal() {
+		t.Fatalf("router-feed verdict = %+v, want unverified and non-fatal", v)
+	}
+	if v.suffix() != " [sha256 NOT VERIFIED]" {
+		t.Errorf("suffix = %q, want the NOT VERIFIED marker", v.suffix())
+	}
+	if installStepStatus(v) != "warn" {
+		t.Errorf("step status = %q, want warn for an install the gate never saw", installStepStatus(v))
+	}
+	if !strings.Contains(v.Detail, "never passed through this installer") {
+		t.Errorf("detail = %q, want it to say why nothing could be verified", v.Detail)
 	}
 }

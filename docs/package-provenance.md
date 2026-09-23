@@ -252,33 +252,51 @@ router's own `wget` path, hashing the file on the router), the bytes are checked
    `v0.6.0-alpha2-pre9` carries 14 assets and no `SHA256SUMS`, but GitHub
    publishes a `sha256:` digest for every asset.
 
+   Sources 1 and 2 are **same-origin** with the package (fetched from the asset
+   URL's own host), so they are not an independent anchor: a host or MITM that
+   serves altered bytes also serves the digest that matches them. A match from
+   those two is therefore reported `NOT VERIFIED`. Source 3 is served by a
+   different origin (`api.github.com`) over its own connection, so it survives a
+   substituted mirror/redirect — it is the only source that can produce a green
+   verdict. (Cold cross-family review, 2026-09-23, finding 2.)
+
 ## Policy — fail closed, never a silent pass
 
 | Condition | Result |
 |---|---|
-| Published digest matches the bytes | step 6 renders **done** with `[sha256 verified]` |
+| Independent published digest matches the bytes | step 6 renders **done** with `[sha256 verified]` |
 | Published digest differs | **deploy FAILS** (`jobFail`, step 6 = failed), naming the asset, both digests and which source the expected digest came from |
 | Bytes cannot be the expected format | **deploy FAILS**, naming the reason |
 | No digest published anywhere | step 6 renders **warn** with `NOT VERIFIED`; logged as a WARNING |
+| Only a SAME-ORIGIN digest (manifest or sidecar) matches | step 6 renders **warn**, marked not verified — self-consistency is not authenticity |
+| Installed from the ROUTER's own package feeds (last-resort path; the bytes never pass through the wizard) | step 6 renders **warn**, marked not verified — the gate never saw those bytes |
 | No digest published, and `TOLLGATE_REQUIRE_PACKAGE_DIGEST=1` | **deploy FAILS** |
 
-The last two rows exist so that "we could not check what we installed" is never
-presented as an unqualified success. Nothing is ever *silently* unverified, and
-a release that stops publishing digests turns into a visible warning (or a hard
-failure with the env var) instead of a green install.
+The warn rows exist so that "we could not check what we installed" is never
+presented as an unqualified success. Green is reserved for a verdict that
+verified the bytes against an independent published digest; nothing else — not
+even a verdict that was never computed (the zero value) — can render green.
 
 ### What this does and does not defend against
 
 Catches: a partial/corrupted download; a wrong or substituted file at rest in
-the staging cache; a redirect or mirror serving different bytes; a swapped
-`/tmp/tollgate-wrt.*` on the router. Each becomes a failed deploy.
+the staging cache; a redirect or mirror serving different bytes **when the
+expected digest came from the GitHub release API** (the independent source — the
+substituted host cannot serve that digest); a swapped `/tmp/tollgate-wrt.*` on
+the router. Each becomes a failed deploy.
 
-Does **not** catch: a compromise of the GitHub release itself, where the digest
-and the bytes would be replaced together. Closing that needs the digest to come
+Does **not** catch, and says so in the step detail: a same-origin digest source
+(`SHA256SUMS` / `.sha256` fetched from the asset's own host) on a custom feed
+host — a host serving altered bytes serves the matching digest too, so that case
+is reported `NOT VERIFIED` rather than green; and the last-resort router-feed
+install, where the bytes never pass through this process at all (also `NOT
+VERIFIED`). Nor a compromise of the GitHub release itself, where the digest and
+the bytes would be replaced together. Closing those needs the digest to come
 from a signed manifest published by the feed with a key pinned in the binary
 (audit finding C3-05: publish `SHA256SUMS` plus the apk signing public key as
 release assets). The verifier already prefers that manifest the moment it
-exists — no code change will be needed.
+exists — no code change will be needed, though a signature check (rather than a
+parse-only manifest) still has to be added to make it an independent anchor.
 
 ## Evidence
 
