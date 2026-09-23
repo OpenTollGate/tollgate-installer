@@ -151,6 +151,26 @@
     width: 18px; height: 18px; border-radius: 50%;
     background: var(--tg-red); cursor: pointer; border: none;
   }
+  /* Password reveal toggle: icon-only button sitting inside the input.
+     aria-pressed is the single source of truth for which icon is shown. */
+  .pw-wrap { position: relative; display: block; }
+  .pw-wrap input { padding-right: 52px; }
+  .pw-toggle {
+    position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+    display: flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; padding: 0; margin: 0;
+    background: transparent; border: none; border-radius: 8px;
+    color: #8892b0; cursor: pointer; transition: color 0.2s, background 0.2s;
+  }
+  .pw-toggle:hover { color: var(--tg-red); background: rgba(var(--tg-red-rgb),0.12); }
+  .pw-toggle:focus, .pw-toggle:focus-visible {
+    outline: 2px solid var(--tg-red); outline-offset: 2px;
+  }
+  .pw-toggle svg { width: 20px; height: 20px; display: block; pointer-events: none; }
+  .pw-toggle .pw-icon-hide { display: none; }
+  .pw-toggle[aria-pressed="true"] { color: var(--tg-red); }
+  .pw-toggle[aria-pressed="true"] .pw-icon-show { display: none; }
+  .pw-toggle[aria-pressed="true"] .pw-icon-hide { display: block; }
 </style>
 </head>
 <body>
@@ -176,8 +196,16 @@
       <select id="router-select" onchange="onRouterChange()"></select>
     </div>
     <div class="field">
-      <label>Router password</label>
-      <input type="password" id="password" placeholder="Router password (leave blank on fresh reset)" autocomplete="off" oninput="onPasswordChange()">
+      <label for="password">Router password</label>
+      <div class="pw-wrap">
+        <input type="password" id="password" placeholder="Router password (leave blank on fresh reset)" autocomplete="off" oninput="onPasswordChange();onPasswordFieldInput('password', 'password-toggle')">
+        <button type="button" class="pw-toggle" id="password-toggle"
+                aria-label="Show password" aria-pressed="false" aria-controls="password"
+                onclick="togglePassword('password', 'password-toggle')">
+          <svg class="pw-icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="pw-icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        </button>
+      </div>
     </div>
     <div class="field">
       <label>Upstream connection</label>
@@ -198,9 +226,17 @@
         <div class="hint" id="ssid-hint">Choose the WiFi network to repeat.</div>
       </div>
       <div class="field">
-        <label>Upstream WiFi password</label>
-        <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password"
-               oninput="onWifiPassChange()" onchange="onWifiPassChange()">
+        <label for="wifi-pass">Upstream WiFi password</label>
+        <div class="pw-wrap">
+          <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password"
+                 oninput="onWifiPassChange();onPasswordFieldInput('wifi-pass', 'wifi-pass-toggle')" onchange="onWifiPassChange()">
+          <button type="button" class="pw-toggle" id="wifi-pass-toggle"
+                  aria-label="Show password" aria-pressed="false" aria-controls="wifi-pass"
+                  onclick="togglePassword('wifi-pass', 'wifi-pass-toggle')">
+            <svg class="pw-icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="pw-icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
         <div class="hint" id="wifi-test-status" style="margin-top:0.5rem;"></div>
       </div>
     </div>
@@ -329,6 +365,45 @@ function selectMode(mode) {
   }
   schedulePreStage();
   checkReady();
+}
+
+// ---- Password reveal (show/hide) toggles ----
+// Presentation only: the toggle never reads, stores, logs or re-renders the
+// secret. It flips input.type between 'password' and 'text' so the operator can
+// eyeball what they typed; everything else (identify, pre-stage, WiFi test)
+// keeps running off the input's own value exactly as before.
+function togglePassword(inputId, buttonId) {
+  const input = document.getElementById(inputId);
+  const button = document.getElementById(buttonId);
+  if (!input || !button) return;
+  const wasHidden = input.type === 'password';
+  // Keep the caret/selection across the type swap.
+  let selStart = null;
+  let selEnd = null;
+  try { selStart = input.selectionStart; selEnd = input.selectionEnd; } catch (e) { selStart = null; }
+  input.type = wasHidden ? 'text' : 'password';
+  if (selStart !== null) {
+    try { input.setSelectionRange(selStart, selEnd); } catch (e) { /* not selectable */ }
+  }
+  // The label always describes what the NEXT click does.
+  button.setAttribute('aria-pressed', wasHidden ? 'true' : 'false');
+  button.setAttribute('aria-label', wasHidden ? 'Hide password' : 'Show password');
+}
+
+// Force one field back to hidden and its toggle back to "Show password".
+function resetPasswordReveal(inputId, buttonId) {
+  const input = document.getElementById(inputId);
+  const button = document.getElementById(buttonId);
+  if (!input || !button) return;
+  if (input.type !== 'password') input.type = 'password';
+  button.setAttribute('aria-pressed', 'false');
+  button.setAttribute('aria-label', 'Show password');
+}
+
+// A password field that is emptied must never stay revealed.
+function onPasswordFieldInput(inputId, buttonId) {
+  const input = document.getElementById(inputId);
+  if (input && input.value === '') resetPasswordReveal(inputId, buttonId);
 }
 
 function onPasswordChange() {
@@ -718,6 +793,9 @@ async function refreshRouterName() {
 }
 
 function scanAgain() {
+  // Restarting the flow must never leave a password sitting on screen.
+  resetPasswordReveal('password', 'password-toggle');
+  resetPasswordReveal('wifi-pass', 'wifi-pass-toggle');
   scan();
 }
 
