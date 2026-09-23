@@ -33,6 +33,24 @@
 #  this script reads is parsed with awk/sed, so a stock macOS without Xcode
 #  Command Line Tools (i.e. without python3) still completes a headless
 #  deploy; python3, when present, is used only to prettify output.
+#
+#  PORTABILITY
+#  ---------------------------------------------------------------
+#  Audited against the GNU/BSD differences that break shell scripts:
+#    * not used anywhere (grep -n for each): sed -i, date -d, readlink -f,
+#      stat -c, grep -P, sha256sum, tac, xxd, base64 -w.
+#    * mktemp -d "<dir>/name.XXXXXX": the trailing-six-or-more-X template is the
+#      form both BSD mktemp and GNU mktemp accept; `-t` is not used.
+#    * sed/grep: only POSIX flags (-n, -e, -E, -F, -o, -q, -x) and [[:space:]].
+#    * awk: POSIX subset only — no gensub, no length(array), no whole-array
+#      delete (validated with mawk, which is stricter than gawk and close to
+#      the BSD awk macOS ships).
+#    * head -c, du -h, printf, command -v, kill -0: all supported on BSD.
+#    * sleep: integer arguments only (no `sleep 1.5`).
+#    * bash 3.2 syntax only (arrays, +=, set -o pipefail) — macOS ships 3.2.57.
+#    * the help text is embedded, not re-read from $0: under the documented
+#      `bash <(curl ...)` invocation $0 is a file descriptor that cannot be read
+#      a second time.
 #  ---------------------------------------------------------------
 set -euo pipefail
 
@@ -62,8 +80,17 @@ SSH_BIN=""
 SSHPASS_BIN=""
 
 usage() {
-    sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'USAGE'
+TollGate Installer — one-shot setup and headless deploy test
+
+Downloads the tollgate-installer binary for this OS/arch, serves its web UI at
+http://localhost:8099 (the port is bumped if it is taken), and — when given a
+router IP — deploys TollGate to that OpenWrt router and verifies the result.
+
+  interactive :  bash <(curl -fsSL <raw-url>/install-and-test.sh)
+  headless    :  bash <(curl -fsSL <raw-url>/install-and-test.sh) \
+                     <ROUTER_IP> <ROUTER_PASSWORD> <LIGHTNING_ADDRESS>
+  example     :  ... 10.47.41.1 '' user@coinos.io
 
 Options:
   --tag <tag>        Install an exact feed release tag (e.g. v0.6.0-alpha2-pre12).
@@ -259,6 +286,17 @@ echo "Detected platform: ${PLATFORM}"
 
 preflight
 
+# --- run directory ----------------------------------------------------------
+# One private directory per run for everything this script writes (installer
+# log, status scratch files, the askpass helper). $TMPDIR is the per-user temp
+# directory on macOS, so honour it when the OS sets one.
+TMP_BASE="${TMPDIR:-/tmp}"
+TMP_BASE="${TMP_BASE%/}"
+RUN_DIR="$(mktemp -d "${TMP_BASE}/tollgate-installer.XXXXXX")"
+LOG_FILE="${RUN_DIR}/installer.log"
+SEEN_FILE="${RUN_DIR}/seen"
+STATUS_FILE="${RUN_DIR}/status"
+
 # --- feed release resolution ----------------------------------------------
 if [ "${LIST_RELEASES}" = 1 ]; then
     echo "Feed releases (${FEED_REPO}), newest first:"
@@ -323,14 +361,30 @@ PORT="$(pick_port "${PORT}")"
 # --- 4. run the installer ---------------------------------------------------
 echo
 echo "Starting ${BIN_NAME} on http://localhost:${PORT} ..."
-"${RUN_BIN}" -port "${PORT}" >/tmp/${BIN_NAME}.log 2>&1 &
+"${RUN_BIN}" -port "${PORT}" >"${LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 trap 'kill ${SERVER_PID} 2>/dev/null || true' EXIT
-sleep 1.5
 
-if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/"; then
-    echo "ERROR: installer did not come up on :${PORT}. Log:" >&2
-    tail -20 /tmp/${BIN_NAME}.log >&2
+# Wait for the UI instead of sleeping a fixed 1.5s: it returns as soon as the
+# server answers, tolerates a slow first start, and keeps the script free of
+# fractional `sleep` arguments.
+waited=0
+ready=0
+while [ "${waited}" -lt 15 ]; do
+    if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/"; then
+        ready=1
+        break
+    fi
+    if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+        break  # the installer exited: waiting longer cannot help
+    fi
+    waited=$((waited + 1))
+    sleep 1
+done
+
+if [ "${ready}" -ne 1 ]; then
+    echo "ERROR: installer did not come up on :${PORT} (waited ${waited}s). Log:" >&2
+    tail -20 "${LOG_FILE}" >&2
     exit 1
 fi
 echo "Installer UI is up: http://localhost:${PORT}/"
@@ -414,8 +468,6 @@ fi
 
 echo "Job: ${JOB_ID}"
 echo "Polling status..."
-SEEN_FILE="$(mktemp /tmp/tollgate-seen.XXXXXX)"
-STATUS_FILE="$(mktemp /tmp/tollgate-status.XXXXXX)"
 
 # Print the deploy state + step summary, and echo provenance lines (package
 # source + installed build) exactly once as they appear in the job log.
@@ -614,7 +666,7 @@ ssh_askpass_require_supported() {
 # router_verify <ip> <password> — 0 = verified, 1 = the attempt failed,
 # 2 = this host has no way to send a password (nothing was attempted).
 router_verify() {
-    local ip="$1" pass="$2" helper
+    local ip="$1" pass="$2" helper rc
 
     [ -n "${SSH_BIN}" ] || return 2
 
@@ -634,7 +686,7 @@ router_verify() {
     fi
 
     if ssh_askpass_require_supported; then
-        helper="$(mktemp "${TMPDIR:-/tmp}/tollgate-askpass.XXXXXX")"
+        helper="${RUN_DIR}/askpass.sh"
         printf '%s\n' '#!/bin/sh' \
             'printf "%s\n" "${TOLLGATE_ROUTER_PASS}"' > "${helper}"
         chmod 700 "${helper}"
@@ -644,7 +696,7 @@ router_verify() {
             -o PreferredAuthentications=password -o PubkeyAuthentication=no \
             -o NumberOfPasswordPrompts=1 "root@${ip}" "${ROUTER_PROBE}" \
             </dev/null 2>&1
-        local rc=$?
+        rc=$?
         rm -f "${helper}"
         return "${rc}"
     fi
@@ -677,7 +729,7 @@ case "${verify_rc}" in
 esac
 
 echo
-echo "Done. Installer log: /tmp/${BIN_NAME}.log"
+echo "Done. Installer log: ${LOG_FILE}"
 echo "Router: Telnet/SSH root@${ROUTER_IP} — TollGate API :2121, portal :2050"
 kill "${SERVER_PID}" 2>/dev/null || true
 # What this script reports on is the deploy. A post-deploy probe that could not
