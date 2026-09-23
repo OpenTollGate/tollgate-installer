@@ -68,6 +68,158 @@ func passwdCommand(password string) string {
 		"printf '%s\\n%s\\n' \"$pw\" \"$pw\" | passwd root 2>&1"
 }
 
+// routerRun runs one router-side command and returns its combined output.
+// sshRun satisfies it; tests inject a fake router.
+type routerRun func(cmd string) string
+
+// ─── Root credential (fail closed) ────────────────────────────────
+
+// rootHashState is what /etc/shadow says about root's password.
+type rootHashState string
+
+const (
+	// rootHashEmpty: root's shadow hash is empty (or root has no shadow
+	// line at all). This is the DANGEROUS state — rpcd's
+	// rpc_login_test_password() returns true on an empty hash, so ANY
+	// password authenticates, and dropbear accepts an empty password too.
+	rootHashEmpty rootHashState = "empty"
+	// rootHashLocked: '!' / '*' — the account cannot be logged into with a
+	// password at all (crypt() can never match). Not credential-less.
+	rootHashLocked rootHashState = "locked"
+	// rootHashSet: a real hash — only the real password works.
+	rootHashSet rootHashState = "set"
+	// rootHashUnknown: the probe produced no recognisable answer (awk or
+	// /etc/shadow missing, or the SSH session died) — never assume this is
+	// safe.
+	rootHashUnknown rootHashState = "unknown"
+)
+
+// rootHashProbeCmd prints exactly one of `empty` / `locked` / `set` for root's
+// /etc/shadow entry. Field 2 is the hash; a MISSING root line is reported as
+// empty because rpcd then has no hash to check either.
+const rootHashProbeCmd = `h=$(awk -F: '$1=="root"{print $2}' /etc/shadow 2>/dev/null); ` +
+	`case "$h" in "") echo empty ;; '!'*|'*'*) echo locked ;; ?*) echo set ;; esac`
+
+// parseRootHashState maps the probe output to a state. Only the exact probe
+// token is accepted (case-sensitive — `rootHashEmpty` from an older/failed
+// probe must NOT be read as `empty`); anything else, empty output included, is
+// rootHashUnknown and must be treated as unsafe.
+func parseRootHashState(out string) rootHashState {
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return rootHashUnknown
+	}
+	switch state := rootHashState(fields[len(fields)-1]); state {
+	case rootHashEmpty, rootHashLocked, rootHashSet:
+		return state
+	}
+	return rootHashUnknown
+}
+
+// rootPasswordAlphabet omits characters that are hostile to a shell command or
+// to a human retyping the value: no quotes, backslashes, whitespace, or
+// look-alike pairs (0/O, 1/l/I).
+const rootPasswordAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+
+// rootPasswordLength is the generated credential length (log2(57)*20 ≈ 117
+// bits of entropy).
+const rootPasswordLength = 20
+
+// generateRootPassword returns a fresh root credential from crypto/rand. It
+// FAILS (rather than falling back to a weaker source) if the OS CSPRNG is
+// unavailable — a predictable root password is worse than a failed deploy.
+//
+// Rejection sampling above 4*len(alphabet) keeps every character uniformly
+// distributed (no modulo bias).
+func generateRootPassword() (string, error) {
+	const limit = 256 - (256 % len(rootPasswordAlphabet)) // 228
+	out := make([]byte, 0, rootPasswordLength)
+	buf := make([]byte, rootPasswordLength)
+	for len(out) < rootPasswordLength {
+		if _, err := cryptorand.Read(buf); err != nil {
+			return "", fmt.Errorf("crypto/rand unavailable: %w", err)
+		}
+		for _, b := range buf {
+			if int(b) >= limit {
+				continue
+			}
+			out = append(out, rootPasswordAlphabet[int(b)%len(rootPasswordAlphabet)])
+			if len(out) == rootPasswordLength {
+				break
+			}
+		}
+	}
+	return string(out), nil
+}
+
+// ensureRootCredential makes sure the router is never left without a root
+// credential and returns the password later deploy steps must reconnect with.
+//
+// Modes, in order:
+//  1. a password was supplied -> set it and verify it took;
+//  2. the router already has a real hash -> leave it alone (say so — this is
+//     not the silent skip);
+//  3. the router's root password is locked ('!'/'*') -> leave it alone (a
+//     locked account is not credential-less, and re-enabling password login
+//     on a deliberately locked router would be a regression);
+//  4. the router has NO credential (the fresh-deploy state) -> generate one,
+//     set it, verify it, and show it once;
+//  5. the state cannot be read -> fail closed (never assume "fine").
+//
+// Returns ok=false after calling jobFail when the deploy must stop.
+func ensureRootCredential(job *Job, run routerRun, supplied string) (string, bool) {
+	state := parseRootHashState(run(rootHashProbeCmd))
+
+	if supplied != "" {
+		return supplied, applyRootPassword(job, run, supplied, "supplied")
+	}
+
+	switch state {
+	case rootHashSet:
+		job.addLog("Router root password already set — left unchanged (none supplied)")
+		job.setStep(4, "done", "already set (unchanged)")
+		return "", true
+	case rootHashLocked:
+		job.addLog("Router root password is LOCKED ('!'/'*' in /etc/shadow) — left unchanged.")
+		job.addLog("Set one from LuCI or run `passwd root` on the router if you need the :8090 admin board.")
+		job.setStep(4, "done", "locked (unchanged)")
+		return "", true
+	case rootHashEmpty:
+		pw, err := generateRootPassword()
+		if err != nil {
+			jobFail(job, 4, "cannot generate a root credential",
+				"The router has NO root password and none was supplied, and a credential could not be generated: "+err.Error())
+			return "", false
+		}
+		if !applyRootPassword(job, run, pw, "generated") {
+			return "", false
+		}
+		job.setGeneratedPassword(pw)
+		return pw, true
+	default:
+		jobFail(job, 4, "cannot read the router's root password state",
+			"Could not determine whether root has a usable password (/etc/shadow unreadable: no awk, no shadow file, or a dead SSH session). "+
+				"Re-run the deploy and supply the router's root password explicitly.")
+		return "", false
+	}
+}
+
+// applyRootPassword sets password on the router and PROVES it took by
+// re-reading /etc/shadow. A passwd that "looks" successful but leaves the hash
+// empty (the exact failure this path exists for) fails the deploy.
+func applyRootPassword(job *Job, run routerRun, password, origin string) bool {
+	out := run(passwdCommand(password))
+	if state := parseRootHashState(run(rootHashProbeCmd)); state != rootHashSet {
+		jobFail(job, 4, "root password not established",
+			"The router still has no usable root password after setting one ("+origin+"). "+
+				"The router would be left with unauthenticated root administration; aborting. passwd output: "+truncate(out, 200))
+		return false
+	}
+	job.addLog("Root password set (" + origin + ")")
+	job.setStep(4, "done", "password set ("+origin+")")
+	return true
+}
+
 // ─── Mint configuration ──────────────────────────────────────────
 
 // mintCfg mirrors one entry of the router's accepted_mints config.
@@ -171,6 +323,86 @@ func configJqCmd(margin int, ownerFactor, devFactor, mint string, includeTestnut
 		"'" + configJqFilter() + "' " +
 		"/etc/tollgate/config.json > /tmp/cfg.tmp 2>&1 && " +
 		"mv /tmp/cfg.tmp /etc/tollgate/config.json && echo 'config updated' || echo 'no config'"
+}
+
+// brandingCommands returns the router-side commands that brand a deployed
+// router: hostname, captive SSID, DNS/domain records and the NoDogSplash
+// pre-auth allow list. Lifted verbatim out of runDeployment so a test can run
+// the SHIPPED commands against a stub `uci` and assert what a paying-nothing
+// captive client can reach (branding_test.go).
+//
+// NoDogSplash's users_to_router IS the pre-authentication allow list: every
+// entry in it is reachable by a client that has paid nothing, on a network
+// that is open by design. The customer-journey ports (:80 captive check,
+// :2050/:2051 portal, :2121 backend, :8080 LuCI) belong there. The OWNER-facing
+// admin board on :8090/:8443 does NOT — it is a root-capable login served over
+// plain HTTP (rpcd ACL: file exec, system.password_set, wallet_drain_cashu),
+// and the module's 99-tollgate-setup strips it (PR #546). This function used
+// to ADD :8090 to the list right after that script removed it, re-arming the
+// exposure on every fresh deploy; it now REMOVES the entry (and the :8443
+// sibling) from an already-deployed router instead.
+func brandingCommands(nodeName, routerIP string) []string {
+	// Deduplicate /etc/hosts entries, then write fresh ones
+	hostsCmd := "sed -i '/tollgate\\.lan/d; /tollgate\\.local/d' /etc/hosts && " +
+		"echo '" + routerIP + " tollgate.lan tollgate.local' >> /etc/hosts"
+	return []string{
+		// Hostname
+		"uci -q set system.@system[0].hostname='" + nodeName + "'",
+		// WiFi SSID — only on default_radio* (public captive portal WiFi)
+		// Skip private_radio* (admin LAN) and *_uplink (WAN repeater)
+		"for i in $(uci -q show wireless 2>/dev/null | grep 'default_radio.*=wifi-iface' | awk -F. '{print $2}' | awk -F= '{print $1}'); do uci -q set wireless.$i.ssid='" + nodeName + "'; done",
+		// DNS: deduplicated /etc/hosts entries
+		hostsCmd,
+		// Ensure dnsmasq serves .lan domain
+		"uci -q set dhcp.@dnsmasq[0].domain='lan'",
+		"uci -q set dhcp.@dnsmasq[0].local='/lan/'",
+		// dnsmasq address records (belt-and-suspenders with /etc/hosts).
+		// Purge ALL prior /tollgate.lan/* entries first: an older deploy may
+		// have written a corrupt value (e.g. a trailing /24), and a plain
+		// del_list of the new value would leave it in place and keep dnsmasq
+		// crash-looping.
+		"for a in $(uci -q get dhcp.@dnsmasq[0].address); do case \"$a\" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address=\"$a\";; esac; done; uci -q add_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + routerIP + "'",
+		// DHCP: push router as DNS server to all DHCP clients (option 6)
+		// This is what makes .lan domains resolve on connected devices.
+		// Same purge-first rationale as the address list above.
+		"for a in $(uci -q get dhcp.lan.dhcp_option); do case \"$a\" in 6,*) uci -q del_list dhcp.lan.dhcp_option=\"$a\";; esac; done; uci -q add_list dhcp.lan.dhcp_option='6," + routerIP + "'",
+		// dnsmasq: expand /etc/hosts entries with domain suffix
+		"uci -q set dhcp.@dnsmasq[0].expandhosts='1'",
+		"uci -q set dhcp.@dnsmasq[0].readethers='1'",
+		// network: set domain on lan interface
+		"uci -q set network.lan.domain='lan'",
+		// NoDogSplash config
+		"uci -q set nodogsplash.@nodogsplash[0].gatewayname='" + nodeName + "'",
+		// Rebrand gateway domain to tollgate.lan so the captive portal serves
+		// on tollgate.lan (DNS already resolves it).
+		"uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'",
+		"uci -q set nodogsplash.@nodogsplash[0].enabled='1'",
+		"uci -q set nodogsplash.@nodogsplash[0].clientid='mac'",
+		// Customer-journey ports: the captive check, the portal, the backend
+		// API and LuCI. These ARE meant to be reachable pre-auth.
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2121' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2121'",
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2050' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2050'",
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2051' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2051'",
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 80' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 80'",
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080'",
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090'",
+		// Commit all
+		"uci commit system",
+		"uci commit wireless",
+		"uci commit dhcp",
+		"uci commit network",
+		"uci commit nodogsplash",
+		// Enable radios (OpenWrt ships with wifi disabled by default)
+		"uci -q set wireless.radio0.disabled='0' 2>/dev/null; true",
+		"uci -q set wireless.radio1.disabled='0' 2>/dev/null; true",
+		"uci commit wireless",
+		"/etc/init.d/nodogsplash enable",
+		"/etc/init.d/nodogsplash restart 2>/dev/null || true",
+		"/etc/init.d/dnsmasq restart 2>/dev/null || true",
+		// Apply wireless config (wifi reload applies UCI, wifi starts if not running)
+		"wifi reload 2>/dev/null || wifi 2>/dev/null || true",
+		"echo 'branded'",
+	}
 }
 
 // deploySteps returns the ordered deployment step definitions.
@@ -391,22 +623,33 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(3, "done", versionLine)
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 4: Set root password
+	// Step 4: root credential.
+	//
+	// A router left with an EMPTY root password hash is not "open by default",
+	// it is UNauthenticated root: rpcd's rpc_login_test_password()
+	// (rpcd/session.c) short-circuits to true when the shadow hash is empty,
+	// so session.login accepts ANY password — including "" — and dropbear
+	// accepts an empty-password login too. The :8090 admin board sits behind
+	// exactly that session and its ACL grants file exec / password_set /
+	// wallet_drain_cashu, so a fresh deploy that skipped this step handed out
+	// root administration over plain HTTP.
+	//
+	// The operator's password stays OPTIONAL (a fresh OpenWrt has none to
+	// type), but the deployed router must never end up credential-less: when
+	// the router has no usable root password and none was supplied, GENERATE
+	// one, set it, and show it once. If a credential cannot be established,
+	// FAIL the deploy — never report success on a password-less router.
 	job.setStep(4, "running", "")
-	if req.Password != "" {
-		// The password crosses as a base64 carrier — the plaintext never
-		// appears in the SSH command string (see passwdCommand).
-		passwdCmd := passwdCommand(req.Password)
-		passwdOut := sshRun(client, passwdCmd)
-		if strings.Contains(passwdOut, "changed") || strings.Contains(passwdOut, "successfully") {
-			job.addLog("Root password set")
-			job.setStep(4, "done", "password updated")
-		} else {
-			job.addLog("Password set (may already be set)")
-			job.setStep(4, "done", "password set")
-		}
-	} else {
-		job.setStep(4, "done", "skipped (no password)")
+	effectivePassword, credentialOK := ensureRootCredential(job, func(cmd string) string {
+		return sshRun(client, cmd)
+	}, req.Password)
+	if !credentialOK {
+		return
+	}
+	if effectivePassword != "" {
+		// Later steps (STA reconnect, fsck-style re-auth) must use the live
+		// credential, not the possibly-empty value from the request.
+		req.Password = effectivePassword
 	}
 	time.Sleep(500 * time.Millisecond)
 
@@ -793,69 +1036,12 @@ func runDeployment(job *Job, req deployRequest) {
 	}
 	job.addLog("Router LAN IP: " + routerIP)
 
-	// Deduplicate /etc/hosts entries, then write fresh ones
-	hostsCmd := "sed -i '/tollgate\\.lan/d; /tollgate\\.local/d' /etc/hosts && " +
-		"echo '" + routerIP + " tollgate.lan tollgate.local' >> /etc/hosts"
-
 	// Try to install mdnsd for .local mDNS support (non-fatal if unavailable)
 	mdnsCmd := "opkg update >/dev/null 2>&1 && opkg install mdnsd >/dev/null 2>&1 && /etc/init.d/mdnsd enable 2>/dev/null; /etc/init.d/mdnsd start 2>/dev/null; echo ok"
 
-	brandOut := sshRun(client, strings.Join([]string{
-		// Hostname
-		"uci -q set system.@system[0].hostname='" + nodeName + "'",
-		// WiFi SSID — only on default_radio* (public captive portal WiFi)
-		// Skip private_radio* (admin LAN) and *_uplink (WAN repeater)
-		"for i in $(uci -q show wireless 2>/dev/null | grep 'default_radio.*=wifi-iface' | awk -F. '{print $2}' | awk -F= '{print $1}'); do uci -q set wireless.$i.ssid='" + nodeName + "'; done",
-		// DNS: deduplicated /etc/hosts entries
-		hostsCmd,
-		// Ensure dnsmasq serves .lan domain
-		"uci -q set dhcp.@dnsmasq[0].domain='lan'",
-		"uci -q set dhcp.@dnsmasq[0].local='/lan/'",
-		// dnsmasq address records (belt-and-suspenders with /etc/hosts).
-		// Purge ALL prior /tollgate.lan/* entries first: an older deploy may
-		// have written a corrupt value (e.g. a trailing /24), and a plain
-		// del_list of the new value would leave it in place and keep dnsmasq
-		// crash-looping.
-		"for a in $(uci -q get dhcp.@dnsmasq[0].address); do case \"$a\" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address=\"$a\";; esac; done; uci -q add_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + routerIP + "'",
-		// DHCP: push router as DNS server to all DHCP clients (option 6)
-		// This is what makes .lan domains resolve on connected devices.
-		// Same purge-first rationale as the address list above.
-		"for a in $(uci -q get dhcp.lan.dhcp_option); do case \"$a\" in 6,*) uci -q del_list dhcp.lan.dhcp_option=\"$a\";; esac; done; uci -q add_list dhcp.lan.dhcp_option='6," + routerIP + "'",
-		// dnsmasq: expand /etc/hosts entries with domain suffix
-		"uci -q set dhcp.@dnsmasq[0].expandhosts='1'",
-		"uci -q set dhcp.@dnsmasq[0].readethers='1'",
-		// network: set domain on lan interface
-		"uci -q set network.lan.domain='lan'",
-		// NoDogSplash config
-		"uci -q set nodogsplash.@nodogsplash[0].gatewayname='" + nodeName + "'",
-		// Rebrand gateway domain to tollgate.lan so the captive portal serves
-		// on tollgate.lan (DNS already resolves it).
-		"uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'",
-		"uci -q set nodogsplash.@nodogsplash[0].enabled='1'",
-		"uci -q set nodogsplash.@nodogsplash[0].clientid='mac'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2121' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2121'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2050' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2050'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2051' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2051'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 80' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 80'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090'",
-		// Commit all
-		"uci commit system",
-		"uci commit wireless",
-		"uci commit dhcp",
-		"uci commit network",
-		"uci commit nodogsplash",
-		// Enable radios (OpenWrt ships with wifi disabled by default)
-		"uci -q set wireless.radio0.disabled='0' 2>/dev/null; true",
-		"uci -q set wireless.radio1.disabled='0' 2>/dev/null; true",
-		"uci commit wireless",
-		"/etc/init.d/nodogsplash enable",
-		"/etc/init.d/nodogsplash restart 2>/dev/null || true",
-		"/etc/init.d/dnsmasq restart 2>/dev/null || true",
-		// Apply wireless config (wifi reload applies UCI, wifi starts if not running)
-		"wifi reload 2>/dev/null || wifi 2>/dev/null || true",
-		"echo 'branded'",
-	}, " && "))
+	brandOut := sshRun(client, strings.Join(brandingCommands(nodeName, routerIP), " && "))
+	// (brandingCommands holds the command list; it is extracted so the shipped
+	// commands can be run against a stub `uci` in branding_test.go.)
 	// Install mdnsd for .local (non-fatal, runs separately)
 	mdnsOut := sshRun(client, mdnsCmd)
 	if strings.Contains(mdnsOut, "ok") {

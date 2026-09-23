@@ -148,6 +148,11 @@ type Job struct {
 	Steps  []Step     `json:"steps"`
 	Log    []LogEntry `json:"log"`
 	Error  string     `json:"error,omitempty"`
+	// generatedPassword is set ONLY when the router had no root credential
+	// and none was supplied, so the deploy had to create one (see
+	// ensureRootCredential). It is shown to the operator ONCE, via the
+	// handleStatus snapshot, and is never written to disk. Guarded by mu.
+	generatedPassword string
 	// stageCache holds pre-downloaded deploy assets keyed by the exact
 	// asset URL, populated by the PreStage phase (stageAssets) so the
 	// flash/install steps can consume staged bytes without live network.
@@ -197,6 +202,20 @@ func (j *Job) addLog(msg string) {
 	j.mu.Lock()
 	j.Log = append(j.Log, LogEntry{Time: float64(time.Now().Unix()), Msg: msg})
 	j.mu.Unlock()
+}
+
+// setGeneratedPassword records a credential the wizard had to create (the
+// router had no root password and the operator supplied none) and shows it to
+// the operator ONCE — in the deploy log and as generated_password in
+// /api/status, which the UI renders as a copyable callout. There is no other
+// channel: the value is deliberately never persisted by the wizard.
+func (j *Job) setGeneratedPassword(pw string) {
+	j.mu.Lock()
+	j.generatedPassword = pw
+	j.mu.Unlock()
+	j.addLog("Router had NO root password and none was supplied — generated a one-time credential.")
+	j.addLog("ROOT PASSWORD: " + pw)
+	j.addLog("Write it down NOW (shown once). Change it in the admin board's Settings, or run `passwd root` on the router.")
 }
 
 func (j *Job) setStep(i int, status, detail string) {
@@ -1040,16 +1059,17 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Return a snapshot for thread-safe JSON
 	job.mu.Lock()
 	snapshot := struct {
-		IP              string     `json:"ip"`
-		Status          string     `json:"status"`
-		Step            int        `json:"step"`
-		Steps           []Step     `json:"steps"`
-		Log             []LogEntry `json:"log"`
-		Error           string     `json:"error,omitempty"`
-		ProgressCurrent int        `json:"progressCurrent"`
-		ProgressTotal   int        `json:"progressTotal"`
-		ProgressLabel   string     `json:"progressLabel,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error,
+		IP                string     `json:"ip"`
+		Status            string     `json:"status"`
+		Step              int        `json:"step"`
+		Steps             []Step     `json:"steps"`
+		Log               []LogEntry `json:"log"`
+		Error             string     `json:"error,omitempty"`
+		GeneratedPassword string     `json:"generated_password,omitempty"`
+		ProgressCurrent   int        `json:"progressCurrent"`
+		ProgressTotal     int        `json:"progressTotal"`
+		ProgressLabel     string     `json:"progressLabel,omitempty"`
+	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, job.generatedPassword,
 		job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
 
