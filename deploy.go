@@ -459,7 +459,26 @@ func runDeployment(job *Job, req deployRequest) {
 	// Candidate download URLs: the generic feed URL first, then the GitHub
 	// release fallback (aarch64 only) if one exists. The first that yields
 	// bytes wins.
+	//
+	// The fallback asset is pinned to a DIFFERENT, OLDER release than the
+	// requested feed tag, so it is only offered when the operator has explicitly
+	// opted in (--allow-fallback / TOLLGATE_ALLOW_GITHUB_FALLBACK=1). Without
+	// the opt-in it is removed from the candidate list AND the refusal is held
+	// for the fail-loudly check below: a feed outage must not turn into a silent
+	// downgrade reported as success.
 	pkgCandidates := pkgCandidateURLs(routerArch, pkgExtension)
+	var fallbackRefusal error
+	if len(pkgCandidates) > 1 {
+		fb, err := githubFallbackSelection(routerArch, pkgExtension, githubFallbackAllowed())
+		if err != nil {
+			fallbackRefusal = err
+			pkgCandidates = pkgCandidates[:1]
+			job.addLog("GitHub fallback NOT used: " + err.Error())
+		} else {
+			job.addLog("GitHub fallback allowed by explicit opt-in (installs " +
+				githubFallbackPkgVersion(routerArch, pkgExtension) + ", not " + feedPkgVersion() + "): " + fb)
+		}
+	}
 	if pkgExtension == ".apk" {
 		job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
 	} else {
@@ -546,7 +565,26 @@ func runDeployment(job *Job, req deployRequest) {
 		job.addLog("tollgate-wrt source: none — no candidate URL supplied the package (feed and GitHub fallback both failed)")
 	}
 
+	// FAIL LOUDLY. The requested release could not be downloaded and the only
+	// other candidate is a known OLDER package: stop here and name both versions
+	// instead of substituting it, force-downgrading the router, and rendering the
+	// step green. (Before this, the v0.5.0 GitHub asset was tried silently and
+	// the post-install assertion could not fire for it — C2-I-02.)
+	if !pkgOnRouter && fallbackRefusal != nil {
+		job.addLog("ERROR: " + fallbackRefusal.Error())
+		jobFail(job, 6,
+			"requested release "+feedReleaseTag+" unavailable — refusing to install an older package",
+			fallbackRefusal.Error())
+		return
+	}
+
 	installedOK := false
+	// installStatus is the status step 6 renders with. "warn" when the package
+	// that landed is NOT the requested release (an explicitly opted-in fallback,
+	// or an install from the router's own feeds), so the UI cannot show it as an
+	// unqualified success. Declared before the download wiring so the deferred
+	// refusal path above cannot leave it unset.
+	installStatus := "done"
 	if pkgOnRouter {
 		job.addLog("Installing package via " + pkgMgr + "...")
 		sshRun(client, "rm -f /var/lock/opkg.lock 2>/dev/null")
@@ -636,19 +674,25 @@ func runDeployment(job *Job, req deployRequest) {
 		// Verify the binary actually exists (secondary check)
 		verifyOut := sshRun(client, "ls /usr/bin/tollgate-wrt 2>/dev/null || ls /usr/sbin/tollgate-wrt 2>/dev/null || which tollgate-wrt 2>/dev/null || echo 'NOT FOUND'")
 		if !strings.Contains(verifyOut, "NOT FOUND") {
-			// The feed release URL pins a specific package version; when that
-			// URL supplied the package, the INSTALLED version MUST reflect it.
-			// Without this assertion a no-op upgrade (or an old /tmp package)
-			// passes, shipping the previous files while reporting success.
+			// Post-install version assertion — UNCONDITIONAL. It used to be
+			// gated on the source URL containing the feed tag, so a GitHub
+			// fallback install was never compared with anything and a downgrade
+			// rendered as a green "done" step. Now the installed version is
+			// compared for EVERY source: a mismatch against the version the
+			// supplying source names fails the step, and a version that is not
+			// the requested release can no longer render as a plain success.
 			if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
 				job.addLog("Installed tollgate-wrt package version: " + pkgVer)
-				if strings.Contains(pkgSourceURL, "/releases/download/"+feedReleaseTag+"/") {
-					if want := feedPkgVersion(); !strings.HasPrefix(pkgVer, want) {
-						jobFail(job, 6, "tollgate-wrt version mismatch",
-							"Installed package is "+pkgVer+" but the pinned feed release "+feedReleaseTag+" provides "+want+
-								" — the upgrade did not take effect (previous package/files still present).")
-						return
-					}
+				fatal, warn := pkgVersionVerdict(pkgVer, pkgSourceURL, routerArch, pkgExtension)
+				if fatal != "" {
+					job.addLog("ERROR: " + fatal)
+					jobFail(job, 6, "tollgate-wrt version mismatch", fatal)
+					return
+				}
+				if warn != "" {
+					job.addLog("WARNING: " + warn)
+					installStatus = "warn"
+				} else {
 					job.addLog("Package version verified against " + feedReleaseTag + ": " + pkgVer)
 				}
 			} else {
@@ -663,7 +707,11 @@ func runDeployment(job *Job, req deployRequest) {
 			// "which build am I running, and did this run exercise the feed?"
 			// is answerable from the deploy log alone.
 			build := reportInstalledBuild(job, client)
-			job.setStep(6, "done", installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL)))
+			detail := installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL))
+			if installStatus == "warn" {
+				detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
+			}
+			job.setStep(6, installStatus, detail)
 			installedOK = true
 		}
 	}
@@ -690,9 +738,22 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 		// This path installed from the ROUTER's own configured package feeds —
 		// not the FreedomTechFeed release asset — so the provenance label says
-		// so explicitly rather than reusing "feed" for both meanings.
+		// so explicitly rather than reusing "feed" for both meanings. The same
+		// "is it the requested release?" rule applies: a router-feed package
+		// that is not the requested one must not render as a plain success.
+		if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
+			job.addLog("Installed tollgate-wrt package version: " + pkgVer)
+			if _, warn := pkgVersionVerdict(pkgVer, "", routerArch, pkgExtension); warn != "" {
+				job.addLog("WARNING: " + warn)
+				installStatus = "warn"
+			}
+		}
 		build := reportInstalledBuild(job, client)
-		job.setStep(6, "done", installStepDetail(build, pkgMgr, pkgSourceRouterFeed))
+		detail := installStepDetail(build, pkgMgr, pkgSourceRouterFeed)
+		if installStatus == "warn" {
+			detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
+		}
+		job.setStep(6, installStatus, detail)
 	}
 
 	// The .ipk now ships gonuts v0.11.1 with all keyset/multimint/existing-wallet

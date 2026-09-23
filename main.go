@@ -57,6 +57,13 @@ var (
 	// router — is NOT reachable from other hosts on the LAN. Operators who
 	// accept that risk can override with --bind=0.0.0.0 or a specific IP.
 	listenBind = flag.String("bind", defaultBindHost, "HTTP bind address (default loopback-only)")
+	// allowFallback is the explicit opt-in for the GitHub release fallback (the
+	// pinned tollgate-module-basic-go assets). That asset is a DIFFERENT, OLDER
+	// release than the requested feed tag, so taking it silently is a downgrade;
+	// without this flag (or TOLLGATE_ALLOW_GITHUB_FALLBACK=1) a failed feed
+	// download fails the deploy instead of substituting an older package.
+	allowFallback = flag.Bool("allow-fallback", false,
+		"allow the older GitHub release fallback when the requested feed release is unavailable")
 	listenAddr string
 )
 
