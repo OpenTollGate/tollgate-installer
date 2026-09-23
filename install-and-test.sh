@@ -53,6 +53,8 @@ FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-alpha}"
 FEED_TAG_OVERRIDE="${TOLLGATE_FEED_RELEASE_TAG:-}"
 LIST_RELEASES=0
 POSITIONAL=()
+# --bin <path>: run a pre-built installer binary instead of downloading one.
+BIN_PATH=""
 # Filled in by preflight(). python3 is optional; ssh/sshpass are only needed
 # for the step-6 router verification.
 PYTHON3=""
@@ -69,6 +71,8 @@ Options:
   --channel <name>   Newest feed release in a channel: alpha (default, newest
                      pre-release), beta, stable, or any.
   --list             List recent feed releases (newest first) and exit.
+  --bin <path>       Run this installer binary instead of downloading one
+                     (e.g. a locally built ./tollgate-installer).
   -h, --help         Show this help.
 USAGE
 }
@@ -78,6 +82,7 @@ while [ $# -gt 0 ]; do
         --tag)     FEED_TAG_OVERRIDE="${2:-}"; shift 2 ;;
         --channel) FEED_CHANNEL="${2:-}"; shift 2 ;;
         --list)    LIST_RELEASES=1; shift ;;
+        --bin)     BIN_PATH="${2:-}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *)         POSITIONAL+=("$1"); shift ;;
     esac
@@ -287,7 +292,17 @@ download() {
 
 # Try the fork pre-merge release first (contains the Go binary built from
 # PR #2 head). Once the PR merges, this same URL pattern works on the org repo.
-if ! download "${FORK_REPO}"; then
+# --bin skips the download entirely: locally built binary, air-gapped host, or
+# a Mac smoke-testing a release candidate.
+RUN_BIN="./${BIN_NAME}"
+if [ -n "${BIN_PATH}" ]; then
+    if [ ! -x "${BIN_PATH}" ]; then
+        echo "ERROR: --bin ${BIN_PATH} is not an executable file." >&2
+        exit 1
+    fi
+    RUN_BIN="${BIN_PATH}"
+    echo "Using installer binary: ${BIN_PATH}"
+elif ! download "${FORK_REPO}"; then
     echo "Fork download failed; trying OpenTollGate org release..." >&2
     if ! download "${GH_REPO}"; then
         echo "ERROR: could not download ${BIN_NAME}-${PLATFORM} from either repo." >&2
@@ -308,7 +323,7 @@ PORT="$(pick_port "${PORT}")"
 # --- 4. run the installer ---------------------------------------------------
 echo
 echo "Starting ${BIN_NAME} on http://localhost:${PORT} ..."
-./${BIN_NAME} -port "${PORT}" >/tmp/${BIN_NAME}.log 2>&1 &
+"${RUN_BIN}" -port "${PORT}" >/tmp/${BIN_NAME}.log 2>&1 &
 SERVER_PID=$!
 trap 'kill ${SERVER_PID} 2>/dev/null || true' EXIT
 sleep 1.5
