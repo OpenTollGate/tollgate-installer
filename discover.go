@@ -91,8 +91,15 @@ func readARPTable() []arpEntry {
 			return nil
 		}
 	}
+	return parseARPTable(string(out))
+}
+
+// parseARPTable extracts IP/MAC pairs from `arp -a` (BSD/macOS and net-tools)
+// or `ip neigh` output. Split out of readARPTable so the parser is testable
+// without shelling out.
+func parseARPTable(out string) []arpEntry {
 	var entries []arpEntry
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 	macRe := regexp.MustCompile(`([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}`)
 	ipRe := regexp.MustCompile(`(\d+\.\d+\.\d+\.\d+)`)
 	for _, line := range lines {
