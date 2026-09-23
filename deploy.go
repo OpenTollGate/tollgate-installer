@@ -412,10 +412,16 @@ func runDeployment(job *Job, req deployRequest) {
 
 	// Step 5: Configure upstream (WiFi STA if requested)
 	job.setStep(5, "running", "")
+	// staCommitted records that THIS run committed live radio config (the STA
+	// iface + network.wwan) and therefore left a pre-deploy wireless snapshot
+	// on the router. Every terminal failure after this point owns restoring it:
+	// see restoreWirelessOnFailure.
+	staCommitted := false
 	if req.Mode == "sta" && req.SSID != "" {
 		if !configureSTA(job, &client, req.IP, req.Password, req.SSID, req.WifiPass, req.Band) {
 			return
 		}
+		staCommitted = true
 	} else {
 		job.addLog("Using WAN upstream (default)")
 		// A pre-existing local/upstream subnet overlap breaks name resolution
@@ -570,11 +576,10 @@ func runDeployment(job *Job, req deployRequest) {
 	// instead of substituting it, force-downgrading the router, and rendering the
 	// step green. (Before this, the v0.5.0 GitHub asset was tried silently and
 	// the post-install assertion could not fire for it — C2-I-02.)
-	if !pkgOnRouter && fallbackRefusal != nil {
-		job.addLog("ERROR: " + fallbackRefusal.Error())
-		jobFail(job, 6,
-			"requested release "+feedReleaseTag+" unavailable — refusing to install an older package",
-			fallbackRefusal.Error())
+	//
+	// This is a step-6 terminal failure like any other, so it restores the
+	// pre-deploy wireless snapshot first — see refuseMissingRequestedRelease.
+	if refuseMissingRequestedRelease(job, client, staCommitted, pkgOnRouter, feedReleaseTag, fallbackRefusal) {
 		return
 	}
 
@@ -730,10 +735,13 @@ func runDeployment(job *Job, req deployRequest) {
 		if strings.Contains(verifyOut, "NOT FOUND") {
 			// STA config + radio changes are live at this point but the
 			// deploy is dead — restore the wireless snapshot so the router
-			// is left in its pre-deploy state.
-			job.addLog("Rolling back wireless config (pre-deploy snapshot)...")
-			rollbackWireless(client)
-			jobFail(job, 6, "tollgate-wrt install failed", "Package installation failed — wireless config rolled back")
+			// is left in its pre-deploy state. The refusal path above does
+			// the same: no terminal failure in this step may skip it.
+			jobErr := "Package installation failed"
+			if restoreWirelessOnFailure(job, client, staCommitted) {
+				jobErr += " — pre-deploy wireless config restored"
+			}
+			jobFail(job, 6, "tollgate-wrt install failed", jobErr)
 			return
 		}
 		// This path installed from the ROUTER's own configured package feeds —
@@ -1046,9 +1054,9 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		// Roll back wireless config so the router's radios are usable for
 		// re-scanning after a failed deploy (e.g. old binary crashed with
 		// new config, leaving radio0 stuck in STA mode).
-		job.addLog("Rolling back wireless config to pre-deploy state...")
-		rollbackWireless(client)
-		job.addLog("Wireless config restored — radios should be available for scanning")
+		if restoreWirelessOnFailure(job, client, staCommitted) {
+			job.addLog("Wireless config restored — radios should be available for scanning")
+		}
 		if listening {
 			jobFail(job, 11, "tollgate API up but no advertisement",
 				"TollGate API is UP on :2121 but returned no pricing advertisement — the merchant is degraded (mint/wallet not ready), not down.\n"+diag)
@@ -1063,6 +1071,72 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	job.Status = "done"
 	job.mu.Unlock()
 	job.addLog("TollGate deployment complete!")
+}
+
+// wirelessRollback is the wireless-restore side effect of the deploy's terminal
+// failure paths, indirected so the fail-loud refusal path can be driven in a
+// test without a router. This package has no SSH seam (rollbackWireless takes a
+// live *ssh.Client), so the CALL is what a unit test can pin; the end-to-end
+// evidence for the same path is the fixture-router harness in
+// ~/tollgate-artifacts/pre-release-security/harness/run-refusal-rollback.sh,
+// which asserts the rollback command reached the router AND that the fixture's
+// /etc/config/wireless is back to its pre-deploy bytes.
+var wirelessRollback = func(client *ssh.Client) { rollbackWireless(client) }
+
+// restoreWirelessOnFailure restores the pre-deploy /etc/config/wireless snapshot
+// when THIS run committed wireless config (deploy step 5, STA mode) and reports
+// whether it did. It is the single place that decision is made, so no terminal
+// failure after step 5 can forget it:
+//
+//   - steps 6 and 11 run AFTER step 5 committed and reloaded the STA config for
+//     WAN-over-WiFi, so leaving the radios in STA mode after a failure is a dead
+//     end: the wizard cannot re-scan for an upstream SSID while the radio hosts
+//     an STA iface, which means a physical visit to the router. The pre-#40 code
+//     path restored the snapshot for exactly this reason ("so the radios are
+//     usable for re-scanning").
+//   - with no STA configured (WAN mode, or a run that failed before step 5) no
+//     snapshot exists, so there is nothing to restore and nothing to claim: the
+//     rollback is skipped and the log stays truthful.
+//
+// rollbackWireless is itself snapshot-guarded on the router ([ -f
+// /tmp/wireless.pre-tollgate ] && ...), so an absent or stale snapshot is a
+// no-op there as well.
+func restoreWirelessOnFailure(job *Job, client *ssh.Client, staCommitted bool) bool {
+	if !staCommitted {
+		return false
+	}
+	job.addLog("Rolling back wireless config to the pre-deploy snapshot...")
+	wirelessRollback(client)
+	return true
+}
+
+// refuseMissingRequestedRelease is deploy step 6's fail-loud gate: the requested
+// release could not be fetched (pkgOnRouter == false) and a refusal was recorded
+// against the only other download candidate — a KNOWN OLDER package the operator
+// has not opted into (C2-I-02). It logs the refusal, restores the pre-deploy
+// wireless snapshot (see restoreWirelessOnFailure), fails the job naming the
+// requested tag, and reports that the caller MUST stop.
+//
+// It returns false — and touches nothing — when a package did land, or when no
+// refusal was recorded, so the caller's happy path is unchanged.
+//
+// The refusal is a terminal failure of step 6 exactly like the feed last-resort
+// failure below it, so it must leave the router in the same state: choosing to
+// fail loudly must not also silently strand the radios in STA mode. On the very
+// feed-outage scenario this refusal exists for, leaving STA committed meant the
+// wizard could no longer re-scan for an upstream SSID and the router needed a
+// physical visit — where the path this refusal replaced at least left the radios
+// usable.
+func refuseMissingRequestedRelease(job *Job, client *ssh.Client, staCommitted, pkgOnRouter bool, requestedTag string, refusal error) bool {
+	if pkgOnRouter || refusal == nil {
+		return false
+	}
+	job.addLog("ERROR: " + refusal.Error())
+	restoreWirelessOnFailure(job, client, staCommitted)
+	jobFail(job, 6,
+		"requested release "+requestedTag+" unavailable — refusing to install an older package",
+		refusal.Error())
+	return true
 }
 
 // jobFail marks step as failed and the whole job as failed. (Steps that
