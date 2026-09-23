@@ -385,7 +385,12 @@ func brandingCommands(nodeName, routerIP string) []string {
 		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2051' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 2051'",
 		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 80' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 80'",
 		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8080'",
-		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090' 2>/dev/null; uci -q add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090'",
+		// Owner-facing admin board: REMOVE, never grant. Plain HTTP, root-capable
+		// login, and the installer runs AFTER the package's uci-defaults — so an
+		// add_list here silently undid the module fix (PR #546) on every deploy.
+		// del_list (not "just stop adding") because a deployed router already
+		// carries the entry.
+		"uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8090' 2>/dev/null; uci -q del_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 8443' 2>/dev/null",
 		// Commit all
 		"uci commit system",
 		"uci commit wireless",
