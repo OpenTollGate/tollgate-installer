@@ -881,31 +881,56 @@ async function startDeploy() {
   pollTimer = setInterval(() => pollStatus(data.job_id), 1000);
 }
 
+// The deploy status view renders step descriptions, step details and log lines
+// that carry the operator-selected WiFi SSID and RAW ROUTER OUTPUT. This page is
+// served from the wizard origin, which also holds #password (the router's root
+// password), so anything that executes here can read the password out of the DOM.
+// Every such string is therefore written as TEXT (textContent / createTextNode) —
+// never by concatenating into innerHTML. See dom_sink_test.go: do not reintroduce
+// innerHTML for these values, and do not interpolate anything into innerHTML.
 async function pollStatus(jobId) {
   const resp = await fetch('/api/status/' + jobId);
   const job = await resp.json();
 
   const stepsList = document.getElementById('steps-list');
-  stepsList.innerHTML = '';
+  stepsList.textContent = ''; // clear the list without the HTML parser
   job.steps.forEach(step => {
-    const div = document.createElement('div');
     const icon = step.status === 'done' ? '\u2713' : step.status === 'running' ? '\u25CF' : step.status === 'failed' ? '\u2717' : '\u25CB';
-    div.innerHTML =
-      '<div class="step">' +
-      '<span class="step-icon ' + step.status + '">' + icon + '</span>' +
-      '<div class="step-desc ' + step.status + '">' + step.desc +
-      (step.detail ? '<div class="step-detail">' + step.detail + '</div>' : '') +
-      '</div></div>';
-    stepsList.appendChild(div);
+
+    const row = document.createElement('div');
+    row.className = 'step';
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'step-icon ' + step.status;
+    iconEl.textContent = icon;
+    row.appendChild(iconEl);
+
+    const descEl = document.createElement('div');
+    descEl.className = 'step-desc ' + step.status;
+    descEl.textContent = step.desc;
+    if (step.detail) {
+      const detailEl = document.createElement('div');
+      detailEl.className = 'step-detail';
+      detailEl.textContent = step.detail;
+      descEl.appendChild(detailEl);
+    }
+    row.appendChild(descEl);
+    stepsList.appendChild(row);
   });
 
   if (job.log && job.log.length > 0) {
     const logEl = document.getElementById('deploy-log');
     logEl.classList.remove('hidden');
-    logEl.innerHTML = job.log.slice(-8).map(l =>
-      '<div><span class="timestamp">' + new Date(l.time * 1000).toLocaleTimeString() +
-      '</span> ' + l.msg + '</div>'
-    ).join('');
+    logEl.textContent = ''; // clear without the HTML parser
+    job.log.slice(-8).forEach(l => {
+      const line = document.createElement('div');
+      const ts = document.createElement('span');
+      ts.className = 'timestamp';
+      ts.textContent = new Date(l.time * 1000).toLocaleTimeString();
+      line.appendChild(ts);
+      line.appendChild(document.createTextNode(' ' + l.msg));
+      logEl.appendChild(line);
+    });
   }
 
   if (job.status === 'done') {
