@@ -530,7 +530,10 @@ func pkgCandidateURLs(arch, ext string) []string {
 //     downgrade, so the caller also reports the version it installs.
 //
 // An arch with no pinned fallback yields the feed list and a nil error: there
-// is nothing to offer and nothing to refuse.
+// is nothing to offer and nothing to refuse. An arch that is not a valid
+// OpenWrt tuple yields (nil, nil): there is no tag-consistent URL to derive for
+// it either, so the caller gets an empty list — not an error — and must treat
+// the emptiness (never a substituted fallback) as the failure.
 func pkgCandidateURLsWithFallback(arch, ext string, allowFallback bool) ([]string, error) {
 	urls := pkgCandidateURLs(arch, ext)
 	if len(urls) == 0 {

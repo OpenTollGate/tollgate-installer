@@ -165,7 +165,7 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 
 		// Default (no opt-in): feed assets for the effective tag only.
 		t.Setenv(githubFallbackEnv, "")
-		urls := stageAssetURLsForArch(arch, false, "", "opkg")
+		urls, refusal := stageAssetURLsForArch(arch, false, "", "opkg")
 		if len(urls) != 1 {
 			t.Errorf("stageAssetURLsForArch(%q) with tag %s = %v, want only the feed asset", arch, tag, urls)
 		}
@@ -177,8 +177,31 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 				t.Errorf("staged the older GitHub fallback without an opt-in: %v", urls)
 			}
 		}
+		// The suppression must be reported to the caller, not swallowed
+		// (`candidates, _ :=`), so the pre-stage path can log why no package
+		// from another release was cached (review finding 3). It is reported
+		// for every suppressed arch: pre-staging runs before any download, so
+		// the report cannot depend on the requested asset being unavailable.
+		if refusal == nil {
+			t.Errorf("stageAssetURLsForArch(%q) with tag %s suppressed the fallback without reporting it", arch, tag)
+		} else {
+			for _, want := range []string{tag, arch, "0.5.0"} {
+				if !strings.Contains(refusal.Error(), want) {
+					t.Errorf("suppression report does not name %q:\n%v", want, refusal)
+				}
+			}
+			if !strings.Contains(refusal.Error(), "allow-fallback") {
+				t.Errorf("suppression report does not point at the opt-in:\n%v", refusal)
+			}
+			// It must NOT claim the requested release is undownloadable: that
+			// is only knowable after a download attempt (deploy step 6).
+			if strings.Contains(refusal.Error(), "is not downloadable") {
+				t.Errorf("pre-stage report claims the requested release is not downloadable:\n%v", refusal)
+			}
+		}
 		// Package manager unknown: both formats, still tag-consistent.
-		for _, u := range stageAssetURLsForArch(arch, false, "", "") {
+		both, _ := stageAssetURLsForArch(arch, false, "", "")
+		for _, u := range both {
 			if releaseTagFromURL(u) != tag {
 				t.Errorf("staged URL %q names another release than %s", u, tag)
 			}
@@ -189,7 +212,7 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 	// accepted still works from the cache.
 	feedReleaseTag = wantFeedReleaseTag
 	t.Setenv(githubFallbackEnv, "1")
-	urls := stageAssetURLsForArch(arch, false, "", "opkg")
+	urls, _ := stageAssetURLsForArch(arch, false, "", "opkg")
 	found := false
 	for _, u := range urls {
 		if u == fbIPK {
@@ -198,6 +221,12 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("stageAssetURLsForArch with %s=1 = %v, want the fallback asset staged", githubFallbackEnv, urls)
+	}
+
+	// An arch with no pinned fallback suppresses nothing, so there is nothing
+	// to report — only the a53 entry exists in the map.
+	if _, refusal := stageAssetURLsForArch("mipsel_24kc", false, "", "opkg"); refusal != nil {
+		t.Errorf("stageAssetURLsForArch(mipsel_24kc) reported a suppression with no fallback: %v", refusal)
 	}
 }
 
