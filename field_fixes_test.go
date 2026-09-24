@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,11 +162,12 @@ func TestStaSetupScript(t *testing.T) {
 		"uci commit network",
 		// Success marker parsed by configureSTA.
 		"STA_CFG_OK target=$target",
-		// Operator-supplied credentials now cross as base64 carriers and are
-		// decoded into shell variables — never string-interpolated into the
-		// UCI commands (injection-safe; plaintext out of argv).
-		"sta_ssid=$(echo " + base64.StdEncoding.EncodeToString([]byte("TollGate-Field")) + " | base64 -d)",
-		"sta_key=$(echo " + base64.StdEncoding.EncodeToString([]byte("correct horse")) + " | base64 -d)",
+		// Operator-supplied credentials now cross as printf-expanded octal
+		// carriers and are decoded into shell variables — never
+		// string-interpolated into the UCI commands (injection-safe; plaintext
+		// out of argv; no router-side base64 needed — stock OpenWrt has none).
+		octalCarrierVar("sta_ssid", "TollGate-Field"),
+		octalCarrierVar("sta_key", "correct horse"),
 		"wireless.tollgate_uplink.ssid=\"$sta_ssid\"",
 		"wireless.tollgate_uplink.key=\"$sta_key\"",
 	} {

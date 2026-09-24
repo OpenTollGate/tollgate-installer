@@ -91,6 +91,22 @@
   }
   .success-msg h2 { font-size: 1.4rem; margin-bottom: 0.5rem; }
   .success-msg p { color: #8892b0; font-size: 0.85rem; }
+  /* One-time generated root credential. Shown once, on the success view;
+     nothing here persists it (no storage, no console, no re-render). */
+  .credential {
+    margin-top: 1.2rem; padding: 1rem; border-radius: 12px;
+    background: rgba(var(--tg-red-rgb),0.12); border: 1px solid var(--tg-red);
+  }
+  .credential h3 { font-size: 0.95rem; color: var(--tg-red); margin-bottom: 0.4rem; }
+  .credential .credential-warn { font-size: 0.78rem; color: #e8eaf6; margin-bottom: 0.6rem; }
+  .credential-row { display: flex; gap: 0.5rem; align-items: center; }
+  .credential-row code {
+    flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px;
+    background: rgba(0,0,0,0.35); color: #e8eaf6;
+    font-family: 'SF Mono', Menlo, monospace; font-size: 0.9rem;
+    overflow-x: auto; white-space: nowrap; user-select: all;
+  }
+  .credential-row .btn { width: auto; margin: 0; padding: 10px 16px; font-size: 0.85rem; }
   .error-msg { color: #f56565; text-align: center; padding: 1rem; }
   .hidden { display: none; }
   .tg-progress { width: 100%; height: 8px; border-radius: 6px; background: rgba(255,255,255,0.12); overflow: hidden; }
@@ -303,6 +319,25 @@
       <h2>TollGate is live!</h2>
       <p>Your router is now a Bitcoin WiFi hotspot.</p>
       <p style="margin-top:0.5rem;">Connect to the WiFi network and open any website to see the payment portal.</p>
+    </div>
+    <!-- One-time root credential. Only rendered when the deploy had to create
+         a root password because the router had none; the server serves the
+         value exactly once, on the first read of the completed job. -->
+    <div class="credential hidden" id="generated-credential" role="alert">
+      <h3>Save the router's new root password</h3>
+      <p class="credential-warn">
+        Your router had no root password, so one was generated for it. It is shown ONCE and
+        cannot be recovered. Store it in your password manager
+        now, before you close or reload this page — you will need it to reach the router's
+        admin board.
+      </p>
+      <div class="credential-row">
+        <code id="generated-password"></code>
+        <button type="button" class="btn btn-secondary" id="copy-generated-password"
+                aria-label="Copy root password to clipboard"
+                onclick="copyGeneratedPassword()">Copy</button>
+      </div>
+      <p class="hint" id="copy-generated-status" role="status"></p>
     </div>
   </div>
 
@@ -884,6 +919,35 @@ async function startDeploy() {
   pollTimer = setInterval(() => pollStatus(data.job_id), 1000);
 }
 
+// pinGeneratedCredential reveals the one-time root password in the success
+// view. The server serves it on exactly ONE read (handleStatus), so this runs
+// the moment a deploy reports done, before the success view appears. The value
+// is written as text (never markup) and is not stored anywhere else.
+function pinGeneratedCredential(pw) {
+  if (!pw) return;
+  const box = document.getElementById('generated-credential');
+  const code = document.getElementById('generated-password');
+  if (!box || !code) return;
+  code.textContent = pw;
+  box.classList.remove('hidden');
+}
+
+// copyGeneratedPassword copies the revealed credential to the clipboard and
+// says so — or says why it could not, so the operator selects it by hand
+// instead of assuming the copy worked.
+function copyGeneratedPassword() {
+  const code = document.getElementById('generated-password');
+  const status = document.getElementById('copy-generated-status');
+  if (!code || !code.textContent) return;
+  const ok = () => { if (status) status.textContent = 'Copied to clipboard.'; };
+  const fail = () => { if (status) status.textContent = 'Copy failed. Select the password above and copy it manually.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code.textContent).then(ok, fail);
+  } else {
+    fail();
+  }
+}
+
 // The deploy status view renders step descriptions, step details and log lines
 // that carry the operator-selected WiFi SSID and RAW ROUTER OUTPUT. This page is
 // served from the wizard origin, which also holds #password (the router's root
@@ -942,6 +1006,10 @@ async function pollStatus(jobId) {
 
   if (job.status === 'done') {
     clearInterval(pollTimer);
+    // The one-shot credential (if this deploy had to create one) is served on
+    // this first completed read and never again — pin it before the success
+    // view is revealed so it is on screen the moment the operator sees it.
+    pinGeneratedCredential(job.generated_password);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
       document.getElementById('success-view').classList.remove('hidden');

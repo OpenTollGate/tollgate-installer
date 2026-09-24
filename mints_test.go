@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -321,20 +320,29 @@ func TestConfigJqCmdQuotesOperatorMint(t *testing.T) {
 	}
 }
 
-// TestPasswdCommandUsesBase64Carrier asserts the root password command does
-// NOT contain the raw password literal — it cross as a base64 carrier, so the
-// plaintext is never visible in process argv on the router.
-func TestPasswdCommandUsesBase64Carrier(t *testing.T) {
+// TestPasswdCommandCarriesSecretWithoutBase64 asserts the root password command
+// does NOT contain the raw password literal — it crosses as an octal-escape
+// carrier expanded by the shell builtin printf, so the plaintext is never
+// visible in process argv on the router AND no router-side binary is needed
+// (stock OpenWrt's BusyBox ships no base64 applet — see #46 review 5304937880).
+func TestPasswdCommandCarriesSecretWithoutBase64(t *testing.T) {
 	const pw = "hunter2$Secret"
 	cmd := passwdCommand(pw)
 	if strings.Contains(cmd, pw) {
 		t.Errorf("passwd command must NOT contain the raw password literal:\n%s", cmd)
 	}
-	// The decoded base64 of the embedded carrier must equal the password, and
-	// the command must pipe it via printf into passwd.
-	b64 := base64.StdEncoding.EncodeToString([]byte(pw))
-	if !strings.Contains(cmd, b64) {
-		t.Errorf("passwd command must embed the base64 carrier %q:\n%s", b64, cmd)
+	if strings.Contains(cmd, "base64") {
+		t.Errorf("passwd command must not depend on a router-side base64 decode:\n%s", cmd)
+	}
+	// The carrier must be the printf-builtin expansion of the octal escapes,
+	// and it must decode back to the password.
+	carrier := octalCarrierVar("pw", pw)
+	if !strings.Contains(cmd, carrier) {
+		t.Errorf("passwd command must embed the printf carrier %q:\n%s", carrier, cmd)
+	}
+	esc := strings.TrimSuffix(strings.TrimPrefix(carrier, "pw=$(printf '%b' '"), "')")
+	if got, err := decodeOctalCarrier(esc); err != nil || got != pw {
+		t.Errorf("carrier %q decodes to %q (err %v), want %q", esc, got, err, pw)
 	}
 	if !strings.Contains(cmd, "| passwd root") {
 		t.Errorf("passwd command must pipe into `passwd root`:\n%s", cmd)
@@ -403,10 +411,12 @@ func TestSecuritySurface(t *testing.T) {
 	})
 }
 
-// TestStaSetupScriptUsesBase64Carriers asserts the WiFi STA passphrase and
-// SSID cross as base64 carriers — not string-interpolated into the UCI shell
-// commands — so a password/SSID can never inject shell.
-func TestStaSetupScriptUsesBase64Carriers(t *testing.T) {
+// TestStaSetupScriptCarriesCredentialsWithoutBase64 asserts the WiFi STA
+// passphrase and SSID cross as octal-escape carriers expanded by the shell
+// builtin printf — not string-interpolated into the UCI shell commands, and not
+// through a router-side base64 decode (stock OpenWrt has no base64 applet) — so
+// a password/SSID can never inject shell.
+func TestStaSetupScriptCarriesCredentialsWithoutBase64(t *testing.T) {
 	const ssid = "MyNet`; rm -rf / #"
 	const key = "Pass'word$; id #"
 	script := staSetupScript(ssid, key, "")
@@ -416,11 +426,14 @@ func TestStaSetupScriptUsesBase64Carriers(t *testing.T) {
 	if strings.Contains(script, key) {
 		t.Errorf("STA script must not contain the raw wifi key (injection-prone):\n%s", script)
 	}
-	if !strings.Contains(script, "sta_ssid=$(echo "+base64.StdEncoding.EncodeToString([]byte(ssid))+" | base64 -d)") {
-		t.Errorf("STA script must decode the SSID base64 carrier:\n%s", script)
+	if strings.Contains(script, "base64") {
+		t.Errorf("STA script must not depend on a router-side base64 decode:\n%s", script)
 	}
-	if !strings.Contains(script, "sta_key=$(echo "+base64.StdEncoding.EncodeToString([]byte(key))+" | base64 -d)") {
-		t.Errorf("STA script must decode the wifi key base64 carrier:\n%s", script)
+	if want := octalCarrierVar("sta_ssid", ssid); !strings.Contains(script, want) {
+		t.Errorf("STA script must expand the SSID printf carrier %q:\n%s", want, script)
+	}
+	if want := octalCarrierVar("sta_key", key); !strings.Contains(script, want) {
+		t.Errorf("STA script must expand the wifi key printf carrier %q:\n%s", want, script)
 	}
 	// The uci writes must use the shell variables, never raw literals.
 	if !strings.Contains(script, ".ssid=\"$sta_ssid\"") || !strings.Contains(script, ".key=\"$sta_key\"") {
