@@ -9,6 +9,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// sshDialPort is the SSH port the wizard dials on the router. It is a variable
+// only so the router-trust tests can point the real sshConnect path at an
+// in-process SSH server; production always uses 22.
+var sshDialPort = "22"
+
 // sshConnect establishes an SSH session to the router.
 //
 // Auth chain, tried in order (a fresh-reset OpenWrt router ships root with
@@ -19,10 +24,15 @@ import (
 //  3. KeyboardInteractive      — fresh routers whose dropbear only accepts
 //     (answers = password)       keyboard-interactive for the empty password
 //  4. Default SSH keys          — key-provisioned routers, if present
+//
+// The router's host key is verified before any credential is offered (see
+// routerHostKeyCallback): an untrusted key aborts the handshake, so the password
+// below is never transmitted to a host the operator has not trusted.
 func sshConnect(ip, password string) *ssh.Client {
+	forgetHostKeyRefusal(ip)
 	config := &ssh.ClientConfig{
 		User:            "root",
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: routerHostKeyCallback(ip),
 		Timeout:         10 * time.Second,
 	}
 
@@ -39,7 +49,7 @@ func sshConnect(ip, password string) *ssh.Client {
 	}
 	config.Auth = auth
 
-	client, err := ssh.Dial("tcp", net.JoinHostPort(ip, "22"), config)
+	client, err := ssh.Dial("tcp", net.JoinHostPort(ip, sshDialPort), config)
 	if err != nil {
 		return nil
 	}

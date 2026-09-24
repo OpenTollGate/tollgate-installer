@@ -42,7 +42,7 @@ func runPreStageJob(job *Job, req prestageRequest) {
 		client = sshConnect(req.IP, "")
 	}
 	if client == nil {
-		jobFail(job, 0, "Cannot connect to router via SSH", "Cannot connect to router via SSH")
+		jobFail(job, 0, sshConnectFailureMessage(req.IP, "Cannot connect to router via SSH"), sshConnectFailureMessage(req.IP, "Cannot connect to router via SSH"))
 		return
 	}
 	defer client.Close()
