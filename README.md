@@ -265,6 +265,38 @@ release) or superseded when the plan bumps `openWrtVersion` — at which point
 the image URL changes, the sha256 filename changes, and the old entry is
 simply orphaned (harmless, remove with `rm -rf` above).
 
+## Security: is the package the one the release published?
+
+Step 5 installs the package as root through a package manager whose own
+verification is deliberately disabled for this path, so the wizard checks the
+bytes itself right before pushing them to the router:
+
+- a format/size sanity check rejects a truncated transfer or an error page saved
+  as "the package";
+- the bytes must match the sha256 the release publishes — taken from the release
+  manifest, a per-asset sidecar, or the GitHub release API's per-asset digest,
+  which every feed release publishes today, so this works with no feed change.
+  Only the API digest is an **independent** anchor: the manifest and the sidecar
+  are fetched from the *same host* that served the package, so a host (or a
+  MITM) serving altered bytes could serve a matching digest too — a match from
+  those two sources is reported as not-verified, never as a pass;
+- a mismatch FAILS the deploy, naming the asset and both digests;
+- with no published digest — or only a same-origin one — the install step renders
+  as a warning rather than a green "done", and the
+  `TOLLGATE_REQUIRE_PACKAGE_DIGEST` environment variable turns that into a hard
+  failure for unattended release runs;
+- an install that came from the ROUTER's own package feeds (the last-resort feed
+  path, where the bytes never pass through the wizard) also renders as a warning
+  carrying an explicit not-verified marker: step 6 is green only for a verdict
+  that actually verified the bytes against an independent published digest;
+- the router-side wget path is covered too, by hashing the file on the router.
+
+Not covered: a compromise of the release itself, where the digest and the package
+would be replaced together. That needs a signed manifest published by the feed
+with a key pinned in the binary. See
+[docs/package-provenance.md](docs/package-provenance.md#package-integrity-verification-audit-c2-i-03)
+for the full policy, the live evidence, and the honest limits.
+
 ## Build from source
 
 ```sh

@@ -68,6 +68,7 @@
   .step-icon.pending { color: #4a5568; }
   .step-icon.running { color: var(--tg-red); animation: pulse 1s ease-in-out infinite; }
   .step-icon.done { color: var(--tg-green); }
+  .step-icon.warn { color: #f6ad55; }
   .step-icon.failed { color: #f56565; }
   .step-icon.warn { color: #f6ad55; }
   .step-desc { flex: 1; }
@@ -897,6 +898,10 @@ async function pollStatus(jobId) {
   const stepsList = document.getElementById('steps-list');
   stepsList.textContent = ''; // clear the list without the HTML parser
   job.steps.forEach(step => {
+    // 'warn' is a completed step whose outcome needs the operator's attention
+    // (e.g. the installed package could NOT be checked against a published
+    // digest, or the package that landed is not the requested release) —
+    // deliberately not the same mark as a verified 'done'.
     const icon = step.status === 'done' ? '\u2713' : step.status === 'warn' ? '\u26A0' : step.status === 'running' ? '\u25CF' : step.status === 'failed' ? '\u2717' : '\u25CB';
 
     const row = document.createElement('div');

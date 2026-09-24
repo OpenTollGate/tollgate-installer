@@ -538,7 +538,25 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 	}
 	pkgSourceURL := ""
+	// integrity is the verdict on the package bytes (see pkgverify.go). It is
+	// carried to the install step detail so a package that could not be checked
+	// — or that came from a different release — can never render as an
+	// unqualified green "done".
+	var integrity pkgIntegrity
 	if pkgErr == nil && len(pkgData) > 0 {
+		// INTEGRITY GATE (audit C2-I-03). The bytes are about to be installed
+		// as root by a package manager whose own verification is disabled
+		// (--allow-untrusted / --force-*), so this is the last point at which
+		// "are these the bytes the release published?" can be answered. A
+		// mismatch or a structurally impossible package stops the deploy here;
+		// unverifiable bytes are logged, marked in the UI, and fatal when
+		// TOLLGATE_REQUIRE_PACKAGE_DIGEST=1.
+		v, err := checkPackageBytes(job, pkgLaptopURL, pkgExtension, pkgData)
+		integrity = v
+		if err != nil {
+			jobFail(job, 6, "package integrity check failed", err.Error())
+			return
+		}
 		push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
 		if strings.Contains(push, "PUSH_OK") {
 			pkgOnRouter = true
@@ -565,6 +583,15 @@ func runDeployment(job *Job, req deployRequest) {
 			wgetOut := sshRun(client, "wget -O /tmp/tollgate-wrt"+pkgExtension+" '"+candURL+"' 2>&1; [ -s /tmp/tollgate-wrt"+pkgExtension+" ] && echo WGET_OK || echo WGET_FAIL")
 			job.addLog("wget: " + truncate(wgetOut, 120))
 			if strings.Contains(wgetOut, "WGET_OK") {
+				// Same integrity gate as the laptop path, applied to the bytes
+				// the ROUTER fetched: hash the file on the router and compare
+				// with the published digest (pkgverify.go).
+				v, err := checkRouterFileDigest(job, client, candURL, pkgExtension, "/tmp/tollgate-wrt"+pkgExtension)
+				if err != nil {
+					jobFail(job, 6, "package integrity check failed", err.Error())
+					return
+				}
+				integrity = v
 				pkgOnRouter = true
 				pkgSourceURL = candURL
 				break
@@ -731,11 +758,18 @@ func runDeployment(job *Job, req deployRequest) {
 			// "which build am I running, and did this run exercise the feed?"
 			// is answerable from the deploy log alone.
 			build := reportInstalledBuild(job, client)
+			// Two independent verdicts meet here: C2-I-02's version verdict
+			// ("did the package that landed match the release the supplying
+			// source names?" — installStatus) and C2-I-03's integrity verdict
+			// (were the bytes checked against a published digest? — integrity).
+			// The step is GREEN only when both passed; anything else renders
+			// "warn" with the reason in the detail, so neither a downgrade nor
+			// unchecked bytes can look like an unqualified success.
 			detail := installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL))
 			if installStatus == "warn" {
 				detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
 			}
-			job.setStep(6, installStatus, detail)
+			job.setStep(6, installStepStatusFor(installStatus, integrity), detail+integrity.suffix())
 			installedOK = true
 		}
 	}
@@ -765,7 +799,11 @@ func runDeployment(job *Job, req deployRequest) {
 		// not the FreedomTechFeed release asset — so the provenance label says
 		// so explicitly rather than reusing "feed" for both meanings. The same
 		// "is it the requested release?" rule applies: a router-feed package
-		// that is not the requested one must not render as a plain success.
+		// that is not the requested one must not render as a plain success —
+		// AND these bytes never passed through this installer, so nothing about
+		// them was checked: the step also renders "warn" with an explicit
+		// NOT VERIFIED suffix rather than a green "done" with no suffix at all
+		// (cold cross-family review 2026-09-23, finding 1; C2-I-03).
 		if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
 			job.addLog("Installed tollgate-wrt package version: " + pkgVer)
 			if _, warn := pkgVersionVerdict(pkgVer, "", routerArch, pkgExtension); warn != "" {
@@ -774,11 +812,13 @@ func runDeployment(job *Job, req deployRequest) {
 			}
 		}
 		build := reportInstalledBuild(job, client)
+		feedVerdict := routerFeedInstallVerdict()
+		job.addLog("WARNING: " + feedVerdict.Detail)
 		detail := installStepDetail(build, pkgMgr, pkgSourceRouterFeed)
 		if installStatus == "warn" {
 			detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
 		}
-		job.setStep(6, installStatus, detail)
+		job.setStep(6, installStepStatusFor(installStatus, feedVerdict), detail+feedVerdict.suffix())
 	}
 
 	// The .ipk now ships gonuts v0.11.1 with all keyset/multimint/existing-wallet
