@@ -3,7 +3,6 @@ package main
 import (
 	cryptorand "crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -47,24 +46,77 @@ var (
 
 // ─── Secret carriers ─────────────────────────────────────────────
 //
-// Secrets that must reach the router (root password, WiFi STA passphrase)
-// cross as base64 carriers rather than shell string literals: the value is
-// base64-encoded host-side and decoded on the router via
-// `echo <b64> | base64 -d` into a shell variable. BusyBox ships the base64
-// applet with -d support. This keeps the plaintext out of the SSH command
-// string (process argv on the router) and makes shell injection through a
-// password/key impossible — the value never participates in shell parsing.
+// Secrets that must reach the router (the root password, the WiFi STA
+// SSID/passphrase) cross as OCTAL-ESCAPE carriers rather than shell string
+// literals: the value is escaped host-side into `\0NNN` sequences and expanded
+// on the router by the shell BUILTIN printf:
+//
+//	pw=$(printf '%b' '\0120\0141\0142')
+//
+// Why NOT a router-side base64 decode (the constraint that must not regress):
+//
+//   - Stock OpenWrt's BusyBox does NOT ship the base64 applet. In OpenWrt it is
+//     the separate `coreutils-base64` package, absent from a stock image, so a
+//     router-side base64 decode fails with `ash: base64: not found` on the
+//     wizard's own documented target. The command substitution then returns
+//     127, the `&&` chain short-circuits, passwd never runs at all, and the
+//     fail-closed guard correctly aborts EVERY deploy at step 4 with an empty
+//     credential. Reproduced by the reviewer E2E on a fresh stock OpenWrt
+//     24.10.1 x86_64 VM, and locally against a stock 24.10.8 x86_64 rootfs
+//     (BusyBox v1.36.1: 0/128 applet symlinks mention base64) —
+//     OpenTollGate/tollgate-installer#46, review 5304937880.
+//   - printf needs no router-side binary AT ALL. It is a builtin of BusyBox ash
+//     (verified against stock OpenWrt 24.10.x /bin/busybox: `printf is a shell
+//     builtin`) and of dash/bash, and `%b` with `\0NNN` octal escapes is POSIX.
+//     Stock OpenWrt also ships /usr/bin/printf, so either resolution works.
+//
+// The carrier keeps both properties the base64 carrier was there for:
+//
+//	(a) no dependency on any router-side binary beyond the shell and what
+//	    BusyBox ships by default;
+//	(b) the plaintext never appears in the SSH command string (process argv and
+//	    shell history on the router) and never participates in shell parsing, so
+//	    a password or SSID cannot inject shell.
+//
+// Regression guards live in secret_carrier_test.go:
+// TestRouterCommandsNeverDependOnBase64 fails if a base64 carrier comes back in
+// a generated router command (or in deploy.go's code), and
+// TestSecretCarrierRoundTripsWithoutAnyRouterBinary executes the SHIPPED command
+// under a shell whose PATH is empty, so the secret must land byte-exact with no
+// binary available at all.
 
-// shellB64 returns s encoded for embedding as a base64 carrier.
-func shellB64(s string) string {
-	return base64.StdEncoding.EncodeToString([]byte(s))
+// shellOctalCarrier returns s as `\0NNN` escapes for the shell builtin
+// `printf '%b'`, which expands them back to s byte-for-byte. Every byte a shell
+// variable can hold round-trips; NUL cannot (no shell carrier can carry it, the
+// base64 one did not either).
+//
+// Each byte is emitted as exactly four characters — backslash, `0`, three octal
+// digits — so an escape is self-delimiting and can never run into the byte that
+// follows it.
+func shellOctalCarrier(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) * 4)
+	for i := 0; i < len(s); i++ {
+		fmt.Fprintf(&b, `\0%03o`, s[i])
+	}
+	return b.String()
 }
 
-// passwdCommand returns the router-side command that sets the root
-// password. The password crosses as a base64 carrier and is decoded into a
-// shell variable; the plaintext never appears in the command string.
+// octalCarrierVar returns the router-side command substitution that expands the
+// octal carrier for value into the shell variable name. The plaintext is not
+// part of the returned text (see the Secret carriers block above).
+func octalCarrierVar(name, value string) string {
+	return name + `=$(printf '%b' '` + shellOctalCarrier(value) + `')`
+}
+
+// passwdCommand returns the router-side command that sets the root password.
+// The password crosses as an octal carrier expanded by the shell builtin printf
+// and is never in the command string itself; the pipeline shape is the one that
+// main and #41–#45 used successfully on stock OpenWrt
+// (`printf '%s\n%s\n' pw pw | passwd root`), so no router-side binary is
+// involved beyond the shell.
 func passwdCommand(password string) string {
-	return "pw=$(echo " + shellB64(password) + " | base64 -d) && " +
+	return octalCarrierVar("pw", password) + " && " +
 		"printf '%s\\n%s\\n' \"$pw\" \"$pw\" | passwd root 2>&1"
 }
 
@@ -1398,13 +1450,19 @@ func staSetupScript(ssid, wifiKey, band string) string {
 // target wifi-device is FORCED to it (used by the multi-radio retry); otherwise
 // the radio is chosen by band, falling back to radio0.
 func staSetupScriptFor(ssid, wifiKey, band, radio string) string {
-	// ssid/wifiKey cross as base64 carriers and are decoded into shell
-	// variables before any uci call — the plaintext never appears in the
-	// script text itself (keeps the STA passphrase out of the SSH command
-	// string and makes shell injection through the SSID/key impossible).
-	carriers := `
-sta_ssid=$(echo ` + shellB64(ssid) + ` | base64 -d)
-sta_key=$(echo ` + shellB64(wifiKey) + ` | base64 -d)`
+	// ssid/wifiKey cross as octal carriers expanded by the shell builtin
+	// printf (see the Secret carriers block above) and are decoded into shell
+	// variables before any uci call — no router-side binary is needed, and the
+	// plaintext never appears in the script text itself (keeps the STA
+	// passphrase out of the SSH command string and makes shell injection
+	// through the SSID/key impossible).
+	//
+	// The trailing "\n" matters: without it the last carrier line and the first
+	// selector line below form ONE shell word
+	// (`sta_key=$(...)want_band="2.4"`), which silently swallows the selector
+	// into the key and never assigns want_band/target. Caught by
+	// TestStaSetupScriptCarriersRoundTripWithoutAnyRouterBinary.
+	carriers := "\n" + octalCarrierVar("sta_ssid", ssid) + "\n" + octalCarrierVar("sta_key", wifiKey) + "\n"
 	selector := ""
 	if r := strings.TrimSpace(radio); r != "" {
 		selector = "target='" + r + "'\n" +

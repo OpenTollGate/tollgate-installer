@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/base64"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -287,16 +285,19 @@ func TestEnsureRootCredentialHonoursSuppliedPassword(t *testing.T) {
 	if strings.Contains(cmd, "corr3ct-h0rse") {
 		t.Fatalf("the plaintext password appears in the router command: %q", cmd)
 	}
-	m := regexp.MustCompile(`echo ([A-Za-z0-9+/=]+) \| base64 -d`).FindStringSubmatch(cmd)
-	if m == nil {
-		t.Fatalf("no base64 carrier in the passwd command: %q", cmd)
+	// The carrier crosses as printf-expanded octal escapes: no router-side
+	// binary (stock OpenWrt BusyBox has no base64 applet — #46 review
+	// 5304937880), no plaintext in the command string.
+	if strings.Contains(cmd, "base64") {
+		t.Fatalf("the passwd command must not need a router-side base64 decode: %q", cmd)
 	}
-	decoded, err := base64.StdEncoding.DecodeString(m[1])
-	if err != nil {
-		t.Fatalf("carrier is not valid base64: %v", err)
+	carrier := octalCarrierVar("pw", "corr3ct-h0rse")
+	if !strings.Contains(cmd, carrier) {
+		t.Fatalf("no printf carrier in the passwd command: %q", cmd)
 	}
-	if string(decoded) != "corr3ct-h0rse" {
-		t.Fatalf("carrier decodes to %q, want the supplied password", decoded)
+	esc := strings.TrimSuffix(strings.TrimPrefix(carrier, "pw=$(printf '%b' '"), "')")
+	if got, err := decodeOctalCarrier(esc); err != nil || got != "corr3ct-h0rse" {
+		t.Fatalf("carrier %q decodes to %q (err %v), want the supplied password", esc, got, err)
 	}
 }
 
