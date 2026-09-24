@@ -4,6 +4,9 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -211,5 +214,106 @@ func TestStaSetupScriptBandSelection(t *testing.T) {
 	}
 	if !strings.Contains(hostile, `want_band=""`) {
 		t.Errorf("hostile band should normalize to empty, got script without want_band=\"\"")
+	}
+}
+
+// writeExecutable writes a small shell script into dir and makes it executable.
+func writeExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
+	}
+}
+
+// TestStaSetupScriptForcedRadioRunsUnderAStrictUci RUNS the generated script in a
+// real POSIX shell against a uci that behaves like OpenWrt's, because the failure
+// this pins is invisible to string assertions: the carriers block's last line and
+// the selector's first line are two shell statements only while the block is
+// newline-terminated. Without that newline
+//
+//	sta_key=$(echo ... | base64 -d)target='radio0'
+//
+// assigns sta_key the literal "...target=radio0" and leaves `target` UNSET, so
+// the forced-radio path (attemptSTA, i.e. every STA attempt) probes
+//
+//	uci -q get wireless.
+//
+// which a real uci rejects with a non-zero status even under -q, trips its own
+// NO_RADIO guard, and exits before writing any config: step 5 then fails with a
+// misleading "check SSID and password". The script is driven through sh with a
+// strict uci shim so the shell semantics, not a substring, decide the outcome.
+//
+// The script writes its rollback markers into the real /tmp (they are shell
+// redirections, not command calls, so they cannot be shimmed); they are removed
+// again on cleanup.
+func TestStaSetupScriptForcedRadioRunsUnderAStrictUci(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no POSIX sh on PATH")
+	}
+	for _, p := range []string{"/tmp/network.wwan.pre-tollgate", "/tmp/network.wwan.proto.pre-tollgate"} {
+		t.Cleanup(func() { os.Remove(p) })
+	}
+
+	dir := t.TempDir()
+	uciLog := filepath.Join(dir, "uci.log")
+
+	// A uci that is STRICT, like OpenWrt's: a lookup that cannot resolve — an
+	// empty section as much as an unknown one — exits non-zero, and `-q` only
+	// silences the message (uci's cli.c returns 1 either way).
+	writeExecutable(t, filepath.Join(dir, "uci"), `#!/bin/sh
+echo "uci $*" >> "$UCI_LOG"
+[ "${1:-}" = "-q" ] && shift
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  get)
+    case "${1:-}" in
+      wireless.radio0)      echo wifi-device ;;
+      wireless.radio0.band) echo 2g ;;
+      wireless.*.mode)      echo ap ;;
+      *) exit 1 ;;          # unset option / empty section: hard error
+    esac ;;
+  show)
+    case "${1:-}" in
+      wireless) printf 'wireless.radio0=wifi-device\nwireless.radio0.band=2g\nwireless.default_radio0.device=radio0\n' ;;
+      network.wwan) exit 1 ;;   # this run creates it
+      *) exit 1 ;;
+    esac ;;
+  set|delete|commit) : ;;
+  *) : ;;
+esac
+exit 0
+`)
+	// base64 and cp are not what this test is about; /etc must stay untouched.
+	writeExecutable(t, filepath.Join(dir, "base64"), "#!/bin/sh\ncat >/dev/null\nprintf 'decoded\\n'\n")
+	writeExecutable(t, filepath.Join(dir, "cp"), "#!/bin/sh\nexit 0\n")
+
+	cmd := exec.Command("sh", "-c", staSetupScriptFor("BenchUpstream", "benchpass", "2.4", "radio0"))
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "UCI_LOG="+uciLog)
+	out, err := cmd.CombinedOutput()
+	got := string(out)
+	if err != nil || !strings.Contains(got, "STA_CFG_OK target=radio0") {
+		t.Fatalf("the generated STA script did not configure radio0 — the selector did not run on its own "+
+			"line (err=%v):\n%s", err, got)
+	}
+	if strings.Contains(got, "NO_RADIO") {
+		t.Errorf("the script hit its own NO_RADIO guard (target was not set):\n%s", got)
+	}
+
+	uciCalls, err := os.ReadFile(uciLog)
+	if err != nil {
+		t.Fatalf("no uci calls were made: %v", err)
+	}
+	// The router-side effects the deploy depends on, in order.
+	for _, want := range []string{
+		"get wireless.radio0",
+		"set wireless.tollgate_uplink=wifi-iface",
+		"set wireless.tollgate_uplink.mode=sta",
+		"set network.wwan=interface",
+		"commit wireless",
+		"commit network",
+	} {
+		if !strings.Contains(string(uciCalls), want) {
+			t.Errorf("the script did not reach %q; uci saw:\n%s", want, uciCalls)
+		}
 	}
 }
