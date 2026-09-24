@@ -547,7 +547,16 @@ func runDeployment(job *Job, req deployRequest) {
 		v, err := checkPackageBytes(job, pkgLaptopURL, pkgExtension, pkgData)
 		integrity = v
 		if err != nil {
-			jobFail(job, 6, "package integrity check failed", err.Error())
+			// Terminal failure of a deploy that already committed the STA
+			// config in step 5, so it leaves through the shared exit: the
+			// pre-deploy wireless snapshot is restored BEFORE the job fails
+			// (radios usable for a re-scan instead of committed to an uplink
+			// the dead deploy never used), and the error states the restore
+			// only when one actually ran. The detail names which half of the
+			// download the bytes came from — the router-side gate below has
+			// its own site and its own detail (card t_3fe64c6e).
+			jobFailAfterRestore(job, client, staCommitted, 6,
+				"laptop-side package integrity check failed", err.Error())
 			return
 		}
 		push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
@@ -581,7 +590,12 @@ func runDeployment(job *Job, req deployRequest) {
 				// with the published digest (pkgverify.go).
 				v, err := checkRouterFileDigest(job, client, candURL, pkgExtension, "/tmp/tollgate-wrt"+pkgExtension)
 				if err != nil {
-					jobFail(job, 6, "package integrity check failed", err.Error())
+					// Same terminal-failure exit as the laptop-side gate above:
+					// by now step 5 has committed and reloaded the STA config,
+					// so the snapshot is restored before the job fails (card
+					// t_3fe64c6e).
+					jobFailAfterRestore(job, client, staCommitted, 6,
+						"router-side package integrity check failed", err.Error())
 					return
 				}
 				integrity = v
