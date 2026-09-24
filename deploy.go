@@ -422,6 +422,10 @@ func runDeployment(job *Job, req deployRequest) {
 		// (the router answers for the upstream gateway's own IP), which also
 		// breaks the package download — fix it before installing.
 		client = fixSubnetCollisions(job, client, req.IP, req.Password)
+		if client == nil {
+			job.setStep(5, "failed", "subnet relocation severed the connection — see log")
+			return
+		}
 		job.setStep(5, "done", "WAN mode (default)")
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -1006,6 +1010,10 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	// the deployed router (its own private interface answers for the upstream
 	// gateway's IP). Relocate before the health check so the router is usable.
 	client = fixSubnetCollisions(job, client, req.IP, req.Password)
+	if client == nil {
+		job.setStep(10, "failed", "subnet relocation severed the connection — see log")
+		return
+	}
 
 	// Step 11: Health check
 	job.setStep(11, "running", "")
@@ -1572,12 +1580,55 @@ func subnetsOverlap(a, b string) bool {
 // moveLocalSubnet relocates a local interface and its DHCP pool to a fresh
 // random 10.x.y.0/24, commits, restarts the network and reconnects. Returns
 // the live client (best-effort: the original client if reconnecting failed).
+// sshConnectionSourceIP extracts the client IP from `echo $SSH_CONNECTION`
+// output ("clientip serverip clientport serverport").
+func sshConnectionSourceIP(out string) string {
+	f := strings.Fields(strings.TrimSpace(out))
+	if len(f) == 0 || net.ParseIP(f[0]) == nil {
+		return ""
+	}
+	return f[0]
+}
+
+func ipInCIDRS(ip, cidrS string) bool {
+	pip := net.ParseIP(strings.TrimSpace(ip))
+	_, n, err := net.ParseCIDR(strings.TrimSpace(cidrS))
+	return err == nil && pip != nil && n.Contains(pip)
+}
+
+// ipInDHCPLeases matches field 3 of a /tmp/dhcp.leases line
+// ("<expiry> <mac> <ip> <hostname> <clientid>").
+func ipInDHCPLeases(ip, leases string) bool {
+	for _, line := range strings.Split(leases, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && f[2] == strings.TrimSpace(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// relocationIsSafe reports whether the deploy SSH connection will survive
+// moving lanCIDR to a new subnet: the connection's source IP must sit inside
+// the moving subnet AND be a DHCP client of this router (such a client
+// renews onto the new subnet and follows the router). A static management
+// host, a WAN-side laptop, or a VM-host bridge address does not follow —
+// moving anyway severs the only management path mid-deploy (issue #51).
+func relocationIsSafe(srcIP, lanCIDR, leases string) bool {
+	return ipInCIDRS(srcIP, lanCIDR) && ipInDHCPLeases(srcIP, leases)
+}
+
 func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string) *ssh.Client {
 	newIP := randomPrivateLANIP()
 	job.addLog(fmt.Sprintf("%s — moving %s to %s/24", why, ifname, newIP))
 	cmds := []string{
 		"uci set network." + netSection + ".ipaddr='" + newIP + "'",
 		"uci set network." + netSection + ".netmask='255.255.255.0'",
+	}
+	if netSection == "lan" {
+		// A stale gateway from the old subnet is unreachable from the new one
+		// and leaves the router with a default route to nowhere.
+		cmds = append(cmds, "uci -q delete network."+netSection+".gateway")
 	}
 	if dhcpSection != "" {
 		cmds = append(cmds,
@@ -1603,8 +1654,12 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 		nc = reconnectSSH(ip, password, 3, 5*time.Second)
 	}
 	if nc == nil {
-		job.addLog("WARNING: could not reconnect after moving " + ifname + " — subsequent steps may fail")
-		return client
+		// Returning the closed client here used to leave the deploy grinding
+		// against a dead connection for minutes (issue #51). Fail fast with
+		// an actionable message instead.
+		job.addLog("ERROR: " + ifname + " moved to " + newIP + " but the router is unreachable from this machine — " +
+			"connect a client to the router's LAN (it will get an address on " + newIP + "/24) and re-run the wizard from there")
+		return nil
 	}
 	job.addLog("Reconnected to router on " + newIP)
 	return nc
@@ -1635,8 +1690,23 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 			continue
 		}
 		if subnetsOverlap(lCIDR, upCIDR) {
-			client = moveLocalSubnet(job, client, ip, password, ln.ifname, ln.netSection, ln.dhcpSection,
+			if ln.netSection == "lan" {
+				src := sshConnectionSourceIP(sshRun(client, "echo $SSH_CONNECTION"))
+				leases := sshRun(client, "cat /tmp/dhcp.leases 2>/dev/null")
+				if !relocationIsSafe(src, lCIDR, leases) {
+					job.addLog(fmt.Sprintf(
+						"WARNING: %s=%s overlaps upstream %s but relocation is SKIPPED: the deploy connection (%q) is not a DHCP client of this router on that subnet and would be severed by the move. "+
+							"DNS may be affected by the overlap; to relocate, re-run the wizard from a client that gets its address from the router.",
+						ln.ifname, lCIDR, upCIDR, src))
+					continue
+				}
+			}
+			nc := moveLocalSubnet(job, client, ip, password, ln.ifname, ln.netSection, ln.dhcpSection,
 				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw))
+			if nc == nil {
+				return nil
+			}
+			client = nc
 		} else {
 			job.addLog(fmt.Sprintf("No subnet collision (%s=%s vs upstream=%s)", ln.ifname, lCIDR, upCIDR))
 		}
