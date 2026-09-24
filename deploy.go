@@ -1270,9 +1270,9 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 // on the target radio (including a previous tollgate_uplink on re-run) is
 // DISABLED — not deleted — before the new uplink is added.
 //
-// The script snapshots /etc/config/wireless to /tmp for rollback (see
-// rollbackWireless) and performs a single commit pair; the caller applies the
-// whole change set with ONE `wifi reload`.
+// The script snapshots /etc/config/wireless AND network.wwan's pre-deploy state
+// to /tmp for rollback (see rollbackWireless) and performs a single commit pair;
+// the caller applies the whole change set with ONE `wifi reload`.
 func staSetupScript(ssid, wifiKey, band string) string {
 	return staSetupScriptFor(ssid, wifiKey, band, "")
 }
@@ -1315,6 +1315,16 @@ fi`
 	}
 	return carriers + selector + `
 cp /etc/config/wireless /tmp/wireless.pre-tollgate &&
+# Snapshot network.wwan's PRE-DEPLOY state. The commit pair below writes that
+# section, and rollbackWireless must be able to put /etc/config/network back too
+# — so record whether it already existed (EXISTED) or this run creates it
+# (ABSENT), and for a pre-existing section the one option written below (proto).
+if uci -q show network.wwan >/dev/null 2>&1; then
+	echo EXISTED > /tmp/network.wwan.pre-tollgate
+	uci -q get network.wwan.proto > /tmp/network.wwan.proto.pre-tollgate 2>/dev/null || : > /tmp/network.wwan.proto.pre-tollgate
+else
+	echo ABSENT > /tmp/network.wwan.pre-tollgate
+fi &&
 uci -q set wireless.$target.disabled='0' &&
 for s in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)\.device='$target'$/\1/p"); do
 	if [ "$(uci -q get wireless.$s.mode 2>/dev/null)" = 'sta' ]; then uci -q set wireless.$s.disabled='1'; fi
@@ -1334,11 +1344,43 @@ uci commit network &&
 echo "STA_CFG_OK target=$target"`
 }
 
-// rollbackWireless restores the /etc/config/wireless snapshot taken before
-// STA changes and reloads wifi, returning the router to its pre-deploy
-// wireless state. Safe to call when no snapshot exists (no-op).
+// rollbackWirelessCmd is the router-side restore every failure path runs, as ONE
+// shell command. It is a const so a unit test can pin its content — the function
+// below needs a live *ssh.Client, so the command text is the only thing testable
+// in-process (the fixture-router harness runs the real thing end-to-end).
+//
+// It undoes BOTH commits the STA setup made:
+//
+//  1. /etc/config/wireless is restored from the snapshot taken before the STA
+//     changes and reloaded. Snapshot-guarded (`[ -f ... ]`), so an absent or
+//     stale snapshot is a no-op on the router as well.
+//  2. network.wwan — written by the same commit pair (the STA script's
+//     `uci set network.wwan=interface` + `.proto='dhcp'`) — is put back: deleted
+//     when this run created it, or its pre-existing proto restored when the
+//     router already had that section. Without this the network config keeps an
+//     interface pointing at an iface the rollback just removed, and "left as it
+//     was found" was false (deploy-failure-rollback.md).
+//
+// It is deliberately NOT a /etc/config/network revert: fixSubnetCollisions
+// relocates br-lan/br-private on purpose when they collide with the upstream,
+// and that relocation is left in place (see docs/deploy-failure-rollback.md).
+const rollbackWirelessCmd = `[ -f /tmp/wireless.pre-tollgate ] && cp /tmp/wireless.pre-tollgate /etc/config/wireless && uci commit wireless && (wifi reload 2>/dev/null || wifi 2>/dev/null); ` +
+	`if [ -f /tmp/network.wwan.pre-tollgate ]; then ` +
+	`if [ "$(cat /tmp/network.wwan.pre-tollgate)" = "ABSENT" ]; then ` +
+	`uci -q show network.wwan >/dev/null 2>&1 && { uci -q delete network.wwan; uci commit network; }; ` +
+	`else ` +
+	`p=$(cat /tmp/network.wwan.proto.pre-tollgate 2>/dev/null); ` +
+	`if [ -n "$p" ]; then uci set network.wwan.proto="$p"; else uci -q delete network.wwan.proto; fi; ` +
+	`uci commit network; ` +
+	`fi; ` +
+	`fi; true`
+
+// rollbackWireless restores the /etc/config/wireless snapshot taken before STA
+// changes and removes/restores the network.wwan section the same commit wrote,
+// reloading wifi, returning the router to its pre-deploy wireless state. Safe to
+// call when no snapshot exists (no-op).
 func rollbackWireless(client *ssh.Client) {
-	sshRun(client, "[ -f /tmp/wireless.pre-tollgate ] && cp /tmp/wireless.pre-tollgate /etc/config/wireless && uci commit wireless && (wifi reload 2>/dev/null || wifi 2>/dev/null); true")
+	sshRun(client, rollbackWirelessCmd)
 }
 
 // reconnectSSH retries sshConnect (radios may be restarting after a wifi
