@@ -1326,9 +1326,21 @@ func staSetupScriptFor(ssid, wifiKey, band, radio string) string {
 	// variables before any uci call — the plaintext never appears in the
 	// script text itself (keeps the STA passphrase out of the SSH command
 	// string and makes shell injection through the SSID/key impossible).
+	// CRITICAL (line termination): the carriers block MUST end with a newline.
+	// The selectors below are separate shell statements; without it the block's
+	// last line and the selector's first line are ONE word, so
+	// `sta_key=$(... | base64 -d)target='radio0'` assigns sta_key the literal
+	// "...target=radio0" and leaves `target` UNSET — the forced-radio selector
+	// then probes `uci -q get wireless.` (an empty section, a hard error on a
+	// real uci: it exits non-zero even with -q), hits its own NO_RADIO guard and
+	// exits before writing anything, so every STA attempt fails and step 5 dies
+	// with a misleading "check SSID and password".
+	// TestStaSetupScriptForcedRadioRunsUnderAStrictUci runs the generated script
+	// through sh with a real-ish uci to keep that from coming back.
 	carriers := `
 sta_ssid=$(echo ` + shellB64(ssid) + ` | base64 -d)
-sta_key=$(echo ` + shellB64(wifiKey) + ` | base64 -d)`
+sta_key=$(echo ` + shellB64(wifiKey) + ` | base64 -d)
+`
 	selector := ""
 	if r := strings.TrimSpace(radio); r != "" {
 		selector = "target='" + r + "'\n" +
