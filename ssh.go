@@ -69,7 +69,23 @@ func keyboardInteractiveAuth(password string) ssh.AuthMethod {
 	})
 }
 
-// sshRun executes a command and returns combined output.
+// closeSSHClient closes a deploy SSH client, tolerating nil.
+//
+// The nil case is real and load-bearing: a subnet relocation that loses the
+// router (see moveLocalSubnet / fixSubnetCollisions) hands the deploy back a nil
+// client, and runDeployment's deferred cleanup then called client.Close() on it.
+// That nil dereference panicked the deploy GOROUTINE (main.go runs
+// `go runDeployment(...)`), which killed the whole wizard process mid-deploy —
+// strictly worse than the failed deploy it replaced (BLOCK 2 of the #52 review).
+func closeSSHClient(client *ssh.Client) {
+	if client != nil {
+		client.Close()
+	}
+}
+
+// sshRun executes a command and returns combined output. client MUST be live:
+// it is dereferenced here, so callers that may hold a nil client (a relocation
+// that lost the router) must check first — see adoptRelocatedClient.
 func sshRun(client *ssh.Client, cmd string) string {
 	session, err := client.NewSession()
 	if err != nil {

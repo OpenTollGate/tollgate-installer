@@ -373,11 +373,11 @@ func TestInstallStepDetail(t *testing.T) {
 
 func TestSSHConnectionSourceIP(t *testing.T) {
 	cases := map[string]string{
-		"10.0.0.5 10.0.0.1 51234 22\n": "10.0.0.5",
+		"10.0.0.5 10.0.0.1 51234 22\n":         "10.0.0.5",
 		"  192.168.8.20 192.168.8.1 40000 22 ": "192.168.8.20",
-		"":                        "",
-		"\n":                      "",
-		"not-an-ip 10.0.0.1 1 2":  "",
+		"":                                     "",
+		"\n":                                   "",
+		"not-an-ip 10.0.0.1 1 2":               "",
 	}
 	for in, want := range cases {
 		if got := sshConnectionSourceIP(in); got != want {
