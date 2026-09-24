@@ -1091,7 +1091,10 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	jobs[jobID] = job
 	jobsMutex.Unlock()
 
-	go runDeployment(job, req)
+	// Guarded entry point: the deploy runs in this goroutine, so a panic here
+	// would kill the whole wizard process. runDeploymentGuarded contains one and
+	// fails the JOB instead (see guardDeploymentPanic).
+	go runDeploymentGuarded(job, req)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})

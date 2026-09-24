@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -501,6 +502,46 @@ func deploySteps() []Step {
 	}
 }
 
+// runDeploymentGuarded is the deploy entry point the wizard's goroutine uses:
+// runDeployment wrapped in a top-level recover (guardDeploymentPanic).
+//
+// The installer is not supposed to panic, but it runs in a GOROUTINE (main.go)
+// and one unrecovered panic there kills the whole wizard process — taking the
+// UI and every other job with it, which is strictly worse than a failed deploy
+// the operator can see and retry. The #52 review asked for exactly this belt
+// alongside the nil-client braces.
+func runDeploymentGuarded(job *Job, req deployRequest) {
+	guardDeploymentPanic(job, func() { runDeployment(job, req) })
+}
+
+// guardDeploymentPanic runs fn, converting any panic into a FAILED JOB — never a
+// silent swallow: the job is failed through jobFail (Status "failed" + Error),
+// and the panic value with its stack is written to the job log so the operator
+// can report it. Split out from runDeploymentGuarded so the containment is
+// testable without a router (a panic inside fn must not escape, and must leave
+// job.Status == "failed").
+func guardDeploymentPanic(job *Job, fn func()) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		job.addLog(fmt.Sprintf("PANIC in the deploy goroutine (contained — the wizard stays up): %v\n%s", r, debug.Stack()))
+		// Report the step the deploy died on (guarded read; clamped, because a
+		// panic can land after a step was renumbered or before any setStep).
+		job.mu.Lock()
+		step := job.Step
+		job.mu.Unlock()
+		if step < 0 || step >= len(job.Steps) {
+			step = 0
+		}
+		jobFail(job, step, "internal error — see log",
+			fmt.Sprintf("The installer hit an unexpected internal error and stopped instead of grinding on: %v. "+
+				"The router may be part-way through the deploy — re-run the wizard from the router's LAN (the log above has the details to report).", r))
+	}()
+	fn()
+}
+
 // runDeployment executes the full deployment sequence.
 func runDeployment(job *Job, req deployRequest) {
 	client := sshConnect(req.IP, req.Password)
@@ -519,8 +560,11 @@ func runDeployment(job *Job, req deployRequest) {
 	}
 	// Closure (not `defer client.Close()`): client can be re-assigned when
 	// the STA step re-establishes the session after a wifi reload — the
-	// deferred call must close whichever client is live at the end.
-	defer func() { client.Close() }()
+	// deferred call must close whichever client is live at the end. It is
+	// nil-SAFE (closeSSHClient): a subnet relocation that severs the connection
+	// leaves client nil, and the bare client.Close() this replaced dereferenced
+	// that nil and panicked the whole installer (BLOCK 2 of the #52 review).
+	defer func() { closeSSHClient(client) }()
 
 	// Step 0: Verify SSH
 	job.setStep(0, "running", "")
@@ -757,7 +801,16 @@ func runDeployment(job *Job, req deployRequest) {
 		// A pre-existing local/upstream subnet overlap breaks name resolution
 		// (the router answers for the upstream gateway's own IP), which also
 		// breaks the package download — fix it before installing.
-		client = fixSubnetCollisions(job, client, req.IP, req.Password)
+		//
+		// A nil result means the move severed our only path to the router:
+		// adoptRelocatedClient fails STEP 5 (jobFail — a setStep+return used to
+		// leave job.Status "running" forever) and we stop WITHOUT dereferencing
+		// the dead client.
+		nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password), 5)
+		if !ok {
+			return
+		}
+		client = nc
 		job.setStep(5, "done", "WAN mode (default)")
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -1342,7 +1395,14 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	// even when nothing collided at step 5 — and that silently breaks DNS for
 	// the deployed router (its own private interface answers for the upstream
 	// gateway's IP). Relocate before the health check so the router is usable.
-	client = fixSubnetCollisions(job, client, req.IP, req.Password)
+	//
+	// Same contract as step 5: a nil client (the move lost the router) fails
+	// STEP 10 through jobFail and stops here, with no nil dereference.
+	nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password), 10)
+	if !ok {
+		return
+	}
+	client = nc
 
 	// Step 11: Health check
 	job.setStep(11, "running", "")
@@ -2070,45 +2130,147 @@ func subnetsOverlap(a, b string) bool {
 	return na.Contains(nb.IP) || nb.Contains(na.IP)
 }
 
-// moveLocalSubnet relocates a local interface and its DHCP pool to a fresh
-// random 10.x.y.0/24, commits, restarts the network and reconnects. Returns
-// the live client (best-effort: the original client if reconnecting failed).
-func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string) *ssh.Client {
-	newIP := randomPrivateLANIP()
-	job.addLog(fmt.Sprintf("%s — moving %s to %s/24", why, ifname, newIP))
+// sshConnectionSourceIP extracts the client IP from `echo $SSH_CONNECTION`
+// output — the connection's source address as the ROUTER sees it.
+//
+// Both layouts the wizard can meet put the client IP in field 0:
+// OpenSSH emits "clientip serverip clientport serverport", and OpenWrt 24.10
+// ships dropbear, whose svr-chansession.c make_connection_string emits
+// "remoteip remoteport localip localport". The layout differs after field 0, so
+// only the first field is read. (The review's INFO item: this comment used to
+// document the OpenSSH contract as if it were dropbear's.)
+func sshConnectionSourceIP(out string) string {
+	f := strings.Fields(strings.TrimSpace(out))
+	if len(f) == 0 || net.ParseIP(f[0]) == nil {
+		return ""
+	}
+	return f[0]
+}
+
+func ipInCIDRS(ip, cidrS string) bool {
+	pip := net.ParseIP(strings.TrimSpace(ip))
+	_, n, err := net.ParseCIDR(strings.TrimSpace(cidrS))
+	return err == nil && pip != nil && n.Contains(pip)
+}
+
+// ipInDHCPLeases matches field 3 of a /tmp/dhcp.leases line
+// ("<expiry> <mac> <ip> <hostname> <clientid>").
+func ipInDHCPLeases(ip, leases string) bool {
+	for _, line := range strings.Split(leases, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && f[2] == strings.TrimSpace(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// relocationIsSafe reports whether the deploy SSH connection will survive
+// moving lanCIDR to a new subnet: the connection's source IP must sit inside
+// the moving subnet AND be a DHCP client of this router (such a client
+// renews onto the new subnet and follows the router). A static management
+// host, a WAN-side laptop, or a VM-host bridge address does not follow —
+// moving anyway severs the only management path mid-deploy (issue #51).
+func relocationIsSafe(srcIP, lanCIDR, leases string) bool {
+	return ipInCIDRS(srcIP, lanCIDR) && ipInDHCPLeases(srcIP, leases)
+}
+
+// moveLocalSubnetCommands builds the uci chain that moves netSection (and its
+// DHCP pool) to newIP, commits it and applies it by ifup-ing ONLY that
+// interface. A full "/etc/init.d/network restart" has been observed to leave
+// network.lan without an address (br-lan up but no IPv4) — which drops the
+// operator's LAN access — and is otherwise unnecessarily disruptive, so the
+// restart is only the fallback for a router without ifup.
+//
+// It is a separate pure function because the SHAPE of this chain is the whole
+// point: every command is spliced into ONE `&&` chain, so a single command that
+// exits non-zero silently aborts the move.
+//
+// The gateway delete is exactly that command. `uci -q delete` exits 1 when the
+// option does not exist — `-q` silences the message, not the exit code — and
+// nothing in this repo ever sets network.lan.gateway, so on the fresh router
+// this installer exists for, the option is ABSENT. Unguarded, the chain died at
+// command 3 of 8: no `uci commit network`, no `ifup`, no move — while the caller
+// logged a successful relocation, the reconnect "fallback" succeeded on the
+// original (unchanged) address, and a LATER step's `uci commit network` (see
+// runDeployment step 7) committed the staged delta out-of-band, moving the
+// router at some unattended future reboot. Hence `|| true`: the file's own idiom
+// for a best-effort uci operation (see the service restarts in runDeployment).
+//
+// It is section-scoped, not lan-only: a stale gateway from the old subnet is
+// just as unreachable from the new one on br-private (network.private.gateway),
+// which the lan-only version left behind.
+func moveLocalSubnetCommands(netSection, dhcpSection, newIP string) []string {
 	cmds := []string{
 		"uci set network." + netSection + ".ipaddr='" + newIP + "'",
 		"uci set network." + netSection + ".netmask='255.255.255.0'",
+		// A stale gateway from the old subnet is unreachable from the new one
+		// and leaves the router with a default route to nowhere. The `|| true`
+		// is load-bearing — see the function comment.
+		"uci -q delete network." + netSection + ".gateway || true",
 	}
 	if dhcpSection != "" {
 		cmds = append(cmds,
 			"uci -q set dhcp."+dhcpSection+".start='100'",
 			"uci -q set dhcp."+dhcpSection+".limit='150'")
 	}
-	cmds = append(cmds,
+	return append(cmds,
 		"uci commit network",
 		"uci -q commit dhcp",
-		// ifup applies ONLY this interface. A full "/etc/init.d/network
-		// restart" has been observed to leave network.lan without an address
-		// (br-lan up but no IPv4) — which drops the operator's LAN access — and
-		// is otherwise unnecessarily disruptive. Fall back to a restart only
-		// if ifup is unavailable.
 		"/sbin/ifup "+netSection+" 2>/dev/null || /etc/init.d/network restart 2>/dev/null",
 		"sleep 2")
-	sshRun(client, strings.Join(cmds, " && "))
-	client.Close()
+}
 
-	nc := reconnectSSH(newIP, password, 5, 3*time.Second)
+// moveReconnect dials the router again after a relocation. It is a variable so
+// the reconnect decision below — WHICH address is dialled, and which address the
+// operator is told answered — can be driven end to end without a router (the
+// same test-seam pattern as sshDialPort). Production always uses reconnectSSH.
+var moveReconnect = reconnectSSH
+
+// moveLocalSubnet relocates a local interface and its DHCP pool to a fresh
+// random 10.x.y.0/24, commits it, applies it by ifup-ing that interface, and
+// finds the router again.
+//
+// It returns the live client AND THE ADDRESS THAT ACTUALLY ANSWERED:
+//   - newIP, when the move took effect and the router answers on its new address;
+//   - the pre-move `ip`, when the reconnect fell back to it — which is exactly
+//     the "the move silently did not happen" signal (a staging `uci set` that
+//     never reached the commit), and whose log line used to claim newIP;
+//   - (nil, "") when NOTHING answered, meaning there is no session left and the
+//     caller must stop (see adoptRelocatedClient).
+//
+// The fallback dials `ip`, the address the router had BEFORE THIS move, which
+// only answers if this move did not take effect. A deploy that relocates twice
+// therefore must fall back to where the router is NOW, not to the original
+// address the first move already killed: fixSubnetCollisions threads that
+// through (its curIP).
+func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string) (*ssh.Client, string) {
+	newIP := randomPrivateLANIP()
+	job.addLog(fmt.Sprintf("%s — moving %s to %s/24", why, ifname, newIP))
+	sshRun(client, strings.Join(moveLocalSubnetCommands(netSection, dhcpSection, newIP), " && "))
+	closeSSHClient(client)
+
+	nc := moveReconnect(newIP, password, 5, 3*time.Second)
+	answered := newIP
 	if nc == nil {
 		job.addLog("Could not reconnect on new " + ifname + " IP " + newIP + ", trying original IP " + ip + "...")
-		nc = reconnectSSH(ip, password, 3, 5*time.Second)
+		nc = moveReconnect(ip, password, 3, 5*time.Second)
+		answered = ip
 	}
 	if nc == nil {
-		job.addLog("WARNING: could not reconnect after moving " + ifname + " — subsequent steps may fail")
-		return client
+		// Returning the closed client here used to leave the deploy grinding
+		// against a dead connection for minutes (issue #51). Fail fast with
+		// an actionable message instead.
+		job.addLog("ERROR: " + ifname + " moved to " + newIP + " but the router is unreachable from this machine — " +
+			"connect a client to the router's LAN (it will get an address on " + newIP + "/24) and re-run the wizard from there")
+		return nil, ""
 	}
-	job.addLog("Reconnected to router on " + newIP)
-	return nc
+	// Report the address that ACTUALLY answered. Printing newIP unconditionally
+	// (as this did) is false in the fallback case — the router never moved — and
+	// after this PR the fallback-success case is precisely that signal (the
+	// review's INFO item).
+	job.addLog("Reconnected to router on " + answered)
+	return nc, answered
 }
 
 // fixSubnetCollisions relocates any local network (br-lan, br-private) that
@@ -2121,6 +2283,13 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 // octet +/-1), which can land inside the upstream subnet even though nothing
 // collided at step 5. Returns the live client (reconnected if a subnet moved).
 func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh.Client {
+	if client == nil {
+		// Defensive, and reachable in a re-run: every query below goes through
+		// sshRun, which dereferences the client. Report it as "no session" so
+		// the caller fails the job (adoptRelocatedClient) instead of panicking.
+		job.addLog("ERROR: subnet collision check requested with no live SSH session — nothing to check")
+		return nil
+	}
 	upCIDR, gw := upstreamCIDR(client)
 	if upCIDR == "" {
 		job.addLog("WARNING: could not determine the upstream subnet — skipping collision detection")
@@ -2130,19 +2299,70 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 		{"br-lan", "lan", "lan"},
 		{"br-private", "private", "private"},
 	}
+	// curIP is where the router is NOW. Each successful move moves it, so the
+	// NEXT move's reconnect fallback dials an address that can actually answer
+	// instead of the pre-deploy one the earlier move killed (BLOCK 2, item 3 of
+	// the #52 review: br-lan moved to 10.x.y.1, then br-private's reconnect
+	// failed and its fallback dialled the dead original address).
+	curIP := ip
 	for _, ln := range locals {
 		lCIDR := localCIDR(client, ln.ifname)
 		if lCIDR == "" {
 			continue
 		}
 		if subnetsOverlap(lCIDR, upCIDR) {
-			client = moveLocalSubnet(job, client, ip, password, ln.ifname, ln.netSection, ln.dhcpSection,
+			if ln.netSection == "lan" {
+				src := sshConnectionSourceIP(sshRun(client, "echo $SSH_CONNECTION"))
+				leases := sshRun(client, "cat /tmp/dhcp.leases 2>/dev/null")
+				if !relocationIsSafe(src, lCIDR, leases) {
+					job.addLog(fmt.Sprintf(
+						"WARNING: %s=%s overlaps upstream %s but relocation is SKIPPED: the deploy connection (%q) is not a DHCP client of this router on that subnet and would be severed by the move. "+
+							"DNS may be affected by the overlap; to relocate, re-run the wizard from a client that gets its address from the router.",
+						ln.ifname, lCIDR, upCIDR, src))
+					continue
+				}
+			}
+			nc, answered := moveLocalSubnet(job, client, curIP, password, ln.ifname, ln.netSection, ln.dhcpSection,
 				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw))
+			if nc == nil {
+				return nil
+			}
+			client = nc
+			if answered != "" {
+				curIP = answered
+			}
 		} else {
 			job.addLog(fmt.Sprintf("No subnet collision (%s=%s vs upstream=%s)", ln.ifname, lCIDR, upCIDR))
 		}
 	}
 	return client
+}
+
+// adoptRelocatedClient is the ONLY correct way for a deploy step to consume
+// fixSubnetCollisions' result. A nil client means the relocation moved a local
+// subnet and then lost the router from this machine: no session is left, so
+// nothing after this point can run, and the job must be failed HERE.
+//
+// Both halves are load-bearing, and each closes one half of BLOCK 2 of the #52
+// review:
+//   - failing through jobFail (never `setStep(n,"failed") + return`) is what sets
+//     job.Status="failed". The setStep-only form left Status "running" forever
+//     and the wizard spun with no error shown — the anti-pattern jobFail's own
+//     comment documents.
+//   - never dereferencing the nil is what keeps the installer ALIVE: the old
+//     shape wrote the nil into `client` / `*pclient`, so runDeployment's deferred
+//     client.Close() dereferenced it, and (because runDeployment runs in a
+//     goroutine) one panic killed the whole wizard process.
+//
+// Returns the live client and true to continue, or (nil, false) to stop.
+func adoptRelocatedClient(job *Job, client *ssh.Client, step int) (*ssh.Client, bool) {
+	if client != nil {
+		return client, true
+	}
+	jobFail(job, step, "subnet relocation severed the connection — see log",
+		"A colliding local subnet was moved, but the router could not be reached from this machine afterwards, so the deploy stopped instead of continuing against a dead connection. "+
+			"Connect a client to the router's LAN (it now hands out addresses on the new subnet) and re-run the wizard from there.")
+	return nil, false
 }
 
 // configureSTA wires up the tollgate_uplink WiFi STA (deploy step 5).
@@ -2233,8 +2453,17 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 	// than just the first three octets. Every colliding local network is
 	// relocated to a fresh random 10.x.y.0/24, and its DHCP pool is moved with
 	// it (otherwise clients get leases from the old, colliding range).
-	client = fixSubnetCollisions(job, client, ip, password)
+	//
+	// A nil client means the relocation lost the router: fail STEP 5 through
+	// jobFail, hand the nil back through pclient (runDeployment's deferred
+	// cleanup is nil-safe — closeSSHClient), and return FALSE so the caller
+	// stops. Without this check the nil flowed into upstreamOnline ->
+	// repairLanDNS -> sshRun(nil) and panicked the whole installer (BLOCK 2).
+	client, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, ip, password), 5)
 	*pclient = client
+	if !ok {
+		return false
+	}
 
 	// Verify the router can actually USE the upstream before continuing: a
 	// wwan iface can be "up" with no route/DNS, and the payment backend cannot

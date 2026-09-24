@@ -370,3 +370,62 @@ func TestInstallStepDetail(t *testing.T) {
 		})
 	}
 }
+
+func TestSSHConnectionSourceIP(t *testing.T) {
+	cases := map[string]string{
+		"10.0.0.5 10.0.0.1 51234 22\n":         "10.0.0.5",
+		"  192.168.8.20 192.168.8.1 40000 22 ": "192.168.8.20",
+		"":                                     "",
+		"\n":                                   "",
+		"not-an-ip 10.0.0.1 1 2":               "",
+	}
+	for in, want := range cases {
+		if got := sshConnectionSourceIP(in); got != want {
+			t.Errorf("sshConnectionSourceIP(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIPInCIDRS(t *testing.T) {
+	if !ipInCIDRS("10.99.95.2", "10.99.95.0/24") {
+		t.Error("10.99.95.2 must be inside 10.99.95.0/24")
+	}
+	if ipInCIDRS("10.99.95.2", "10.34.47.0/24") {
+		t.Error("10.99.95.2 must not be inside 10.34.47.0/24")
+	}
+	if ipInCIDRS("10.99.95.2", "not-a-cidr") {
+		t.Error("invalid CIDR must be false")
+	}
+	if ipInCIDRS("", "10.99.95.0/24") {
+		t.Error("empty IP must be false")
+	}
+}
+
+func TestIPInDHCPLeases(t *testing.T) {
+	leases := "1790000000 aa:bb:cc:dd:ee:ff 10.99.95.50 laptop *\n1790000000 11:22:33:44:55:66 10.99.95.51 - *\n"
+	if !ipInDHCPLeases("10.99.95.50", leases) {
+		t.Error("leased IP must match")
+	}
+	if ipInDHCPLeases("10.99.95.2", leases) {
+		t.Error("static management IP must not match")
+	}
+	if ipInDHCPLeases("10.99.95.50", "") {
+		t.Error("empty leases must not match")
+	}
+}
+
+func TestRelocationIsSafe(t *testing.T) {
+	leases := "1790000000 aa:bb:cc:dd:ee:ff 10.99.95.50 laptop *\n"
+	if !relocationIsSafe("10.99.95.50", "10.99.95.0/24", leases) {
+		t.Error("in-subnet DHCP client must be safe to follow the move")
+	}
+	if relocationIsSafe("10.99.95.2", "10.99.95.0/24", leases) {
+		t.Error("in-subnet but STATIC (not leased) source must NOT be treated as safe — it never follows the move (issue #51)")
+	}
+	if relocationIsSafe("192.168.13.208", "10.99.95.0/24", leases) {
+		t.Error("out-of-subnet source must not be safe")
+	}
+	if relocationIsSafe("", "10.99.95.0/24", leases) {
+		t.Error("unknown source must not be safe")
+	}
+}
