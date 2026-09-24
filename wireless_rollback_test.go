@@ -670,11 +670,12 @@ func TestJobFailAfterRestoreIsTheExitForEveryPostStep5Failure(t *testing.T) {
 	}
 }
 
-// integritySiteURL is the URL shape both #43 integrity sites act on (the feed
-// asset for the effective release tag). Only its name and host matter here: the
+// integritySiteURL is the URL shape both #43 integrity sites act on: the feed
+// asset for the effective release tag, derived by the code under test (so it
+// cannot drift from the feed pin). Only the asset NAME reaches this test: the
 // bytes below fail the structural check, which runs before any digest lookup, so
-// this test needs no network.
-const integritySiteURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre9/tollgate-wrt_0.6.0_alpha2_pre9_aarch64_cortex-a53.ipk"
+// no network is touched.
+var integritySiteURL = feedAssetURL("aarch64_cortex-a53", ".ipk")
 
 // TestIntegrityFailureSitesRestoreWireless pins the two #43 step-6 integrity
 // sites (card t_3fe64c6e) at the level a unit test CAN reach them: the sites live
