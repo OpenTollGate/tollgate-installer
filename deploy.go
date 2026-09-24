@@ -447,7 +447,7 @@ func runDeployment(job *Job, req deployRequest) {
 		// FAIL LOUDLY on an undetectable arch. Never silently default to
 		// aarch64_cortex-a53 — that is the bug being fixed.
 		job.addLog("Could not determine router CPU architecture")
-		jobFail(job, 6,
+		jobFailAfterRestore(job, client, staCommitted, 6,
 			"Could not determine router CPU architecture",
 			"Could not determine router CPU architecture")
 		return
@@ -457,8 +457,11 @@ func runDeployment(job *Job, req deployRequest) {
 	// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages.
 	_, pkgExtension, ok := selectPkgURL(routerArch, pkgMgr)
 	if !ok {
-		// Undetectable arch — fail, never substitute aarch64.
-		jobFail(job, 6, "Unsupported CPU arch "+routerArch,
+		// Undetectable arch — fail, never substitute aarch64. (selectPkgURL is
+		// generic today and only refuses an empty tuple, so this is defensive;
+		// it still restores, because the step-5 STA commit is already live.)
+		jobFailAfterRestore(job, client, staCommitted, 6,
+			"Unsupported CPU arch "+routerArch,
 			"Unsupported CPU arch "+routerArch)
 		return
 	}
@@ -663,7 +666,13 @@ func runDeployment(job *Job, req deployRequest) {
 		// will crash against it — treat as a hard failure even if the binary exists.
 		if strings.Contains(installOut, "Not downgrading") {
 			job.addLog("ERROR: opkg refused to downgrade the package (old version kept)")
-			job.setStep(6, "error", "opkg refused to downgrade tollgate-wrt")
+			// A jobFail, not setStep(6,"error") + return: the latter left
+			// job.Status "running" forever, so the wizard spun with no error
+			// shown (see jobFail). It is also a terminal failure after step 5,
+			// so it restores the wireless snapshot like every other one.
+			jobFailAfterRestore(job, client, staCommitted, 6,
+				"opkg refused to downgrade tollgate-wrt",
+				"opkg refused to downgrade the package: the router still runs its PREVIOUS tollgate-wrt binary with the new config. Install a package whose version opkg accepts, or remove the installed tollgate-wrt first (opkg remove tollgate-wrt) and re-run.")
 			return
 		}
 		// apk prints failures to stdout; the pipeline above hides the exit code,
@@ -672,7 +681,8 @@ func runDeployment(job *Job, req deployRequest) {
 		// the previous package. Fail loudly on apk's error signatures.
 		if pkgMgr == "apk" && apkInstallFailed(installOut) {
 			job.addLog("ERROR: apk reported an installation failure: " + truncate(installOut, 200))
-			jobFail(job, 6, "tollgate-wrt install failed (apk error)",
+			jobFailAfterRestore(job, client, staCommitted, 6,
+				"tollgate-wrt install failed (apk error)",
 				"apk could not install/upgrade tollgate-wrt — the previous package (with its OLD captive portal) is still in place:\n"+truncate(installOut, 400))
 			return
 		}
@@ -691,7 +701,7 @@ func runDeployment(job *Job, req deployRequest) {
 				fatal, warn := pkgVersionVerdict(pkgVer, pkgSourceURL, routerArch, pkgExtension)
 				if fatal != "" {
 					job.addLog("ERROR: " + fatal)
-					jobFail(job, 6, "tollgate-wrt version mismatch", fatal)
+					jobFailAfterRestore(job, client, staCommitted, 6, "tollgate-wrt version mismatch", fatal)
 					return
 				}
 				if warn != "" {
@@ -737,11 +747,9 @@ func runDeployment(job *Job, req deployRequest) {
 			// deploy is dead — restore the wireless snapshot so the router
 			// is left in its pre-deploy state. The refusal path above does
 			// the same: no terminal failure in this step may skip it.
-			jobErr := "Package installation failed"
-			if restoreWirelessOnFailure(job, client, staCommitted) {
-				jobErr += " — pre-deploy wireless config restored"
-			}
-			jobFail(job, 6, "tollgate-wrt install failed", jobErr)
+			jobFailAfterRestore(job, client, staCommitted, 6,
+				"tollgate-wrt install failed",
+				"Package installation failed")
 			return
 		}
 		// This path installed from the ROUTER's own configured package feeds —
@@ -911,7 +919,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	case strings.HasPrefix(out, "MISSING_ASSETS:"):
 		missing := strings.Join(portalMissingAssets(out), " ")
 		job.addLog("ERROR: captive portal references missing assets: " + truncate(missing, 200))
-		jobFail(job, 8, "captive portal assets missing",
+		jobFailAfterRestore(job, client, staCommitted, 8, "captive portal assets missing",
 			"splash.html references /assets bundles that are not installed, so the portal cannot boot. Missing: "+
 				missing+"\nThis is the \"dead portal\" regression (a feed release built without its portal assets).")
 		return
@@ -988,7 +996,8 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	initCheck := sshRun(client, "ls /etc/init.d/tollgate-wrt 2>/dev/null && echo 'exists' || echo 'missing'")
 	if strings.Contains(initCheck, "missing") {
 		job.addLog("ERROR: tollgate-wrt init script not found — package install failed")
-		jobFail(job, 10, "tollgate-wrt not installed", "tollgate-wrt init script missing — package install failed")
+		jobFailAfterRestore(job, client, staCommitted, 10,
+			"tollgate-wrt not installed", "tollgate-wrt init script missing — package install failed")
 		return
 	}
 	svcOut := sshRun(client, strings.Join([]string{
@@ -1053,15 +1062,14 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		job.addLog("Health check FAILED. Diagnostics:\n" + diag)
 		// Roll back wireless config so the router's radios are usable for
 		// re-scanning after a failed deploy (e.g. old binary crashed with
-		// new config, leaving radio0 stuck in STA mode).
-		if restoreWirelessOnFailure(job, client, staCommitted) {
-			job.addLog("Wireless config restored — radios should be available for scanning")
-		}
+		// new config, leaving radio0 stuck in STA mode). Both branches below
+		// are terminal failures of this step, so both go through the shared
+		// exit that restores the snapshot.
 		if listening {
-			jobFail(job, 11, "tollgate API up but no advertisement",
+			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate API up but no advertisement",
 				"TollGate API is UP on :2121 but returned no pricing advertisement — the merchant is degraded (mint/wallet not ready), not down.\n"+diag)
 		} else {
-			jobFail(job, 11, "tollgate service not listening on :2121",
+			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate service not listening on :2121",
 				"The tollgate-wrt service is NOT listening on :2121 (crash-looping or still initializing).\n"+diag)
 		}
 		return
@@ -1108,6 +1116,39 @@ func restoreWirelessOnFailure(job *Job, client *ssh.Client, staCommitted bool) b
 	job.addLog("Rolling back wireless config to the pre-deploy snapshot...")
 	wirelessRollback(client)
 	return true
+}
+
+// restoreWirelessFromSTACommit is the same restore for the deploy step-5 failure
+// paths, which run INSIDE configureSTA: there a commit may already have happened
+// while runDeployment's staCommitted is still false (it is only set once
+// configureSTA returns true), so the staCommitted gate above cannot fire yet and
+// the caller states the commit itself.
+//
+// Only call it where the STA commit really ran (attemptSTA reported STA_CFG_OK,
+// or the failing path runs after a successful association) — an unconditional
+// restore would also write a STALE /tmp/wireless.pre-tollgate left by an earlier
+// run over the current config.
+func restoreWirelessFromSTACommit(job *Job, client *ssh.Client) bool {
+	return restoreWirelessOnFailure(job, client, true)
+}
+
+// jobFailAfterRestore is the terminal-failure exit for every deploy path that
+// runs AFTER step 5. It restores the pre-deploy wireless snapshot (through the
+// same staCommitted gate as the rest, so the decision is still made in exactly
+// one place), THEN fails the job, and appends the restore to the operator-facing
+// error only when it actually ran — the log can neither claim a restore that did
+// not happen nor hide one that did.
+//
+// Every post-step-5 terminal failure goes through it (see
+// TestDeployFailureSitesRestoreWireless, which pins the per-site coverage): a
+// deploy that fails at step 6, 8, 10 or 11 leaves the router with its radios
+// usable for a re-run instead of committed to an uplink the failed deploy never
+// used.
+func jobFailAfterRestore(job *Job, client *ssh.Client, staCommitted bool, step int, stepDetail, jobErr string) {
+	if restoreWirelessOnFailure(job, client, staCommitted) {
+		jobErr += " — pre-deploy wireless config restored"
+	}
+	jobFail(job, step, stepDetail, jobErr)
 }
 
 // refuseMissingRequestedRelease is deploy step 6's fail-loud gate: the requested
@@ -1558,19 +1599,25 @@ func orderRadiosForBand(client *ssh.Client, radios []string, band string) []stri
 // waits for wwan to associate. On any failure it rolls the wireless config back
 // (best-effort) and returns ok=false. On success it returns a live client the
 // caller owns. It never touches the caller's deploy session.
-func attemptSTA(ip, password, ssid, wifiPass, radio string) (*ssh.Client, bool) {
-	client := sshConnect(ip, password)
+//
+// leftCommitted reports the one case it cannot clean up after: the STA config was
+// committed (STA_CFG_OK) and the router then stopped answering SSH altogether, so
+// there was no session left to roll it back through. The caller must say that
+// instead of claiming a rollback that never ran, and it gets one more chance to
+// restore once the router answers again.
+func attemptSTA(ip, password, ssid, wifiPass, radio string) (client *ssh.Client, ok bool, leftCommitted bool) {
+	client = sshConnect(ip, password)
 	if client == nil && password != "" {
 		client = sshConnect(ip, "")
 	}
 	if client == nil {
-		return nil, false
+		return nil, false, false
 	}
 	out := sshRun(client, staSetupScriptFor(ssid, wifiPass, "", radio))
 	if !strings.Contains(out, "STA_CFG_OK") {
 		rollbackWireless(client)
 		client.Close()
-		return nil, false
+		return nil, false, false
 	}
 	sshRun(client, "wifi reload 2>/dev/null || wifi 2>/dev/null || true")
 	client.Close()
@@ -1580,8 +1627,11 @@ func attemptSTA(ip, password, ssid, wifiPass, radio string) (*ssh.Client, bool) 
 		if r := reconnectSSH(ip, password, 2, 8*time.Second); r != nil {
 			rollbackWireless(r)
 			r.Close()
+			return nil, false, false
 		}
-		return nil, false
+		// Committed, and there is no session to undo it in. Report it — the
+		// wireless config is very likely still committed on the router.
+		return nil, false, true
 	}
 	up := false
 	for i := 0; i < 15 && !up; i++ { // ~22s budget: association + DHCP
@@ -1593,9 +1643,9 @@ func attemptSTA(ip, password, ssid, wifiPass, radio string) (*ssh.Client, bool) 
 	if !up {
 		rollbackWireless(c)
 		c.Close()
-		return nil, false
+		return nil, false, false
 	}
-	return c, true
+	return c, true, false
 }
 
 // randomPrivateLANIP returns a random address inside 10.0.0.0/8 (RFC1918)
@@ -1788,22 +1838,43 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 	job.addLog("Trying STA on radios in order: " + strings.Join(ordered, ", "))
 
 	var live *ssh.Client
+	// leftCommitted names the radio whose STA config was committed and could NOT
+	// be rolled back (the router stopped answering SSH after the wifi reload). The
+	// deploy must not claim "wireless config rolled back" in that case, and the
+	// router is left with a committed radio until the operator re-runs.
+	leftCommitted := ""
 	for _, r := range ordered {
-		newc, ok := attemptSTA(ip, password, ssid, wifiPass, r)
+		newc, ok, stuck := attemptSTA(ip, password, ssid, wifiPass, r)
 		if ok {
 			live = newc
 			job.addLog("WiFi STA connected on " + r)
 			break
+		}
+		if stuck {
+			leftCommitted = r
+			job.addLog("STA config on " + r + " is committed but the router stopped answering SSH — could not roll it back")
 		}
 		job.addLog("STA on " + r + " did not associate — trying next radio")
 	}
 	if live == nil {
 		hint := ""
 		if c := reconnectSSH(ip, password, 2, 3*time.Second); c != nil {
+			// The router answers again: the commit attemptSTA could not undo
+			// CAN be rolled back after all, so do it before failing.
+			if leftCommitted != "" {
+				restoreWirelessFromSTACommit(job, c)
+				job.addLog("Rolled back the committed STA config left on " + leftCommitted)
+				leftCommitted = ""
+			}
 			hint = staFailureHint(c, ssid, band)
 			c.Close()
 		}
-		detail := "WiFi STA connection failed for \"" + ssid + "\" — check SSID and password (wireless config rolled back)"
+		detail := "WiFi STA connection failed for \"" + ssid + "\" — check SSID and password"
+		if leftCommitted == "" {
+			detail += " (wireless config rolled back)"
+		} else {
+			detail += " (the STA config committed on " + leftCommitted + " could NOT be rolled back: the router stopped answering SSH after the wifi reload, so its radio is still committed to this uplink and cannot scan. Re-run the deploy once the router answers again)"
+		}
 		if hint != "" {
 			detail += "\n" + hint
 		}
@@ -1841,8 +1912,15 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 		sshRun(client, "/etc/init.d/network reload 2>/dev/null; /etc/init.d/dnsmasq restart 2>/dev/null; sleep 3")
 		if online2, odiag2 := upstreamOnline(client); !online2 {
 			job.addLog("Router still offline after reload:\n" + odiag2)
+			// The STA config was committed by the successful association above,
+			// and runDeployment's staCommitted is only set once configureSTA
+			// returns true — so the shared gate cannot fire here. Restore now:
+			// a deploy that cannot use its uplink must not leave the radios
+			// committed to it.
+			restoreWirelessFromSTACommit(job, client)
 			jobFail(job, 5, "upstream has no internet",
-				"Associated to \""+ssid+"\" but the router cannot use the internet. Check whether the failing check below is routing or name resolution (DNS), and whether the upstream network actually provides internet or is a captive portal.\n"+odiag2)
+				"Associated to \""+ssid+"\" but the router cannot use the internet. Check whether the failing check below is routing or name resolution (DNS), and whether the upstream network actually provides internet or is a captive portal.\n"+odiag2+
+					"\nThe STA configuration was rolled back, so the radios are usable for re-scanning.")
 			return false
 		}
 		job.addLog("Internet available after reload")
@@ -1883,17 +1961,27 @@ func testSTAConfig(ip, password, ssid, wifiPass, band string) (bool, string) {
 	// leave the router's prior wireless config in place, so every attempt —
 	// successful or not — restores the snapshot (attemptSTA rolls back on
 	// failure; we roll back the successful one here).
+	leftCommitted := ""
 	for _, r := range ordered {
-		c, ok := attemptSTA(ip, password, ssid, wifiPass, r)
+		c, ok, stuck := attemptSTA(ip, password, ssid, wifiPass, r)
 		if ok {
 			rollbackWireless(c)
 			c.Close()
 			return true, "connected to \"" + ssid + "\" on " + r
 		}
+		if stuck {
+			leftCommitted = r
+		}
 	}
 
 	hint := ""
 	if c := reconnectSSH(ip, password, 2, 3*time.Second); c != nil {
+		// Same one-more-chance restore as configureSTA: the router stopped
+		// answering after the reload of a committed attempt, and it is back.
+		if leftCommitted != "" {
+			rollbackWireless(c)
+			leftCommitted = ""
+		}
 		hint = staFailureHint(c, ssid, band)
 		c.Close()
 	}
@@ -1902,6 +1990,9 @@ func testSTAConfig(ip, password, ssid, wifiPass, band string) (bool, string) {
 		msg += " (" + b + " GHz)"
 	}
 	msg += " — check the SSID and password"
+	if leftCommitted != "" {
+		msg += " (the STA config committed on " + leftCommitted + " could NOT be rolled back: the router stopped answering SSH after the wifi reload)"
+	}
 	if hint != "" {
 		msg += "\n" + hint
 	}
