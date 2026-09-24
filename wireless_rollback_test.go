@@ -269,6 +269,12 @@ func TestRestoreWirelessOnFailureReportsWhatItDid(t *testing.T) {
 //   - a NEW terminal failure after step 5 cannot be added without registering it
 //     here — which is the moment to decide whether it restores.
 //
+// The two #43 integrity sites (card t_3fe64c6e) are registered here even though
+// #43 is not on main yet: this branch composes #43's step-6 integrity gate with
+// the shared exit, so on the composed tree they are ordinary post-step-5 sites —
+// and the guard caught them as bare `jobFail`s before they were routed through
+// jobFailAfterRestore (see the RED/GREEN evidence in the PR).
+//
 // The detail strings are the stepDetail literals as written at the call site (the
 // leading literal of a concatenation); "what" is the operator-visible failure.
 //
@@ -279,9 +285,11 @@ func TestRestoreWirelessOnFailureReportsWhatItDid(t *testing.T) {
 var postStep5FailureSites = []failureSite{
 	{6, "Could not determine router CPU architecture", "undetectable CPU arch"},
 	{6, "Unsupported CPU arch ", "arch whose package URL cannot be built (defensive: selectPkgURL is generic today)"},
+	{6, "laptop-side package integrity check failed", "#43: the bytes the LAPTOP downloaded are not the bytes the release published (mismatch / structurally impossible / unverifiable with TOLLGATE_REQUIRE_PACKAGE_DIGEST=1)"},
 	{6, "opkg refused to downgrade tollgate-wrt", "opkg keeps the previous package"},
 	{6, "tollgate-wrt install failed (apk error)", "apk reports an install/upgrade failure"},
 	{6, "tollgate-wrt version mismatch", "installed version is not the requested release"},
+	{6, "router-side package integrity check failed", "#43: the bytes the ROUTER fetched (wget) hash to something other than the published digest"},
 	{6, "tollgate-wrt install failed", "feed last resort: no package on the router"},
 	{8, "captive portal assets missing", "dead-portal regression: splash.html references uninstalled bundles"},
 	{10, "tollgate-wrt not installed", "package init script missing at step 10"},
@@ -659,6 +667,106 @@ func TestJobFailAfterRestoreIsTheExitForEveryPostStep5Failure(t *testing.T) {
 				t.Errorf("deploy log claims a rollback = %v, want %v", rolledBack, tc.wantStated)
 			}
 		})
+	}
+}
+
+// integritySiteURL is the URL shape both #43 integrity sites act on (the feed
+// asset for the effective release tag). Only its name and host matter here: the
+// bytes below fail the structural check, which runs before any digest lookup, so
+// this test needs no network.
+const integritySiteURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre9/tollgate-wrt_0.6.0_alpha2_pre9_aarch64_cortex-a53.ipk"
+
+// TestIntegrityFailureSitesRestoreWireless pins the two #43 step-6 integrity
+// sites (card t_3fe64c6e) at the level a unit test CAN reach them: the sites live
+// inline in runDeployment (which needs a live *ssh.Client), so what is driven
+// here is the exit each site calls and the step/detail it fails with, using the
+// REAL verdict error the gate produces — the remainder is pinned per-site by
+// TestDeployFailureSitesRestoreWireless.
+//
+// The failure it prevents: a failed integrity check returns after step 5 has
+// committed and reloaded the STA config for WAN-over-WiFi, leaving the radios
+// committed to an uplink the dead deploy never used — the wizard can then no
+// longer re-scan for an upstream SSID and recovering needs a physical visit.
+func TestIntegrityFailureSitesRestoreWireless(t *testing.T) {
+	// The bytes the gate must refuse: not a package at all (a truncated
+	// download / HTML error page / poisoned cache entry — the class this gate
+	// exists for). Structural check first, so this fixture needs no network.
+	notAPackage := []byte("not a package")
+	if verdict, err := checkPackageBytes(newJob("192.168.1.1"), integritySiteURL, ".ipk", notAPackage); err == nil || !verdict.fatal() {
+		t.Fatalf("checkPackageBytes(...) on a non-package = (%+v, %v): the fixture no longer produces the fatal verdict the integrity sites fail on", verdict, err)
+	}
+
+	for _, site := range []string{
+		"laptop-side package integrity check failed",
+		"router-side package integrity check failed",
+	} {
+		for _, tc := range []struct {
+			name          string
+			staCommitted  bool
+			wantCalls     int
+			wantRestoreIn bool
+		}{
+			{"STA committed by this run (step 5 ran)", true, 1, true},
+			{"no STA committed by this run (WAN mode)", false, 0, false},
+		} {
+			t.Run(site+"/"+tc.name, func(t *testing.T) {
+				job := newJob("192.168.1.1")
+				client := new(ssh.Client)
+				calls := stubWirelessRollback(t, job)
+
+				// The gate first: it logs its verdict into the SAME job, which
+				// is what the site then fails the deploy with.
+				_, err := checkPackageBytes(job, integritySiteURL, ".ipk", notAPackage)
+				if err == nil {
+					t.Fatal("checkPackageBytes(...) accepted the fixture bytes")
+				}
+				// Exactly what the site does: restore through the shared exit,
+				// on step 6, with this site's detail and the gate's own error.
+				jobFailAfterRestore(job, client, tc.staCommitted, 6, site, err.Error())
+
+				if len(*calls) != tc.wantCalls {
+					t.Fatalf("wireless rollback calls = %d, want %d — an integrity failure after step 5 owes the operator a usable radio", len(*calls), tc.wantCalls)
+				}
+				if tc.wantCalls > 0 {
+					if got := (*calls)[0].client; got != client {
+						t.Errorf("rollback was handed %p, want the live deploy client %p", got, client)
+					}
+					if got := (*calls)[0].jobStatus; got != "running" {
+						t.Errorf("rollback ran while the job was already %q; it must run BEFORE the job is marked failed", got)
+					}
+				}
+				if job.Status != "failed" {
+					t.Errorf("job.Status = %q, want \"failed\"", job.Status)
+				}
+				if got := job.Steps[6].Status; got != "failed" {
+					t.Errorf("step 6 status = %q, want \"failed\"", got)
+				}
+				if got := job.Steps[6].Detail; got != site {
+					t.Errorf("step 6 detail = %q, want %q — the two integrity sites must stay distinguishable (the laptop-side and router-side gates fail for different reasons)", got, site)
+				}
+				if !strings.Contains(job.Error, err.Error()) {
+					t.Errorf("job.Error = %q, want it to carry the integrity verdict %q", job.Error, err.Error())
+				}
+				stated := strings.Contains(job.Error, "pre-deploy wireless config restored")
+				if stated != tc.wantRestoreIn {
+					t.Errorf("job.Error states a restore = %v, want %v: %q", stated, tc.wantRestoreIn, job.Error)
+				}
+
+				log := jobLogText(job)
+				if !strings.Contains(log, "ERROR: "+err.Error()) {
+					t.Errorf("deploy log does not carry the integrity verdict:\n%s", log)
+				}
+				rollbackAt := strings.Index(log, "Rolling back wireless config")
+				if gotRollback := rollbackAt >= 0; gotRollback != tc.wantRestoreIn {
+					t.Errorf("deploy log claims a wireless rollback = %v, want %v:\n%s", gotRollback, tc.wantRestoreIn, log)
+				}
+				if tc.wantRestoreIn {
+					if errAt := strings.Index(log, "ERROR: "); errAt < 0 || rollbackAt < errAt {
+						t.Errorf("expected the integrity failure to be logged before the rollback line (errAt=%d rollbackAt=%d):\n%s", errAt, rollbackAt, log)
+					}
+				}
+			})
+		}
 	}
 }
 

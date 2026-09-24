@@ -3,8 +3,10 @@
 **Status:** decided, implemented, unit-tested and pinned per-site by a static guard
 in the Go suite; exercised end-to-end against the fixture-router harness
 (`run-terminal-rollback.sh`, docker, no physical router) for the step-5, step-6 and
-step-6-install failure sites. **NOT yet run against a physical a53 router by this
-change** — see "What is not verified".
+step-6-install failure sites, and by `run-integrity-rollback.sh` for the two
+step-6 integrity sites (a real deploy handed ALTERED package bytes through a local
+MITM proxy, compared against the release's own published digest). **NOT yet run
+against a physical a53 router by this change** — see "What is not verified".
 
 ## Why
 
@@ -119,7 +121,7 @@ A `go/ast` guard (`TestDeployFailureSitesRestoreWireless`) parses the real
 
 - no bare `jobFail` with a literal step ≥ 6 may remain in `runDeployment`;
 - the `jobFailAfterRestore` sites must be *exactly* the registry
-  `postStep5FailureSites` in `wireless_rollback_test.go` (ten sites: step 6 × 6,
+  `postStep5FailureSites` in `wireless_rollback_test.go` (twelve sites: step 6 × 8,
   step 8 × 1, step 10 × 1, step 11 × 2) — so removing a restore and adding an
   unregistered failure site both fail the build;
 - the refusal must still be reached through `refuseMissingRequestedRelease`,
@@ -140,9 +142,11 @@ returned without restoring — a count is not coverage. It is now gone.
 | 6 | requested release unavailable, fallback not opted into (the #40 refusal) | `refuseMissingRequestedRelease` (restores, then fails) |
 | 6 | undetectable CPU arch | `jobFailAfterRestore` |
 | 6 | arch with no package URL (defensive: `selectPkgURL` is generic today) | `jobFailAfterRestore` |
+| 6 | `laptop-side package integrity check failed` — the bytes the **laptop** downloaded are not the bytes the release published (#43's gate: mismatch, or structurally impossible bytes) | `jobFailAfterRestore` |
 | 6 | `opkg: Not downgrading` — **also a status bug fix**: this used `setStep(6,"error")` + `return`, leaving `job.Status` "running" for ever (the wizard spun with no error) | `jobFailAfterRestore` |
 | 6 | `apk` reports an install/upgrade failure | `jobFailAfterRestore` |
 | 6 | installed version is not the requested release | `jobFailAfterRestore` |
+| 6 | `router-side package integrity check failed` — the bytes the **router** fetched with `wget` hash to something other than the published digest (#43's gate) | `jobFailAfterRestore` |
 | 6 | feed last resort: no package (on router or in the feed) | `jobFailAfterRestore` |
 | 8 | captive portal assets missing (dead-portal regression) | `jobFailAfterRestore` |
 | 10 | `tollgate-wrt` init script missing | `jobFailAfterRestore` |
@@ -151,11 +155,17 @@ returned without restoring — a count is not coverage. It is now gone.
 
 ## Open gaps (each one deliberate, and none of them is "forgot to restore")
 
-1. **PR #43's two step-6 "package integrity check failed" sites** (tracked as
-   `t_3fe64c6e`) return early after step 5 committed STA and so have the same
-   defect. They do not exist on this branch — #43 is still open — and must call
-   `jobFailAfterRestore` once it lands. #43 predates this exit, exactly as the
-   refusal predated `restoreWirelessOnFailure`.
+1. ~~**PR #43's two step-6 integrity sites** returned early after step 5 committed
+   STA.~~ **Closed** (card `t_3fe64c6e`): both sites now leave through
+   `jobFailAfterRestore` and are registered in `postStep5FailureSites`. #43 is
+   still open upstream, so the fix lives on a branch composed with #43's head:
+   the guard `TestDeployFailureSitesRestoreWireless` catches the two sites as bare
+   `jobFail`s the moment the integrity gate and this exit are in the same tree —
+   which is why the fix was written now, not after #43 merged. Their step details
+   are `laptop-side package integrity check failed` and `router-side package
+   integrity check failed`: the two gates fail for different reasons (the bytes
+   came from different halves of the download) and the registry pins one site per
+   detail.
 2. **A committed STA config the router stopped answering SSH for** cannot be
    restored by the installer: there is no session to run the restore in.
    `attemptSTA` reports that case (`leftCommitted`), `configureSTA` retries the
@@ -193,3 +203,10 @@ MT3000/MT6000, run a deploy in STA mode against a feed tag whose asset 404s,
 confirm the wizard fails loudly with the refusals text, then confirm the router's
 radios are back in their pre-deploy (scannable) state, that `uci show network`
 has no leftover `wwan` section, and that a re-run succeeds once the asset exists.
+
+The same physical check covers the integrity path this change fixes: point the
+deploy at a package whose bytes do not match the release's published digest (a
+truncated or altered `tollgate-wrt*.ipk` staged locally, or the MITM the harness
+uses), and confirm the same outcome — a loud step-6 failure naming which half of
+the download was bad, the radios back to their pre-deploy (scannable) state, no
+stray `network.wwan` section, and a re-run succeeding with the real asset.
