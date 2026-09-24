@@ -474,28 +474,21 @@ func runDeployment(job *Job, req deployRequest) {
 			"Unsupported CPU arch "+routerArch)
 		return
 	}
-	// Candidate download URLs: the generic feed URL first, then the GitHub
-	// release fallback (aarch64 only) if one exists. The first that yields
-	// bytes wins.
-	//
-	// The fallback asset is pinned to a DIFFERENT, OLDER release than the
-	// requested feed tag, so it is only offered when the operator has explicitly
-	// opted in (--allow-fallback / TOLLGATE_ALLOW_GITHUB_FALLBACK=1). Without
-	// the opt-in it is removed from the candidate list AND the refusal is held
-	// for the fail-loudly check below: a feed outage must not turn into a silent
-	// downgrade reported as success.
-	pkgCandidates := pkgCandidateURLs(routerArch, pkgExtension)
-	var fallbackRefusal error
-	if len(pkgCandidates) > 1 {
-		fb, err := githubFallbackSelection(routerArch, pkgExtension, githubFallbackAllowed())
-		if err != nil {
-			fallbackRefusal = err
-			pkgCandidates = pkgCandidates[:1]
-			job.addLog("GitHub fallback NOT used: " + err.Error())
-		} else {
-			job.addLog("GitHub fallback allowed by explicit opt-in (installs " +
-				githubFallbackPkgVersion(routerArch, pkgExtension) + ", not " + feedPkgVersion() + "): " + fb)
-		}
+	// Candidate download URLs: the tag-consistent feed URL, plus the GitHub
+	// release fallback (aarch64 only) ONLY when the operator has explicitly
+	// opted in (--allow-fallback / TOLLGATE_ALLOW_GITHUB_FALLBACK=1). The
+	// fallback asset is pinned to a DIFFERENT, OLDER release than the requested
+	// feed tag, so without the opt-in it is not part of the candidate list at
+	// all AND the refusal is held for the fail-loudly check below: a feed
+	// outage must not turn into a silent downgrade reported as success.
+	pkgCandidates, fallbackRefusal := pkgCandidateURLsWithFallback(
+		routerArch, pkgExtension, githubFallbackAllowed())
+	switch {
+	case fallbackRefusal != nil:
+		job.addLog("GitHub fallback NOT used: " + fallbackRefusal.Error())
+	case len(pkgCandidates) > 1:
+		job.addLog("GitHub fallback allowed by explicit opt-in (installs " +
+			githubFallbackPkgVersion(routerArch, pkgExtension) + ", not " + feedPkgVersion() + "): " + pkgCandidates[1])
 	}
 	if pkgExtension == ".apk" {
 		job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
@@ -2228,14 +2221,41 @@ func stageAssetURLs(isStockGL bool, glModel, pkgMgr string) []string {
 	return urls
 }
 
+// fallbackSuppressedError reports that the older GitHub fallback was not
+// prefetched, and why. Pre-staging runs BEFORE any download attempt, so it
+// cannot reuse the list-level refusal: that error asserts the requested
+// release "is not downloadable", which is only established once a download has
+// actually failed (deploy step 6). What a pre-stage reader needs to know is
+// narrower and always true: no package from another release was cached, and
+// the explicit opt-in is what would change that.
+type fallbackSuppressedError struct {
+	requestedTag string
+	arch         string
+	fbVersion    string
+}
+
+func (e *fallbackSuppressedError) Error() string {
+	return fmt.Sprintf("the older GitHub fallback for %s (package %s, a different and OLDER release than %s) was not prefetched — it is staged only with the explicit opt-in (--allow-fallback or %s=1)",
+		e.arch, e.fbVersion, e.requestedTag, githubFallbackEnv)
+}
+
 // stageAssetURLsForArch is the arch-aware variant of stageAssetURLs used by
 // the selection-time pre-stage job and the deploy PreStage step. It derives
-// the package URLs for the DETECTED OpenWrt arch (feed-primary plus the
-// GitHub fallback), so a non-aarch64 router is not served the wrong package.
+// the package URLs for the DETECTED OpenWrt arch (tag-consistent feed primary
+// plus the GitHub fallback, the latter only when the operator opted into it),
+// so a non-aarch64 router is not served the wrong package.
 // An empty arch (unknown, e.g. a stock router that will be flashed) falls back
 // to the pinned aarch64 assets, matching the historical behaviour.
-func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) []string {
+//
+// The second return value is non-nil when the older GitHub fallback was
+// deliberately NOT staged, and says so (with the requested release, the arch
+// and the fallback's package version). Pre-staging is best-effort and must not
+// fail the deploy, but it must not swallow that reason either — an install that
+// fails later on a cache miss should be able to point the operator at
+// --allow-fallback from the same log.
+func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) ([]string, error) {
 	urls := []string{}
+	var refusal error
 	pkg := func(ext string) []string {
 		if arch == "" {
 			if ext == ".apk" {
@@ -2243,7 +2263,19 @@ func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) 
 			}
 			return []string{tollgatePkgURL}
 		}
-		return pkgCandidateURLs(arch, ext)
+		// Tag-consistent candidates, plus the older GitHub fallback ONLY when
+		// this run opted into it: prefetching a different release's package
+		// that the deploy will refuse to install is wasted bandwidth and a
+		// provenance trap (C2-I-02).
+		candidates, err := pkgCandidateURLsWithFallback(arch, ext, githubFallbackAllowed())
+		if err != nil && refusal == nil {
+			refusal = &fallbackSuppressedError{
+				requestedTag: feedReleaseTag,
+				arch:         arch,
+				fbVersion:    pkgVersionFromReleaseURL(githubFallbackURL(arch, ext)),
+			}
+		}
+		return candidates
 	}
 	if isStockGL {
 		if img, ok := glModelMap[glModel]; ok {
@@ -2253,7 +2285,7 @@ func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) 
 		// stage both formats.
 		urls = append(urls, pkg(".ipk")...)
 		urls = append(urls, pkg(".apk")...)
-		return urls
+		return urls, refusal
 	}
 	switch pkgMgr {
 	case "apk":
@@ -2264,7 +2296,7 @@ func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) 
 		urls = append(urls, pkg(".ipk")...)
 		urls = append(urls, pkg(".apk")...)
 	}
-	return urls
+	return urls, refusal
 }
 
 // runPreStage is the PreStage wiring point called from runDeployment right
@@ -2282,7 +2314,13 @@ func runPreStage(job *Job, client *ssh.Client, isStockGL bool, glModel string) {
 		pkgMgr = strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
 		arch = detectArch(client)
 	}
-	urls := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
+	urls, refusal := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
+	if refusal != nil {
+		// The fallback was deliberately not staged; say why here so an install
+		// that fails later on a cache miss points at --allow-fallback in the
+		// same log (review finding 3).
+		job.addLog("PreStage: GitHub fallback NOT staged — " + refusal.Error())
+	}
 	if len(urls) == 0 {
 		job.addLog("PreStage: nothing to stage for this router state")
 		return
