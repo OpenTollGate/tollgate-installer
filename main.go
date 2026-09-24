@@ -4,6 +4,8 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -150,9 +152,13 @@ type Job struct {
 	Error  string     `json:"error,omitempty"`
 	// generatedPassword is set ONLY when the router had no root credential
 	// and none was supplied, so the deploy had to create one (see
-	// ensureRootCredential). It is shown to the operator ONCE, via the
-	// handleStatus snapshot, and is never written to disk. Guarded by mu.
+	// ensureRootCredential). It is served to the operator ONCE, on the first
+	// read of the COMPLETED job (see handleStatus), and is never written to
+	// disk and never written to the log. Guarded by mu.
 	generatedPassword string
+	// generatedPasswordServed records that the one-shot credential above has
+	// already been handed out, so it can never be served twice. Guarded by mu.
+	generatedPasswordServed bool
 	// stageCache holds pre-downloaded deploy assets keyed by the exact
 	// asset URL, populated by the PreStage phase (stageAssets) so the
 	// flash/install steps can consume staged bytes without live network.
@@ -184,6 +190,27 @@ func newJob(ip string) *Job {
 	}
 }
 
+// newJobID returns an unguessable job identifier: 16 bytes from crypto/rand,
+// hex-encoded.
+//
+// Job IDs are the only thing protecting /api/status, and a completed deploy's
+// status response carries the generated root credential once, so a guessable
+// ID is a credential harvest: the previous generator
+// (fmt.Sprintf("%d", time.Now().UnixNano()%100000000)) was constant within
+// each 100 ms tick, i.e. ~21 candidate IDs for a ±1 s clock window that any
+// local process — or any loopback-origin page the CORS allowlist trusts —
+// could enumerate with a few dozen GETs.
+//
+// FAILS (rather than falling back to a predictable source) if the OS CSPRNG is
+// unavailable.
+func newJobID() (string, error) {
+	var b [16]byte
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("crypto/rand unavailable: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
 // newPreStageJob creates a job for a selection-time pre-download
 // (/api/prestage). Same Job type (so /api/status works unchanged) but a short
 // prestageSteps() list.
@@ -205,17 +232,23 @@ func (j *Job) addLog(msg string) {
 }
 
 // setGeneratedPassword records a credential the wizard had to create (the
-// router had no root password and the operator supplied none) and shows it to
-// the operator ONCE — in the deploy log and as generated_password in
-// /api/status, which the UI renders as a copyable callout. There is no other
-// channel: the value is deliberately never persisted by the wizard.
+// router had no root password and the operator supplied none). The operator
+// sees it ONCE, in the success view, from the one-shot generated_password
+// field on /api/status (see handleStatus); the UI renders it as a copyable
+// callout.
+//
+// The value is deliberately NOT written to the deploy log: job.Log is part of
+// EVERY /api/status response, so a "ROOT PASSWORD: …" line would re-serve the
+// credential on every poll and silently defeat the one-shot cutoff — any local
+// process could read it out of the next status response without ever knowing
+// the job ID. The log announces that a credential was created, and where the
+// operator will see it, instead.
 func (j *Job) setGeneratedPassword(pw string) {
 	j.mu.Lock()
 	j.generatedPassword = pw
 	j.mu.Unlock()
 	j.addLog("Router had NO root password and none was supplied — generated a one-time credential.")
-	j.addLog("ROOT PASSWORD: " + pw)
-	j.addLog("Write it down NOW (shown once). Change it in the admin board's Settings, or run `passwd root` on the router.")
+	j.addLog("ROOT PASSWORD: generated — it is shown ONCE, on this deploy's success screen. Store it in your password manager NOW; it cannot be recovered.")
 }
 
 func (j *Job) setStep(i int, status, detail string) {
@@ -887,7 +920,11 @@ func handlePreStage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "IP required")
 		return
 	}
-	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
+	jobID, err := newJobID()
+	if err != nil {
+		writeError(w, 500, "cannot generate a job id")
+		return
+	}
 	job := newPreStageJob(req.IP)
 	jobsMutex.Lock()
 	jobs[jobID] = job
@@ -1011,7 +1048,11 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
+	jobID, err := newJobID()
+	if err != nil {
+		writeError(w, 500, "cannot generate a job id")
+		return
+	}
 	job := newJob(req.IP)
 
 	// State WHICH feed release this deploy targets, before any download — the
@@ -1058,6 +1099,21 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	// Return a snapshot for thread-safe JSON
 	job.mu.Lock()
+	// The generated credential is served EXACTLY ONCE: on the first read of a
+	// job that has COMPLETED successfully, after which the server drops it.
+	//
+	// Both halves matter. "At most once" means a second poll returns it as
+	// absent even if the caller already knew the job id. "Only when done" is
+	// what keeps the one-shot value alive long enough to be seen: the UI polls
+	// this endpoint every second while the deploy runs, so serving (and
+	// consuming) it mid-run would burn the credential before the success view
+	// — the only place it is shown — is ever reached.
+	generatedPassword := ""
+	if job.Status == "done" && !job.generatedPasswordServed && job.generatedPassword != "" {
+		generatedPassword = job.generatedPassword
+		job.generatedPasswordServed = true
+		job.generatedPassword = ""
+	}
 	snapshot := struct {
 		IP                string     `json:"ip"`
 		Status            string     `json:"status"`
@@ -1069,7 +1125,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		ProgressCurrent   int        `json:"progressCurrent"`
 		ProgressTotal     int        `json:"progressTotal"`
 		ProgressLabel     string     `json:"progressLabel,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, job.generatedPassword,
+	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, generatedPassword,
 		job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
 

@@ -183,7 +183,11 @@ func jobLogText(job *Job) string {
 // TestEnsureRootCredentialFreshDeployForcesACredential is the pre-release
 // blocker: the fresh-deploy state (root with NO password) must never be walked
 // past. With no password supplied the deploy GENERATES one, sets it, verifies
-// it landed, and shows it to the operator exactly once.
+// it landed, and hands it to the one-shot channel the UI shows it from.
+//
+// The credential must NOT be in the deploy log: job.Log is part of every
+// /api/status response, so a log line would re-serve it on every poll and
+// defeat the one-shot cutoff (see TestGeneratedCredentialNeverEntersTheDeployLog).
 func TestEnsureRootCredentialFreshDeployForcesACredential(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, passwdOut: "passwd: password changed\n"}
@@ -211,19 +215,20 @@ func TestEnsureRootCredentialFreshDeployForcesACredential(t *testing.T) {
 		t.Fatalf("step 4 status = %q, want done", got)
 	}
 
-	// The operator is SHOWN the credential, once.
+	// The credential is held for the one-shot serve...
 	job.mu.Lock()
 	shown := job.generatedPassword
 	job.mu.Unlock()
 	if shown != pw {
 		t.Fatalf("generated_password = %q, want the password that was set (%q)", shown, pw)
 	}
+	// ...and the log only ANNOUNCES it (shown once), never carries it.
 	logText := jobLogText(job)
-	if n := strings.Count(logText, pw); n != 1 {
-		t.Fatalf("generated password appears %d times in the deploy log, want exactly 1:\n%s", n, logText)
+	if strings.Contains(logText, pw) {
+		t.Fatalf("the generated password is written to the deploy log:\n%s", logText)
 	}
-	if !strings.Contains(logText, "ROOT PASSWORD: "+pw) {
-		t.Fatalf("deploy log does not surface the credential:\n%s", logText)
+	if !strings.Contains(logText, "ROOT PASSWORD") || !strings.Contains(logText, "ONCE") {
+		t.Fatalf("the deploy log does not tell the operator a one-time credential was created:\n%s", logText)
 	}
 }
 

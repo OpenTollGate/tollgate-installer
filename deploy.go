@@ -146,11 +146,28 @@ const (
 	rootHashUnknown rootHashState = "unknown"
 )
 
-// rootHashProbeCmd prints exactly one of `empty` / `locked` / `set` for root's
-// /etc/shadow entry. Field 2 is the hash; a MISSING root line is reported as
-// empty because rpcd then has no hash to check either.
-const rootHashProbeCmd = `h=$(awk -F: '$1=="root"{print $2}' /etc/shadow 2>/dev/null); ` +
-	`case "$h" in "") echo empty ;; '!'*|'*'*) echo locked ;; ?*) echo set ;; esac`
+// rootHashProbeCmd prints exactly one of `empty` / `locked` / `set` / `unknown`
+// for root's /etc/shadow entry. Field 2 is the hash; a MISSING root line is
+// reported as empty because rpcd then has no hash to check either.
+//
+// The two guards are the difference between "this router has no credential"
+// and "this probe cannot tell" (#46 review, finding 3). `empty` AUTHORISES
+// setting a password, and setting one OVERWRITES whatever hash is there, so
+// anything the probe cannot read must classify as `unknown` and be refused:
+//
+//   - `[ -r /etc/shadow ] || { echo unknown; exit 0; }` — a missing or
+//     unreadable shadow file is not the empty state.
+//   - `h=$(awk …) || { echo unknown; exit 0; }` — awk missing from PATH (or
+//     killed) is not "root has no hash" either. The guard is on awk's EXIT
+//     STATUS, not on its stderr: merely dropping `2>/dev/null` does not work,
+//     because the shell's error line lands before the `case` branch still
+//     prints `empty`, and parseRootHashState reads the LAST field.
+//
+// The command is self-contained (`exit 0` on the guarded paths) and must be
+// run as a standalone remote command, not concatenated into a longer script.
+const rootHashProbeCmd = `[ -r /etc/shadow ] || { echo unknown; exit 0; }; ` +
+	`h=$(awk -F: '$1=="root"{print $2}' /etc/shadow) || { echo unknown; exit 0; }; ` +
+	`case "$h" in "") echo empty ;; '!'*|'*'*) echo locked ;; ?*) echo set ;; *) echo unknown ;; esac`
 
 // parseRootHashState maps the probe output to a state. Only the exact probe
 // token is accepted (case-sensitive — `rootHashEmpty` from an older/failed
@@ -249,6 +266,10 @@ func ensureRootCredential(job *Job, run routerRun, supplied string) (string, boo
 		job.setGeneratedPassword(pw)
 		return pw, true
 	default:
+		// rootHashUnknown: /etc/shadow missing or unreadable, no awk, or a
+		// dead session. Never assume this is the credential-less state —
+		// setting a password here would overwrite a real one.
+		job.addLog("Could NOT read the router's root password state (/etc/shadow missing or unreadable, no awk, or a dead SSH session) — refusing to set a password, which could overwrite a working one.")
 		jobFail(job, 4, "cannot read the router's root password state",
 			"Could not determine whether root has a usable password (/etc/shadow unreadable: no awk, no shadow file, or a dead SSH session). "+
 				"Re-run the deploy and supply the router's root password explicitly.")
