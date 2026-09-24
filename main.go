@@ -57,6 +57,13 @@ var (
 	// router — is NOT reachable from other hosts on the LAN. Operators who
 	// accept that risk can override with --bind=0.0.0.0 or a specific IP.
 	listenBind = flag.String("bind", defaultBindHost, "HTTP bind address (default loopback-only)")
+	// trustHostKey is the operator's explicit host-key pin for this run: an
+	// OpenSSH SHA-256 fingerprint ("SHA256:…") of the router's SSH host key,
+	// verified on the router's own console. Without it (or an entry in the
+	// trust store) the wizard refuses to connect and prints the fingerprint —
+	// see hostkey.go. TOLLGATE_TRUST_HOST_KEY carries the same value for the
+	// curl|bash launcher, which runs the binary with its own argv.
+	trustHostKey = flag.String("trust-host-key", "", "OpenSSH SHA256 fingerprint of the router's SSH host key to trust (verified out of band)")
 	// allowFallback is the explicit opt-in for the GitHub release fallback (the
 	// pinned tollgate-module-basic-go assets). That asset is a DIFFERENT, OLDER
 	// release than the requested feed tag, so taking it silently is a downgrade;
@@ -825,7 +832,9 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 		client = sshConnect(req.IP, "")
 	}
 	if client == nil {
-		writeError(w, 502, "cannot connect to router via SSH")
+		// Prefer the host-key refusal: it names the fingerprint and the exact
+		// way to trust it, which a generic message would hide.
+		writeError(w, 502, sshConnectFailureMessage(req.IP, "cannot connect to router via SSH"))
 		return
 	}
 	defer client.Close()

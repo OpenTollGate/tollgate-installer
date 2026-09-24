@@ -201,7 +201,9 @@ func runDeployment(job *Job, req deployRequest) {
 	if client == nil {
 		job.mu.Lock()
 		job.Status = "failed"
-		job.Error = "Cannot connect to router via SSH"
+		// The host-key refusal (when there was one) carries the fingerprint and
+		// the exact trust instruction; a generic message would hide both.
+		job.Error = sshConnectFailureMessage(req.IP, "Cannot connect to router via SSH")
 		job.mu.Unlock()
 		return
 	}
@@ -364,7 +366,14 @@ func runDeployment(job *Job, req deployRequest) {
 			}
 		}
 		if err != nil {
-			jobFail(job, 2, "Router unreachable after flash", "Router did not come back after flash. Last known IP: "+req.IP+". See manual recovery docs (GL.iNet recovery mode).")
+			detail := "Router did not come back after flash. Last known IP: " + req.IP + ". See manual recovery docs (GL.iNet recovery mode)."
+			// A re-imaged router presents a NEW SSH host key and is therefore
+			// refused rather than accepted: say that, and how to trust it,
+			// instead of implying the router is dead.
+			if r := lastHostKeyRefusal(req.IP); r != "" {
+				detail = "Router came back on a DIFFERENT SSH host key (expected after re-imaging). Last known IP: " + req.IP + ". " + r
+			}
+			jobFail(job, 2, "Router unreachable after flash", detail)
 			return
 		}
 		client.Close()
@@ -1749,7 +1758,7 @@ func testSTAConfig(ip, password, ssid, wifiPass, band string) (bool, string) {
 		client = sshConnect(ip, "")
 	}
 	if client == nil {
-		return false, "cannot connect to router via SSH"
+		return false, sshConnectFailureMessage(ip, "cannot connect to router via SSH")
 	}
 	fw := sshRun(client, "cat /etc/openwrt_release 2>/dev/null")
 	if !strings.Contains(fw, "OpenWrt") {
