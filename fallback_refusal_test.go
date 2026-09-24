@@ -142,6 +142,17 @@ func TestPkgVersionVerdict(t *testing.T) {
 			wantWarnSubstr: "NOT the requested release",
 		},
 		{
+			// The readback a REAL opted-in fallback install produces: the
+			// pinned v0.5.0 .ipk carries `Version: v0.5.0` in its control file
+			// (deploy_test.go pins the router readback "tollgate-wrt - v0.5.0").
+			// Without normalizing the leading "v" this fataled with "the
+			// upgrade did not take effect" — on the exact recovery route the
+			// refusal message tells the operator to re-run with.
+			name:      "FALLBACK source (opted in), REAL v-prefixed readback — must not fatal",
+			installed: "v" + fbVer, sourceURL: fbIPK,
+			wantWarnSubstr: "NOT the requested release",
+		},
+		{
 			name:      "fallback source, unexpected version installed — still fatal",
 			installed: "0.4.0", sourceURL: fbIPK,
 			wantFatalSubstr: "did not take effect",
@@ -186,6 +197,42 @@ func TestPkgVersionVerdict(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPkgVersionVerdictNormalisesTheLeadingV pins that the same package reported
+// in either spelling — the feed's derived `0.6.0_alpha4_pre15-r1` and the pinned
+// GitHub release's `v0.5.0` — yields the SAME verdict for the source that
+// supplied it. Both spellings are real (deploy_test.go pins both readbacks), and
+// a spelling difference may never turn a correct install into a failure.
+func TestPkgVersionVerdictNormalisesTheLeadingV(t *testing.T) {
+	const arch, ext = pkgFallbackTestArch, ".ipk"
+	cases := []struct {
+		name  string
+		src   string
+		plain string // the version the source names, in the source's own spelling
+	}{
+		{"requested release from the feed", feedAssetURL(arch, ext), feedPkgVersion()},
+		{"opted-in fallback downgrade", githubFallbackURL(arch, ext), githubFallbackPkgVersion(arch, ext)},
+	}
+	for _, c := range cases {
+		if c.src == "" || c.plain == "" {
+			t.Fatalf("%s: fixture stale (src=%q plain=%q)", c.name, c.src, c.plain)
+		}
+		fatalPlain, warnPlain := pkgVersionVerdict(c.plain, c.src, arch, ext)
+		fatalV, warnV := pkgVersionVerdict("v"+c.plain, c.src, arch, ext)
+		if fatalPlain != fatalV {
+			t.Errorf("%s: the spelling changes the FATAL verdict (%q vs %q)", c.name, fatalPlain, fatalV)
+		}
+		// The warning TEXT quotes the readback, so it legitimately differs; what
+		// must not differ is WHETHER the downgrade warning fires.
+		if (warnPlain == "") != (warnV == "") {
+			t.Errorf("%s: the spelling changes whether a downgrade warning fires (%q vs %q)", c.name, warnPlain, warnV)
+		}
+		if fatalV != "" {
+			t.Errorf("%s: fatal = %q for the version its own source provides — a correct install must not fail",
+				c.name, fatalV)
+		}
 	}
 }
 

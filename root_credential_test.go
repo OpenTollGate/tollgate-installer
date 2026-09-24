@@ -169,16 +169,9 @@ func (f *fakeCredentialRouter) passwdCmd() string {
 	return ""
 }
 
-func jobLogText(job *Job) string {
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	var b strings.Builder
-	for _, e := range job.Log {
-		b.WriteString(e.Msg)
-		b.WriteString("\n")
-	}
-	return b.String()
-}
+// jobLogText lives in wireless_rollback_test.go (merged from main, #47/#48/#49)
+// and is shared by both suites — the merge dropped this branch's identical copy
+// rather than declare the helper twice.
 
 // TestEnsureRootCredentialFreshDeployForcesACredential is the pre-release
 // blocker: the fresh-deploy state (root with NO password) must never be walked

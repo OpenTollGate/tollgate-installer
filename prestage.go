@@ -42,7 +42,7 @@ func runPreStageJob(job *Job, req prestageRequest) {
 		client = sshConnect(req.IP, "")
 	}
 	if client == nil {
-		jobFail(job, 0, "Cannot connect to router via SSH", "Cannot connect to router via SSH")
+		jobFail(job, 0, sshConnectFailureMessage(req.IP, "Cannot connect to router via SSH"), sshConnectFailureMessage(req.IP, "Cannot connect to router via SSH"))
 		return
 	}
 	defer client.Close()
@@ -74,7 +74,13 @@ func runPreStageJob(job *Job, req prestageRequest) {
 		pkgMgr = strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
 		arch = detectArch(client)
 	}
-	urls := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
+	urls, refusal := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
+	if refusal != nil {
+		// Best-effort pre-download: the refusal is not fatal here, but it must
+		// be visible — the reason the older fallback was skipped is the whole
+		// point of C2-I-02 (review finding 3).
+		job.addLog("Pre-download: GitHub fallback NOT staged — " + refusal.Error())
+	}
 	if len(urls) == 0 {
 		job.setStep(1, "done", "nothing to stage")
 	} else {

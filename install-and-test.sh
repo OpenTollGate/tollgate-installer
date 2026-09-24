@@ -361,7 +361,10 @@ PORT="$(pick_port "${PORT}")"
 # --- 4. run the installer ---------------------------------------------------
 echo
 echo "Starting ${BIN_NAME} on http://localhost:${PORT} ..."
-"${RUN_BIN}" -port "${PORT}" >"${LOG_FILE}" 2>&1 &
+# "$@" forwards installer flags (e.g. --trust-host-key SHA256:…) so an operator
+# can trust a router's SSH host key from the curl|bash flow too. The equivalent
+# environment variable (TOLLGATE_TRUST_HOST_KEY) works without it.
+"${RUN_BIN}" -port "${PORT}" "$@" >"${LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 trap 'kill ${SERVER_PID} 2>/dev/null || true' EXIT
 
