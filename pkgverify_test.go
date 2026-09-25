@@ -170,8 +170,10 @@ func TestPackageLooksStructural(t *testing.T) {
 }
 
 // fakeReleaseServer serves a release layout: optionally a SHA256SUMS manifest,
-// optionally a per-asset .sha256 sidecar, and optionally the GitHub API.
-func fakeReleaseServer(t *testing.T, assetName string, digest string, withManifest, withSidecar, withAPI bool) (*httptest.Server, string, string) {
+// optionally a per-asset .sha256 sidecar, and optionally the GitHub API. The
+// manifest and sidecar serve `digest`; the API serves `apiDigest` — normally
+// the same value, deliberately different to pin the anchor-conflict case.
+func fakeReleaseServer(t *testing.T, assetName, digest, apiDigest string, withManifest, withSidecar, withAPI bool) (*httptest.Server, string, string) {
 	t.Helper()
 	mux := http.NewServeMux()
 	assetPath := "/FreedomTechFeed/packages/releases/download/v0.6.0-alpha2-pre9/" + assetName
@@ -190,7 +192,7 @@ func fakeReleaseServer(t *testing.T, assetName string, digest string, withManife
 	}
 	if withAPI {
 		mux.HandleFunc("/repos/FreedomTechFeed/packages/releases/tags/v0.6.0-alpha2-pre9", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprintf(w, `{"tag_name":"v0.6.0-alpha2-pre9","assets":[{"name":%q,"digest":"sha256:%s"}]}`, assetName, digest)
+			fmt.Fprintf(w, `{"tag_name":"v0.6.0-alpha2-pre9","assets":[{"name":%q,"digest":"sha256:%s"}]}`, assetName, apiDigest)
 		})
 	}
 	srv := httptest.NewServer(mux)
@@ -206,12 +208,62 @@ func fakeReleaseServer(t *testing.T, assetName string, digest string, withManife
 func TestPublishedDigestSourcePrecedence(t *testing.T) {
 	const assetName = "tollgate-wrt_0.6.0_alpha2_pre9_aarch64_cortex-a53.ipk"
 	want := digestOf([]byte("package"))
+	other := digestOf([]byte("other bytes"))
 
-	t.Run("SHA256SUMS manifest wins, but is same-origin so NOT independent", func(t *testing.T) {
-		srv, assetURL, apiBase := fakeReleaseServer(t, assetName, want, true, true, true)
+	t.Run("manifest and API AGREE is independent — the decided policy", func(t *testing.T) {
+		// Card t_a8d79292, option 1 (cross-check both anchors): the feed's
+		// SHA256SUMS manifest is same-origin on its own, but when the
+		// independent GitHub API publishes the SAME digest, two origins that
+		// never saw each other's bytes agree — that pair is an anchor.
+		srv, assetURL, apiBase := fakeReleaseServer(t, assetName, want, want, true, true, true)
 		_ = srv
 		old := githubAPIBase
 		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+
+		got, source, independent := publishedDigestForAsset(assetURL)
+		if got != want {
+			t.Fatalf("digest = %q, want %q", got, want)
+		}
+		if !independent {
+			t.Errorf("manifest+API agreement was NOT reported as independent: source %q — the cross-check (card t_a8d79292 option 1) must make the signed manifest usable", source)
+		}
+		if !strings.Contains(source, sha256SumsAssetName) || !strings.Contains(source, "cross-checked") {
+			t.Errorf("source = %q, want it to name the %s manifest AND the cross-check", source, sha256SumsAssetName)
+		}
+	})
+
+	t.Run("manifest and API DISAGREE is an anchor conflict, not a digest", func(t *testing.T) {
+		// Two independent origins disagreeing about one asset means the
+		// release is mispublished or an origin is compromised: the resolver
+		// must return NO digest plus a reason naming both, which the callers
+		// treat as FATAL — never silently fall through to one anchor.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, other, true, false, true)
+		old := githubAPIBase
+		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+
+		got, source, independent := publishedDigestForAsset(assetURL)
+		if got != "" {
+			t.Fatalf("digest = %q, want \"\" — a disagreement must not resolve to either anchor", got)
+		}
+		if independent {
+			t.Errorf("an anchor conflict must not be reported as independent")
+		}
+		for _, needle := range []string{"ANCHOR CONFLICT", want, other, assetName} {
+			if !strings.Contains(source, needle) {
+				t.Errorf("conflict reason %q does not name %q", source, needle)
+			}
+		}
+	})
+
+	t.Run("manifest without an API answer is same-origin so NOT independent", func(t *testing.T) {
+		// The strict pre-cross-check verdict (cold review finding 2) still
+		// holds when the API is unreachable: same-origin data alone is never
+		// a pass.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, want, true, true, false)
+		old := githubAPIBase
+		githubAPIBase = apiBase + "/nonexistent"
 		t.Cleanup(func() { githubAPIBase = old })
 
 		got, source, independent := publishedDigestForAsset(assetURL)
@@ -222,12 +274,33 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 			t.Errorf("source = %q, want it to name the %s manifest (the preferred, signable source)", source, sha256SumsAssetName)
 		}
 		if independent {
-			t.Errorf("the %s manifest was reported as an INDEPENDENT anchor; it is fetched from the asset's own host, so a host serving altered bytes also serves the digest (cold review finding 2)", sha256SumsAssetName)
+			t.Errorf("the %s manifest alone was reported as an INDEPENDENT anchor; it is fetched from the asset's own host, so a host serving altered bytes also serves the digest (cold review finding 2)", sha256SumsAssetName)
+		}
+	})
+
+	t.Run("cross-check escape hatch restores the strict policy", func(t *testing.T) {
+		// TOLLGATE_DIGEST_CROSSCHECK=0: the API is not consulted when the
+		// manifest has a digest, so verdicts are byte-identical to the
+		// pre-cross-check policy — manifest match ⇒ UNVERIFIED, and even a
+		// manifest/API disagreement yields no conflict (there is no second
+		// anchor to disagree with).
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, other, true, false, true)
+		old := githubAPIBase
+		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+		t.Setenv(digestCrosscheckEnv, "0")
+
+		got, source, independent := publishedDigestForAsset(assetURL)
+		if got != want || independent {
+			t.Errorf("publishedDigestForAsset = (%q, %q, %v), want (%q, …, false) — the escape hatch must restore manifest-only ⇒ not independent", got, source, independent, want)
+		}
+		if strings.Contains(source, "ANCHOR CONFLICT") {
+			t.Errorf("with the cross-check disabled there is no second anchor, so no conflict: %q", source)
 		}
 	})
 
 	t.Run("sidecar used when no manifest is published, and is same-origin too", func(t *testing.T) {
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, false, true, true)
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, want, false, true, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
@@ -240,14 +313,15 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 			t.Errorf("source = %q, want the per-asset sidecar", source)
 		}
 		if independent {
-			t.Errorf("the per-asset sidecar was reported as an INDEPENDENT anchor; it is same-origin (cold review finding 2)")
+			t.Errorf("the per-asset sidecar was reported as an INDEPENDENT anchor; it is same-origin (cold review finding 2) and the decided policy never cross-checks it into a pass")
 		}
 	})
 
 	t.Run("GitHub API digest used when the release publishes no manifest, and IS independent", func(t *testing.T) {
-		// This is the state of every feed release today (verified 2026-09-23:
-		// v0.6.0-alpha2-pre9 carries 14 assets, no SHA256SUMS).
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, false, false, true)
+		// This was the state of every feed release before the C3-05 feed-side
+		// change landed (verified 2026-09-23: v0.6.0-alpha2-pre9 carried 14
+		// assets, no SHA256SUMS).
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, want, false, false, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
@@ -265,7 +339,7 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 	})
 
 	t.Run("nothing published yields no digest", func(t *testing.T) {
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, false, false, true)
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, want, false, false, true)
 		old := githubAPIBase
 		// Point the API elsewhere so the release lookup 404s: no manifest, no
 		// sidecar, no API server -> the release publishes nothing we can use.
@@ -302,9 +376,11 @@ func TestVerifyPackageBytesVerdicts(t *testing.T) {
 	goodDigest := digestOf(good)
 
 	t.Run("matching digest from the independent API anchor is verified", func(t *testing.T) {
-		// The API digest is the ONLY independent source today (different origin
-		// from the package bytes), so it is what a green verdict must rest on.
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, false, false, true)
+		// Before the feed published SHA256SUMS the API digest was the ONLY
+		// independent source (different origin from the package bytes), so it
+		// is what a green verdict rested on; it still carries the verdict
+		// alone when no manifest is published.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, false, false, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
@@ -321,12 +397,59 @@ func TestVerifyPackageBytesVerdicts(t *testing.T) {
 		}
 	})
 
-	t.Run("same-origin manifest digest is UNVERIFIED, never a pass", func(t *testing.T) {
-		// Cold cross-family review 2026-09-23, finding 2: the manifest/sidecar
-		// are fetched from the same host that served the package, so a host
-		// serving altered bytes would serve a matching digest too. A match
-		// there must not be reported as verification.
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, true, true, false)
+	t.Run("matching digest from the manifest AND the API agreeing is verified", func(t *testing.T) {
+		// The decided policy (card t_a8d79292, option 1): the feed now
+		// publishes SHA256SUMS, and when the independent API publishes the
+		// same digest the pair is an anchor — the signed manifest upgrades
+		// the verdict instead of downgrading it to unverified.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, true, true, true)
+		old := githubAPIBase
+		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+
+		v := verifyPackageBytes(assetURL, ".ipk", good)
+		if !v.verified() || v.fatal() {
+			t.Fatalf("verdict = %+v, want verified and non-fatal", v)
+		}
+		if v.Want != goodDigest || v.Got != goodDigest {
+			t.Errorf("verdict digests = (%q, %q), want both %q", v.Want, v.Got, goodDigest)
+		}
+		if !strings.Contains(v.Source, "cross-checked") {
+			t.Errorf("source = %q, want it to record the cross-check", v.Source)
+		}
+		if !strings.Contains(v.suffix(), "verified") {
+			t.Errorf("suffix = %q, want a verified marker for the install step detail", v.suffix())
+		}
+	})
+
+	t.Run("manifest and API digests DISAGREE is fatal, whatever the bytes", func(t *testing.T) {
+		// Card acceptance: the case where manifest and API digest disagree
+		// must be pinned by a test. The bytes here MATCH the manifest
+		// digest — and the verdict must still be fatal, because the
+		// disagreement is about the release, not about these bytes.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, digestOf([]byte("api says other")), true, false, true)
+		old := githubAPIBase
+		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+
+		v := verifyPackageBytes(assetURL, ".ipk", good)
+		if v.Status != "mismatch" || !v.fatal() {
+			t.Fatalf("verdict = %+v, want a fatal mismatch on anchor conflict", v)
+		}
+		for _, needle := range []string{"ANCHOR CONFLICT", goodDigest, assetName} {
+			if !strings.Contains(v.Detail, needle) {
+				t.Errorf("failure text does not name %q:\n%s", needle, v.Detail)
+			}
+		}
+	})
+
+	t.Run("same-origin manifest alone is UNVERIFIED, never a pass", func(t *testing.T) {
+		// Cold cross-family review 2026-09-23, finding 2, still holds when
+		// the API cannot be consulted: the manifest is fetched from the same
+		// host that served the package, so a host serving altered bytes
+		// would serve a matching digest too. A match there must not be
+		// reported as verification.
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, true, true, false)
 		old := githubAPIBase
 		githubAPIBase = apiBase + "/nonexistent" // no API answer: manifest/sidecar only
 		t.Cleanup(func() { githubAPIBase = old })
@@ -355,7 +478,7 @@ func TestVerifyPackageBytesVerdicts(t *testing.T) {
 		if digestOf(corrupted) == goodDigest {
 			t.Fatal("fixture broken: the corrupted copy has the published digest")
 		}
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, false, false, true)
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, false, false, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
@@ -375,7 +498,7 @@ func TestVerifyPackageBytesVerdicts(t *testing.T) {
 	})
 
 	t.Run("no published digest is unverified, never a pass", func(t *testing.T) {
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, false, false, true)
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, false, false, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase + "/nonexistent"
 		t.Cleanup(func() { githubAPIBase = old })
@@ -418,7 +541,7 @@ func TestCheckPackageBytesPolicy(t *testing.T) {
 	}
 
 	t.Run("mismatch is fatal and logged as an ERROR", func(t *testing.T) {
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, true, false, true)
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, true, false, true)
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
@@ -439,7 +562,7 @@ func TestCheckPackageBytesPolicy(t *testing.T) {
 	})
 
 	t.Run("unverified is a WARNING by default and FATAL when required", func(t *testing.T) {
-		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, false, false, true)
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, goodDigest, goodDigest, false, false, true)
 		oldAPI := githubAPIBase
 		githubAPIBase = apiBase + "/nonexistent"
 		t.Cleanup(func() { githubAPIBase = oldAPI })
@@ -514,14 +637,19 @@ func jobLog(job *Job) string {
 // C2-I-03, run against the real pinned feed release (like the repo's other
 // live tests it is skipped under -short).
 //
-// It asserts three things, in order:
+// It asserts four things, in order:
 //
 //  1. the pinned release PUBLISHES a sha256 for the pinned asset — if that
 //     stops being true the verifier has gone blind, which must be a loud test
 //     failure rather than a silent "unverified" at deploy time;
-//  2. the real downloaded bytes match it (so the verifier is not merely
+//  2. the digest is INDEPENDENT under the decided policy (card t_a8d79292,
+//     option 1): since the feed publishes SHA256SUMS, independence requires
+//     the same-origin manifest and the GitHub release API to AGREE — the
+//     cross-check that makes the signed manifest usable rather than a verdict
+//     downgrade;
+//  3. the real downloaded bytes match it (so the verifier is not merely
 //     self-consistent — it agrees with the artifact customers install);
-//  3. a single flipped byte is a FATAL mismatch, i.e. tampering with the
+//  4. a single flipped byte is a FATAL mismatch, i.e. tampering with the
 //     package as it travels or at rest in the staging cache cannot be
 //     installed as root.
 func TestLivePackageDigestRejectsCorruptedBytes(t *testing.T) {
@@ -536,7 +664,7 @@ func TestLivePackageDigestRejectsCorruptedBytes(t *testing.T) {
 			feedReleaseTag, assetNameFromURL(assetURL), sha256SumsAssetName)
 	}
 	if !independent {
-		t.Fatalf("the digest for the pinned feed release came from %q and is NOT an independent anchor — a green verdict must not rest on same-origin data (cold review finding 2)", source)
+		t.Fatalf("the digest for the pinned feed release came from %q and is NOT an independent anchor — a green verdict must not rest on same-origin data alone (cold review finding 2; cross-check policy card t_a8d79292)", source)
 	}
 
 	data, err := httpGetFile(assetURL)
