@@ -23,47 +23,70 @@ package main
 //
 //  1. `<release>/SHA256SUMS` — a manifest asset published with the release.
 //     Preferred: one artifact to sign, and it covers every arch/format. The
-//     feed publishes this today for NO release yet (verified 2026-09-23: the
-//     v0.6.0-alpha2-pre9 release carries exactly 14 assets, all .ipk/.apk), so
-//     this source lights up the moment the feed-side change lands. Until then
-//     it is attempted and skipped.
+//     feed publishes this since the C3-05 feed-side change landed (verified
+//     2026-09-24: the v0.6.0-alpha2-pre9 release carries SHA256SUMS and a
+//     detached SHA256SUMS.sig), so this source is live today.
 //  2. `<asset-URL>.sha256` — a per-asset sidecar, same idea, no parsing.
 //  3. The GitHub release API's own per-asset `digest` field
 //     (`GET /repos/<owner>/<repo>/releases/tags/<tag>` → `assets[].digest`,
-//     `sha256:<hex>`). GitHub computes this server-side and publishes it today
-//     for every feed release, so verification is REAL now, not aspirational.
+//     `sha256:<hex>`). GitHub computes this server-side and publishes it for
+//     every feed release, so verification is REAL now, not aspirational.
 //
-// Only (3) is an INDEPENDENT anchor (cold cross-family review 2026-09-23,
-// finding 2 — the original claim was too broad):
+// Which sources are INDEPENDENT anchors (cold cross-family review 2026-09-23,
+// finding 2) is a DECIDED POLICY, not a static fact:
 //
 //   - (3) is served by a DIFFERENT origin (api.github.com) over its own
 //     connection, so a redirect/mirror/host substituting different package
-//     bytes cannot satisfy it.
+//     bytes cannot satisfy it. It is independent on its own.
 //   - (1) and (2) are fetched from the SAME origin as the package bytes. A
-//     matching digest from there proves only that one origin served consistent
-//     bytes: it still catches truncation and at-rest corruption, but an
-//     attacker who controls (or MITMs) that host serves the package and its
-//     digest together and satisfies the check trivially. A same-origin digest
-//     is therefore reported as UNVERIFIED, never as a pass — the step says so
-//     explicitly, and TOLLGATE_REQUIRE_PACKAGE_DIGEST=1 rejects it. Making (1)
-//     a real anchor needs the feed to SIGN the manifest with a pinned key
-//     (audit C3-05); until then it is same-origin by construction.
+//     matching digest from there alone proves only that one origin served
+//     consistent bytes: it still catches truncation and at-rest corruption,
+//     but an attacker who controls (or MITMs) that host serves the package and
+//     its digest together and satisfies the check trivially.
 //
-// What (3) does and does not buy, stated honestly: the digest does not arrive
-// over the connection that carried the package bytes, so it catches a partial
-// or corrupted download, a wrong/substituted file at rest in the staging cache,
-// a redirect/mirror serving different bytes, and a swapped /tmp file on the
-// router — the whole "wrong or altered package installed as root" class — and it
-// turns each of them into a FAILED deploy instead of a green one. It cannot
-// detect a compromise of the GitHub release itself (digest and bytes would be
-// attacker-fresh together); closing that needs the feed-published manifest (1)
-// plus a pinned signing key, which is a separate, already-identified change
-// (audit C3-05).
+// DECIDED POLICY (card t_a8d79292, option 1 — cross-check both anchors; the
+// feed starting to publish SHA256SUMS must UPGRADE the verdict, not silently
+// downgrade it to "unverified"):
+//
+//   - manifest match + API digest AGREE    → VERIFIED. Two origins that never
+//     saw each other's bytes published the same digest, so a hostile package
+//     host cannot forge the pair. This is what makes the new signed manifest
+//     usable rather than a verdict downgrade.
+//   - manifest match + API digest DISAGREE → FATAL. Two independent origins
+//     disagree about one asset: the release is mispublished or one of the
+//     origins is compromised — the deploy refuses rather than picking an
+//     anchor.
+//   - manifest match + API unreachable     → UNVERIFIED (the strict
+//     pre-cross-check verdict): same-origin data alone is still never a pass.
+//   - sidecar match (any state)            → UNVERIFIED: the sidecar is a
+//     per-asset convenience file, not the signed manifest, and is never
+//     cross-checked into a pass.
+//   - API digest only                      → VERIFIED (as before).
+//   - nothing published                    → UNVERIFIED, and fatal under
+//     TOLLGATE_REQUIRE_PACKAGE_DIGEST=1.
+//
+// TOLLGATE_DIGEST_CROSSCHECK=0 restores the strict pre-cross-check policy
+// (manifest match ⇒ UNVERIFIED) as an escape hatch while investigating an
+// anchor disagreement; the cross-check is on by default.
+//
+// What the cross-check does and does not buy, stated honestly: on top of
+// everything a single independent anchor catches — a partial or corrupted
+// download, a wrong/substituted file at rest in the staging cache, a
+// redirect/mirror serving different bytes, a swapped /tmp file on the router,
+// the whole "wrong or altered package installed as root" class — it also
+// detects an attacker who controls exactly ONE of the two origins (the package
+// host or the API). It cannot detect a compromise of the GitHub release
+// itself (digest, manifest and bytes would be attacker-fresh together);
+// closing that needs the feed's manifest SIGNATURE verified against a key
+// pinned in this installer (audit C3-05 — SHA256SUMS.sig exists today, the
+// pin does not).
 //
 // Policy (fail closed, never a silent pass):
 //
 //   - digest published and DIFFERENT      → fatal: the deploy fails, naming the
 //     asset, both digests, and where the expected digest came from.
+//   - independent anchors DISAGREE        → fatal (see the decided policy
+//     above): the deploy fails naming both sources and both digests.
 //   - bytes that cannot be the expected package (wrong magic, absurdly small) →
 //     fatal.
 //   - no digest published anywhere        → the step renders "warn" with
@@ -100,6 +123,11 @@ const (
 	// unattended/release runs, where "we could not verify what we installed"
 	// must not be reported as success.
 	requirePkgDigestEnv = "TOLLGATE_REQUIRE_PACKAGE_DIGEST"
+	// digestCrosscheckEnv disables the manifest↔API digest cross-check (the
+	// decided policy, card t_a8d79292 option 1): setting it to an off value
+	// restores the strict pre-cross-check verdict (manifest match ⇒
+	// UNVERIFIED). Escape hatch while investigating an anchor disagreement.
+	digestCrosscheckEnv = "TOLLGATE_DIGEST_CROSSCHECK"
 	// minPackageBytes is a floor below which the bytes cannot be a
 	// tollgate-wrt package (the shipped assets are ~7.9-9.6 MB; the Go binary
 	// plus packaging alone exceeds this). It catches a truncated transfer and
@@ -357,35 +385,83 @@ func githubReleaseAssetDigest(assetURL, assetName string) (string, bool) {
 	return "", false
 }
 
+// digestCrosscheckEnabled reports whether the manifest↔API digest cross-check
+// (the decided policy, card t_a8d79292 option 1) is active. On by default;
+// TOLLGATE_DIGEST_CROSSCHECK=0 restores the strict pre-cross-check verdict
+// (manifest match ⇒ UNVERIFIED) as an escape hatch.
+func digestCrosscheckEnabled(getenv func(string) string) bool {
+	switch strings.ToLower(strings.TrimSpace(getenv(digestCrosscheckEnv))) {
+	case "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
+
 // publishedDigestForAsset resolves the digest a release publishes for the asset
 // at assetURL, trying the release manifest, then a per-asset sidecar, then the
 // GitHub API. Returns ("", "", false) when the release publishes no digest for
 // it — which is reported as NOT VERIFIED, never as a pass.
 //
-// independent reports whether the digest came from an origin DIFFERENT from the
-// one serving the package bytes. Only the GitHub API is independent; the
-// manifest and the sidecar are fetched from the asset's own host, so a hostile
-// (or MITMed) host serves both and defeats them (cold review finding 2). The
-// caller treats a non-independent match as UNVERIFIED.
+// independent reports whether the returned digest rests on an origin DIFFERENT
+// from the one serving the package bytes:
+//
+//   - When the manifest (the signable, release-level source) publishes a
+//     digest AND the cross-check is enabled, the GitHub API digest is ALWAYS
+//     consulted too: agree ⇒ independent (two origins that never saw each
+//     other's bytes published the same digest — the decided policy, card
+//     t_a8d79292 option 1); disagree ⇒ ("", reason, false) with the reason
+//     naming both sources and both digests, which the callers treat as a
+//     FATAL anchor conflict, not an unverified pass.
+//   - Otherwise only the GitHub API is independent; the manifest and the
+//     sidecar are fetched from the asset's own host, so a hostile (or MITMed)
+//     host serves both and defeats them (cold review finding 2). The caller
+//     treats a non-independent match as UNVERIFIED.
 func publishedDigestForAsset(assetURL string) (digest, source string, independent bool) {
 	name := assetNameFromURL(assetURL)
 	if name == "" {
 		return "", "", false
 	}
+	manifestDigest, manifestSource := "", ""
 	if dir := releaseAssetDir(assetURL); dir != "" {
 		if body, status, err := httpGetBytesForDigest(dir+sha256SumsAssetName, nil); err == nil && status == http.StatusOK {
 			if d := parseChecksumManifestFor(body, name); d != "" {
-				return d, sha256SumsAssetName + " manifest on " + dir, false
+				manifestDigest, manifestSource = d, sha256SumsAssetName+" manifest on "+dir
 			}
 		}
 	}
+	// With the cross-check disabled the API is not even consulted when the
+	// manifest has a digest — verdicts are then byte-identical to the
+	// pre-cross-check policy (manifest/sidecar match ⇒ UNVERIFIED), which is
+	// what makes the escape hatch safe to investigate an anchor disagreement.
+	apiDigest, apiOK := "", false
+	if manifestDigest == "" || digestCrosscheckEnabled(os.Getenv) {
+		apiDigest, apiOK = githubReleaseAssetDigest(assetURL, name)
+	}
+	// The manifest is preferred as the compared-against digest: it is the
+	// artifact a signer signs, so disagreements are reported in its terms.
+	// When the manifest is absent the sidecar is attempted next (same-origin,
+	// never independent), and the API alone carries the verdict.
+	if manifestDigest != "" {
+		if apiDigest != "" && apiDigest != manifestDigest {
+			return "", fmt.Sprintf("ANCHOR CONFLICT: the %s publishes %s for %s but the GitHub release API publishes %s — two independent origins disagree about this asset, so neither is trusted", manifestSource, manifestDigest, name, apiDigest), false
+		}
+		if apiDigest == manifestDigest {
+			return manifestDigest, manifestSource + " (cross-checked against the GitHub release API)", true
+		}
+		// No API answer (or cross-check disabled): manifest alone is
+		// same-origin — never a pass (cold review finding 2).
+		return manifestDigest, manifestSource, false
+	}
 	if body, status, err := httpGetBytesForDigest(assetURL+sha256SidecarSuffix, nil); err == nil && status == http.StatusOK {
 		if d := firstDigestToken(body); d != "" {
+			// The sidecar is never cross-checked into a pass: it is a
+			// per-asset convenience file, not the signed manifest, so it
+			// stays same-origin ⇒ not independent (decided policy).
 			return d, "per-asset " + sha256SidecarSuffix + " sidecar", false
 		}
 	}
-	if d, ok := githubReleaseAssetDigest(assetURL, name); ok {
-		return d, "GitHub release API asset digest", true
+	if apiOK {
+		return apiDigest, "GitHub release API asset digest", true
 	}
 	return "", "", false
 }
@@ -516,6 +592,21 @@ func verifyPackageBytes(assetURL, ext string, data []byte) pkgIntegrity {
 	}
 	want, source, independent := publishedDigestForAsset(assetURL)
 	if want == "" {
+		if source != "" {
+			// Not "no digest published" but an explicit ANCHOR CONFLICT
+			// (decided policy, card t_a8d79292 option 1): the same-origin
+			// manifest and the independent API digest DISAGREE about this
+			// asset. That is a mispublished release or a compromised origin,
+			// and the deploy must stop rather than silently fall through to
+			// the API (which would hide the disagreement behind a green
+			// verdict built on only one of the two anchors).
+			return pkgIntegrity{
+				Status: "mismatch",
+				Detail: fmt.Sprintf("REFUSING to install %s from %s: %s", assetNameFromURL(assetURL), assetURL, source),
+				Got:    got,
+				Source: source,
+			}
+		}
 		return pkgIntegrity{
 			Status: "unverified",
 			Detail: fmt.Sprintf("no published sha256 for %s (checked %s, the per-asset .sha256 sidecar, and the GitHub release API): installed bytes are UNVERIFIED (%s)",
@@ -616,6 +707,20 @@ func checkRouterFileDigest(job *Job, client *ssh.Client, assetURL, ext, remotePa
 	}
 	want, source, independent := publishedDigestForAsset(assetURL)
 	switch {
+	case want == "" && source != "":
+		// ANCHOR CONFLICT (decided policy, card t_a8d79292 option 1): the
+		// manifest and the API digest disagree. Fatal for the router-side
+		// download too — the disagreement is about the RELEASE, not about
+		// which host the bytes came from.
+		v := pkgIntegrity{
+			Status: "mismatch",
+			Detail: fmt.Sprintf("REFUSING to install %s downloaded on the router: %s — refusing to install altered or corrupted package bytes",
+				name, source),
+			Got:    got,
+			Source: source,
+		}
+		job.addLog("ERROR: " + v.Detail)
+		return v, fmt.Errorf("%s", v.Detail)
 	case want == "":
 		v := pkgIntegrity{
 			Status: "unverified",
