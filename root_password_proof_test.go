@@ -26,9 +26,34 @@ package main
 // the transition without ever proving the credential.
 
 import (
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
+
+// ─── the production call site ────────────────────────────────────
+
+// TestRunDeploymentWiresTheFreshLoginProof pins the single production call site
+// of the proof channel. The proof is only worth anything if the deploy hands
+// ensureRootCredential a channel that dials the OPERATOR'S router with the
+// candidate: a nil channel fails closed, so every supplied-password deploy on a
+// router that already had a credential would fail with "could not be proven"
+// while the code still looked right.
+func TestRunDeploymentWiresTheFreshLoginProof(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "deploy.go", deployGoSrc, 0)
+	if err != nil {
+		t.Fatalf("parse deploy.go: %v", err)
+	}
+	body := funcBodyText(t, fset, f, "runDeployment")
+	if !strings.Contains(body, "ensureRootCredential(job,") {
+		t.Fatalf("runDeployment no longer calls ensureRootCredential\n%s", body)
+	}
+	if !strings.Contains(body, "proveRootPassword(req.IP") {
+		t.Errorf("runDeployment does not wire the fresh-login proof to the router address it is deploying to (expected proveRootPassword(req.IP, …))\n%s", body)
+	}
+}
 
 // ─── the proof obligation on a set→set transition ────────────────
 
