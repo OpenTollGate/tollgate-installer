@@ -21,7 +21,20 @@ type RouterInfo struct {
 	Name     string `json:"name"`
 	SSH      bool   `json:"ssh_open"`
 	HTTPPort int    `json:"http_port,omitempty"`
+	// SSHRefusal explains why SSH identification could not run: the router's
+	// host-key refusal (fingerprint plus the exact trust instruction) when there
+	// was one. sshIdentify returns silently — its only other channel is the
+	// binary's stderr, which a browser-first operator (curl|bash: the launcher
+	// redirects it into a log file) never sees — so /api/scan and /api/identify
+	// carry it and the UI renders it next to the router (RISK item of the #41
+	// review).
+	SSHRefusal string `json:"ssh_refusal,omitempty"`
 }
+
+// sshProbePort is the TCP port that decides whether a host answers SSH. It is a
+// variable only so the router-trust tests can aim this real discovery path at an
+// in-process SSH server (see sshDialPort in ssh.go); production always uses 22.
+var sshProbePort = 22
 
 // discoverRouters scans the local subnet for OpenWrt routers.
 func discoverRouters() []RouterInfo {
@@ -167,8 +180,8 @@ func probeRouter(ip string) RouterInfo { return probeRouterWithPassword(ip, "") 
 func probeRouterWithPassword(ip, password string) RouterInfo {
 	info := RouterInfo{IP: ip, Vendor: "unknown", Model: "unknown", Firmware: "unknown"}
 
-	// Check SSH port 22
-	info.SSH = tcpProbe(ip, 22, 2*time.Second)
+	// Check the SSH port (22 in production).
+	info.SSH = tcpProbe(ip, sshProbePort, 2*time.Second)
 
 	// Check HTTP ports
 	for _, port := range []int{80, 443, 8080} {
@@ -184,6 +197,10 @@ func probeRouterWithPassword(ip, password string) RouterInfo {
 			info.Firmware = fw
 			info.Vendor = vendor
 			info.Model = model
+		} else if refusal := lastHostKeyRefusal(ip); refusal != "" {
+			// The connect was refused: say so instead of rendering a router whose
+			// firmware is simply "unknown".
+			info.SSHRefusal = refusal
 		}
 	}
 
@@ -247,7 +264,10 @@ func parseGLInetRelease(glOut string) (model, version string) {
 	return model, version
 }
 
-// sshIdentify tries passwordless SSH to read firmware info.
+// sshIdentify tries passwordless SSH to read firmware info. A connect that never
+// happened (no client) returns empty values; the reason is recorded against ip by
+// the connect helper (see hostkey.go), so the caller can surface a host-key
+// refusal with lastHostKeyRefusal/sshConnectFailureMessage instead of losing it.
 func sshIdentify(ip, password string) (firmware, vendor, model string) {
 	client := sshConnect(ip, password)
 	if client == nil {

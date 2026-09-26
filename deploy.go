@@ -1822,6 +1822,11 @@ func rollbackWireless(client *ssh.Client) {
 // reconnectSSH retries sshConnect (radios may be restarting after a wifi
 // reload, so the first attempts can time out). Falls back to empty-password
 // auth like the initial connect.
+//
+// It reports nothing itself: a host-key refusal is recorded against ip by the
+// connect helper (hostkey.go) and each caller hands it to the operator with
+// sshConnectFailureMessage, so a refused key is never reported as "the router is
+// not answering" (RISK item of the #41 review).
 func reconnectSSH(ip, password string, attempts int, delay time.Duration) *ssh.Client {
 	for i := 0; i < attempts; i++ {
 		time.Sleep(delay)
@@ -2005,6 +2010,9 @@ func attemptSTA(ip, password, ssid, wifiPass, radio string) (client *ssh.Client,
 	if client == nil && password != "" {
 		client = sshConnect(ip, "")
 	}
+	// As in reconnectSSH: nothing is reported here. A host-key refusal stays in
+	// the registry for the caller's sshConnectFailureMessage, which is what keeps
+	// the refusal text uniform across every connect site.
 	if client == nil {
 		return nil, false, false
 	}
@@ -2424,7 +2432,10 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 			hint = staFailureHint(c, ssid, band)
 			c.Close()
 		}
-		detail := "WiFi STA connection failed for \"" + ssid + "\" — check SSID and password"
+		// A connect that never happened (untrusted or changed host key) is not a
+		// WiFi problem: the refusal carries the fingerprint and the exact trust
+		// instruction, so it replaces the SSID/password hint when there was one.
+		detail := sshConnectFailureMessage(ip, "WiFi STA connection failed for \""+ssid+"\" — check SSID and password")
 		if leftCommitted == "" {
 			detail += " (wireless config rolled back)"
 		} else {
@@ -2549,7 +2560,9 @@ func testSTAConfig(ip, password, ssid, wifiPass, band string) (bool, string) {
 		hint = staFailureHint(c, ssid, band)
 		c.Close()
 	}
-	msg := "WiFi connection failed for \"" + ssid + "\""
+	// Same uniformity as configureSTA (see above): a refused host key is not a
+	// WiFi problem, and the refusal text is the only actionable one.
+	msg := sshConnectFailureMessage(ip, "WiFi connection failed for \""+ssid+"\"")
 	if b != "" {
 		msg += " (" + b + " GHz)"
 	}
