@@ -28,8 +28,10 @@ import (
 //
 //  1. --trust-host-key SHA256:… (or TOLLGATE_TRUST_HOST_KEY, so the operator can
 //     use it through the curl|bash launcher) — the operator verified this
-//     fingerprint out of band. The key is then remembered in the store, so the
-//     rest of this run and later runs do not need the flag again.
+//     fingerprint out of band. The key is then remembered in the store, IN PLACE
+//     OF the host's previous entry (see rememberHostKey), so the rest of this run
+//     and later runs do not need the flag again — including the re-image case,
+//     where the same router comes back with a new key.
 //  2. The known-hosts store — a host the operator trusted before, verified
 //     against the key it presents now. A CHANGED key is refused, always.
 //  3. Anything else: refuse, print the fingerprint and the exact command that
@@ -86,8 +88,25 @@ func sameFingerprint(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(na), []byte(nb)) == 1
 }
 
-// rememberHostKey appends host+key to the store so later connects in this run
+// knownHostsStoreMu guards the store's read-modify-write. Several jobs can run at
+// once (main.go starts a deploy with `go runDeployment(...)`), and two interleaved
+// rewrites of the same file would lose an entry.
+var knownHostsStoreMu sync.Mutex
+
+// rememberHostKey records host+key in the store so later connects in this run
 // (and later runs) verify the key without another explicit trust decision.
+//
+// It REPLACES the host's existing entry instead of appending one. Appending was
+// BLOCK 2 of the #41 review: x/crypto's knownhosts keeps only the FIRST key it
+// finds for a host+algorithm ("if _, ok := knownKeys[typ]; !ok", knownhosts.go),
+// so after the operator pinned a RE-IMAGED router's new key the stale pre-flash
+// line still won — the appended line was ignored, every later pin-less connect
+// was refused as CHANGED, and the promise this file's header makes ("the key is
+// then remembered ... so later runs do not need the flag again") did not hold for
+// exactly the re-image case it documents.
+//
+// Entries for other hosts (and comments) are preserved, and the rewrite is atomic
+// so a crash cannot leave a half-written trust store behind.
 func rememberHostKey(host string, key ssh.PublicKey) error {
 	path := knownHostsPath()
 	if path == "" {
@@ -98,17 +117,167 @@ func rememberHostKey(host string, key ssh.PublicKey) error {
 			return err
 		}
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 	line := knownhosts.Line([]string{knownhosts.Normalize(host)}, key)
 	if strings.TrimSpace(line) == "" {
 		return errors.New("could not serialise the host key")
 	}
-	_, err = f.WriteString(line + "\n")
-	return err
+
+	knownHostsStoreMu.Lock()
+	defer knownHostsStoreMu.Unlock()
+
+	if err := replaceHostKeyLine(path, host, line); err != nil {
+		return err
+	}
+	// Prove it with the real parser instead of trusting the removal pass: the
+	// store must now resolve host to the key just recorded. A line the pass cannot
+	// identify (a hashed "|1|…" entry, whose host is unrecoverable without its
+	// per-line salt) still shadows it, and the operator is better served by a
+	// warning than by a "remembered" that refuses the router on the next run.
+	return verifyStoreResolvesTo(path, host, key)
+}
+
+// replaceHostKeyLine writes line as the ONLY store entry for host, keeping every
+// other line.
+func replaceHostKeyLine(path, host, line string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	kept := make([]string, 0, 8)
+	for _, l := range strings.Split(string(existing), "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue // the store is machine-written; a blank line carries nothing
+		}
+		if knownHostsLineCovers(l, host) {
+			continue // replaced by `line` below
+		}
+		kept = append(kept, l)
+	}
+	kept = append(kept, line)
+
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, ".tollgate-known-hosts-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeded
+	if _, err := tmp.WriteString(strings.Join(kept, "\n") + "\n"); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// knownHostsLineCovers reports whether one store line applies to host — i.e.
+// whether x/crypto's knownhosts would consider it when verifying host, in which
+// case it can shadow the line about to be written (first key wins per algorithm).
+//
+// The pattern semantics mirror the package's own parser (knownhosts.go:
+// hostPattern.match and Normalize): comma-separated patterns, an "!"-prefixed
+// pattern excludes the line for that host, "*" and "?" globs are honoured, and a
+// pattern applies only to the port it names (22 when it names none).
+//
+// Hashed ("|1|…") patterns are deliberately not matched here; see
+// verifyStoreResolvesTo, which surfaces whatever this pass cannot see.
+func knownHostsLineCovers(line, host string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return false // a comment, or a line without a key: not an entry
+	}
+	wantHost, wantPort := splitKnownHostsAddr(knownhosts.Normalize(host))
+
+	covered := false
+	for _, raw := range strings.Split(fields[0], ",") {
+		pattern := strings.TrimSpace(raw)
+		negated := strings.HasPrefix(pattern, "!")
+		if negated {
+			pattern = strings.TrimPrefix(pattern, "!")
+		}
+		if pattern == "" || strings.HasPrefix(pattern, "|") {
+			continue
+		}
+		patHost, patPort := splitKnownHostsAddr(pattern)
+		if patPort != wantPort || !knownHostsGlobMatch(patHost, wantHost) {
+			continue
+		}
+		if negated {
+			return false // the line explicitly does not apply to host
+		}
+		covered = true
+	}
+	return covered
+}
+
+// splitKnownHostsAddr splits a known_hosts host pattern into host and port with
+// the defaults the package's parser applies: "[host]:port" and "host:port" split,
+// anything else is port 22.
+func splitKnownHostsAddr(pattern string) (host, port string) {
+	if h, p, err := net.SplitHostPort(pattern); err == nil {
+		return h, p
+	}
+	return pattern, "22"
+}
+
+// knownHostsGlobMatch mirrors x/crypto/ssh/knownhosts' wildcardMatch for the
+// subset a host pattern can use: "*" matches any run of characters, "?" matches
+// exactly one, everything else matches itself.
+func knownHostsGlobMatch(pattern, s string) bool {
+	pi, si := 0, 0
+	star, resume := -1, 0
+	for si < len(s) {
+		switch {
+		case pi < len(pattern) && (pattern[pi] == '?' || pattern[pi] == s[si]):
+			pi++
+			si++
+		case pi < len(pattern) && pattern[pi] == '*':
+			star, resume = pi, si
+			pi++
+		case star >= 0:
+			resume++
+			pi, si = star+1, resume
+		default:
+			return false
+		}
+	}
+	for pi < len(pattern) && pattern[pi] == '*' {
+		pi++
+	}
+	return pi == len(pattern)
+}
+
+// storeCheckAddr stands in for the far end of a router connection while the store
+// is verified. knownhosts prefers the explicit address string it is handed, but it
+// dereferences remote.String() first, so a non-nil net.Addr is required.
+type storeCheckAddr struct{ addr string }
+
+func (a storeCheckAddr) Network() string { return "tcp" }
+func (a storeCheckAddr) String() string  { return a.addr }
+
+// verifyStoreResolvesTo re-reads the store with the real parser and checks that
+// host now resolves to key — the invariant the "remembered" promise rests on.
+func verifyStoreResolvesTo(path, host string, key ssh.PublicKey) error {
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		// sshConnect always dials net.JoinHostPort(ip, port) and the callback
+		// receives that address (ssh.go), so this is unreachable in production:
+		// do not invent a port to make a check pass.
+		return nil
+	}
+	checker, err := knownhosts.New(path)
+	if err != nil {
+		return fmt.Errorf("cannot re-read %s: %v", path, err)
+	}
+	if err := checker(host, storeCheckAddr{addr: host}, key); err != nil {
+		return fmt.Errorf("%s does not resolve %s to the key that was just recorded (%v) — a remaining entry shadows it, so a later run without --trust-host-key would be refused as CHANGED", path, host, err)
+	}
+	return nil
 }
 
 var (
