@@ -213,6 +213,7 @@
     <div class="field">
       <label>Select your router</label>
       <select id="router-select" onchange="onRouterChange()"></select>
+      <div class="hint hidden" id="trust-hint"></div>
     </div>
     <div class="field">
       <label for="password">Router password</label>
@@ -788,6 +789,7 @@ function showSelectView() {
     select.appendChild(opt);
   });
   // If the password was already typed (e.g. scan re-run), identify now.
+  showTrustHint(selectedRouterInfo());
   if (document.getElementById('password').value) refreshRouterName();
   checkReady();
 }
@@ -801,6 +803,25 @@ function formatRouterLabel(r) {
   if (!name || name === 'unknown unknown' || name === 'unknown') name = 'Router';
   const fw = (r.firmware && r.firmware !== 'unknown') ? ' \u2014 ' + r.firmware : '';
   return name + fw + ' (' + r.ip + ')';
+}
+
+// selectedRouterInfo returns the detected-router entry the dropdown points at.
+function selectedRouterInfo() {
+  const ip = document.getElementById('router-select').value;
+  return detectedRouters.find(x => x.ip === ip) || null;
+}
+
+// showTrustHint renders the router's SSH host-key refusal when the server
+// reported one. Without it a browser-first operator sees only a router that
+// "cannot be identified" and never learns the fingerprint or the exact trust
+// instruction (RISK item of the #41 review). Text only: the refusal carries
+// router-supplied strings, so it must never reach the HTML parser.
+function showTrustHint(r) {
+  const el = document.getElementById('trust-hint');
+  if (!el) return;
+  const msg = (r && r.ssh_refusal) ? r.ssh_refusal : '';
+  el.textContent = msg;
+  el.classList.toggle('hidden', !msg);
 }
 
 // refreshRouterName re-identifies the selected router with the password the
@@ -821,6 +842,7 @@ async function refreshRouterName() {
     if (!info || info.error) return;
     const r = detectedRouters.find(x => x.ip === ip);
     if (r) Object.assign(r, info);
+    showTrustHint(r || info);
     const opt = Array.from(document.getElementById('router-select').options).find(o => o.value === ip);
     if (opt) {
       opt.textContent = formatRouterLabel(r || info);
