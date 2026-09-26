@@ -125,6 +125,17 @@ func passwdCommand(password string) string {
 // sshRun satisfies it; tests inject a fake router.
 type routerRun func(cmd string) string
 
+// routerAuthProof proves a CANDIDATE root credential against the router on a
+// fresh connection: it must offer nothing but that candidate (no empty-password
+// retry, no default SSH key) and must report false on any failure instead of
+// assuming the credential works. proveRootPassword (ssh.go) satisfies it and
+// runDeployment supplies it; tests inject a fake.
+//
+// It is only a proof that a password CHANGE took when the router had a real
+// credential before the write — on an EMPTY root hash every password
+// authenticates, so a login proves nothing (see applyRootPassword).
+type routerAuthProof func(password string) bool
+
 // ─── Root credential (fail closed) ────────────────────────────────
 
 // rootHashState is what /etc/shadow says about root's password.
@@ -226,7 +237,10 @@ func generateRootPassword() (string, error) {
 // credential and returns the password later deploy steps must reconnect with.
 //
 // Modes, in order:
-//  1. a password was supplied -> set it and verify it took;
+//  1. a password was supplied -> set it and PROVE it took (see
+//     applyRootPassword: shadow hash when the router had none, plus a fresh
+//     login whenever it already had one, so a passwd that silently leaves the
+//     OLD hash in place cannot be reported as success);
 //  2. the router already has a real hash -> leave it alone (say so — this is
 //     not the silent skip);
 //  3. the router's root password is locked ('!'/'*') -> leave it alone (a
@@ -237,13 +251,14 @@ func generateRootPassword() (string, error) {
 //  5. the state cannot be read -> fail closed (never assume "fine").
 //
 // Returns ok=false after calling jobFail when the deploy must stop.
-func ensureRootCredential(job *Job, run routerRun, supplied string) (string, bool) {
-	state := parseRootHashState(run(rootHashProbeCmd))
-
+func ensureRootCredential(job *Job, run routerRun, prove routerAuthProof, supplied string) (string, bool) {
+	// A supplied password is applied whatever the state says, so the state probe
+	// is only needed by the modes below (it used to run and be discarded here).
 	if supplied != "" {
-		return supplied, applyRootPassword(job, run, supplied, "supplied")
+		return supplied, applyRootPassword(job, run, prove, supplied, "supplied")
 	}
 
+	state := parseRootHashState(run(rootHashProbeCmd))
 	switch state {
 	case rootHashSet:
 		job.addLog("Router root password already set — left unchanged (none supplied)")
@@ -261,7 +276,7 @@ func ensureRootCredential(job *Job, run routerRun, supplied string) (string, boo
 				"The router has NO root password and none was supplied, and a credential could not be generated: "+err.Error())
 			return "", false
 		}
-		if !applyRootPassword(job, run, pw, "generated") {
+		if !applyRootPassword(job, run, prove, pw, "generated") {
 			return "", false
 		}
 		job.setGeneratedPassword(pw)
@@ -278,16 +293,53 @@ func ensureRootCredential(job *Job, run routerRun, supplied string) (string, boo
 	}
 }
 
-// applyRootPassword sets password on the router and PROVES it took by
-// re-reading /etc/shadow. A passwd that "looks" successful but leaves the hash
-// empty (the exact failure this path exists for) fails the deploy.
-func applyRootPassword(job *Job, run routerRun, password, origin string) bool {
+// applyRootPassword sets password on the router and PROVES that password — not
+// merely that SOME hash — is the one the router now accepts.
+//
+// The proof has two parts, because neither alone is sound:
+//
+//  1. the shadow re-read must report a real hash (rootHashSet). This is the
+//     empty-hash regression the path exists for: a passwd that silently does
+//     nothing on a credential-less router is caught here.
+//  2. when the router had a usable credential BEFORE the write (state set,
+//     locked, or unreadable), the candidate must ALSO be accepted on a FRESH
+//     login. "A hash exists" is not proof that THIS password is in it: on a
+//     set→set transition (the router already had a password, the operator
+//     supplied a new one) a passwd that fails silently leaves the OLD hash in
+//     place, and part 1 then sees precisely the `set` state it looks for — the
+//     wizard reported a password nothing on the router accepts, and every later
+//     step (STA reconnect, re-auth) carried the same dead credential. This is
+//     the #46 follow-up review finding.
+//
+// Part 2 is deliberately SKIPPED when the router had an EMPTY hash: rpcd's
+// rpc_login_test_password() and dropbear both accept ANY password ("" included)
+// while the hash is empty, so a successful login in that state proves nothing
+// and must not be treated as proof of anything. There part 1 IS the proof.
+//
+// A missing proof channel (nil prove) is not a licence to skip part 2 either:
+// the deploy fails closed, because the alternative is reporting success on a
+// credential the router may reject.
+func applyRootPassword(job *Job, run routerRun, prove routerAuthProof, password, origin string) bool {
+	preState := parseRootHashState(run(rootHashProbeCmd))
 	out := run(passwdCommand(password))
 	if state := parseRootHashState(run(rootHashProbeCmd)); state != rootHashSet {
 		jobFail(job, 4, "root password not established",
 			"The router still has no usable root password after setting one ("+origin+"). "+
 				"The router would be left with unauthenticated root administration; aborting. passwd output: "+truncate(out, 200))
 		return false
+	}
+	if preState != rootHashEmpty {
+		if prove == nil {
+			jobFail(job, 4, "root password could not be proven ("+origin+")",
+				"The router already had a root credential, so \"a hash is present\" is not proof that the "+origin+" password is the one it accepts — and this deploy has no way to prove it on a fresh SSH login. Aborting: reporting success here could hand the operator a credential the router rejects.")
+			return false
+		}
+		if !prove(password) {
+			jobFail(job, 4, "root password did not take ("+origin+")",
+				"The router still has a root password, but a FRESH SSH login with the "+origin+" password was REFUSED: the credential the wizard set is not the one the router accepts (a passwd that fails silently leaves the previous hash in place). Aborting rather than reporting a working router. passwd output: "+truncate(out, 200))
+			return false
+		}
+		job.addLog("Root password (" + origin + ") accepted on a fresh SSH login")
 	}
 	job.addLog("Root password set (" + origin + ")")
 	job.setStep(4, "done", "password set ("+origin+")")
@@ -773,6 +825,12 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(4, "running", "")
 	effectivePassword, credentialOK := ensureRootCredential(job, func(cmd string) string {
 		return sshRun(client, cmd)
+	}, func(pw string) bool {
+		// The proof channel: a FRESH SSH login with only the candidate
+		// credential (see proveRootPassword). Deliberately not the live client —
+		// the deploy session proves nothing about what the router will accept
+		// after the password write.
+		return proveRootPassword(req.IP, pw)
 	}, req.Password)
 	if !credentialOK {
 		return

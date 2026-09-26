@@ -240,9 +240,12 @@ func (j *Job) addLog(msg string) {
 
 // setGeneratedPassword records a credential the wizard had to create (the
 // router had no root password and the operator supplied none). The operator
-// sees it ONCE, in the success view, from the one-shot generated_password
-// field on /api/status (see handleStatus); the UI renders it as a copyable
-// callout.
+// sees it ONCE, on the deploy's final screen — from the one-shot
+// generated_password field on /api/status (see handleStatus); the UI renders it
+// as a copyable callout on the SUCCESS view, and — because a deploy can fail
+// after this credential was already set on the router — on the FAILURE view too
+// (pinFailedGeneratedCredential). Otherwise the router would hold a credential
+// the operator never sees: a lockout.
 //
 // The value is deliberately NOT written to the deploy log: job.Log is part of
 // EVERY /api/status response, so a "ROOT PASSWORD: …" line would re-serve the
@@ -255,7 +258,7 @@ func (j *Job) setGeneratedPassword(pw string) {
 	j.generatedPassword = pw
 	j.mu.Unlock()
 	j.addLog("Router had NO root password and none was supplied — generated a one-time credential.")
-	j.addLog("ROOT PASSWORD: generated — it is shown ONCE, on this deploy's success screen. Store it in your password manager NOW; it cannot be recovered.")
+	j.addLog("ROOT PASSWORD: generated — it is shown ONCE, on this deploy's final screen (success or failure). Store it in your password manager NOW; it cannot be recovered.")
 }
 
 func (j *Job) setStep(i int, status, detail string) {
@@ -1112,16 +1115,25 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Return a snapshot for thread-safe JSON
 	job.mu.Lock()
 	// The generated credential is served EXACTLY ONCE: on the first read of a
-	// job that has COMPLETED successfully, after which the server drops it.
+	// job that has reached a TERMINAL state — done OR failed — after which the
+	// server drops it.
 	//
-	// Both halves matter. "At most once" means a second poll returns it as
-	// absent even if the caller already knew the job id. "Only when done" is
+	// All three halves matter. "At most once" means a second poll returns it as
+	// absent even if the caller already knew the job id. "Only when terminal" is
 	// what keeps the one-shot value alive long enough to be seen: the UI polls
 	// this endpoint every second while the deploy runs, so serving (and
 	// consuming) it mid-run would burn the credential before the success view
 	// — the only place it is shown — is ever reached.
+	//
+	// "failed" too is the lockout fix (#46 follow-up): a deploy can fail AFTER
+	// step 4 already generated and SET a root password on the router (step 6's
+	// package download, the health probe, the STA reconnect...). Serving only on
+	// "done" then left the router holding a credential whose only channel never
+	// fires — the operator is locked out of the router the wizard just changed.
+	// The failure view surfaces it with the same one-shot contract (see
+	// pinFailedGeneratedCredential in index.html).
 	generatedPassword := ""
-	if job.Status == "done" && !job.generatedPasswordServed && job.generatedPassword != "" {
+	if (job.Status == "done" || job.Status == "failed") && !job.generatedPasswordServed && job.generatedPassword != "" {
 		generatedPassword = job.generatedPassword
 		job.generatedPasswordServed = true
 		job.generatedPassword = ""

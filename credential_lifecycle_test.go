@@ -167,7 +167,7 @@ func TestEnsureRootCredentialSetEmptyUnknownAreDistinct(t *testing.T) {
 			job := newJob("192.168.8.1")
 			fr := &fakeCredentialRouter{hash: tc.state, passwdOut: "passwd: password changed\n"}
 
-			_, ok := ensureRootCredential(job, fr.run, "")
+			_, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
 			if ok != tc.wantOK {
 				t.Fatalf("ensureRootCredential ok = %v, want %v (job error: %s)", ok, tc.wantOK, job.Error)
 			}
