@@ -397,29 +397,79 @@ func digestCrosscheckEnabled(getenv func(string) string) bool {
 	return true
 }
 
+// publishedDigest is the outcome of resolving the digest a release publishes for
+// one asset. It is a struct rather than a (digest, source, independent) tuple on
+// purpose (cold cross-family review of PR #54, finding 1): the earlier shape
+// reported an anchor conflict as ("", reason, false) — an empty digest plus a
+// reason string — so a caller that only tested `digest == ""` read a FATAL
+// release disagreement as the ordinary "nothing published" case. The conflict
+// now has its own field that a caller must name, and conflictVerdict below is
+// the single place that turns it into a verdict.
+type publishedDigest struct {
+	// Digest is the published sha256 the bytes must match, or "" when the
+	// release publishes none for this asset. An empty Digest means "nothing
+	// published" ONLY when Conflict is false.
+	Digest string
+	// Source names where Digest came from, or — on a conflict — what
+	// disagreed, so a refusal can name the origins and both digests.
+	Source string
+	// Independent reports whether Digest rests on an origin DIFFERENT from the
+	// one serving the package bytes. Only such a digest may carry a green
+	// verdict (cold cross-family review finding 2).
+	Independent bool
+	// Conflict is true exactly when two origins published DIFFERENT digests
+	// for the same asset: the release is mispublished or one origin is
+	// compromised, and the deploy must refuse instead of falling through to
+	// "nothing published". Callers MUST consult conflictVerdict.
+	Conflict bool
+}
+
+// conflictVerdict returns the FATAL integrity verdict an anchor conflict must
+// produce, and false when there is no conflict. target describes the thing that
+// must not be installed (e.g. "foo.ipk downloaded on the router"); got is the
+// hash of the bytes actually at hand, recorded for the log. Centralising the
+// conversion here is the structural half of the review finding: both deploy
+// paths refuse a conflict for the same reason, and neither re-implements the
+// decision that a conflict is fatal.
+func (pd publishedDigest) conflictVerdict(target, got string) (pkgIntegrity, bool) {
+	if !pd.Conflict {
+		return pkgIntegrity{}, false
+	}
+	return pkgIntegrity{
+		Status: "mismatch",
+		Detail: fmt.Sprintf("REFUSING to install %s: %s", target, pd.Source),
+		Got:    got,
+		Source: pd.Source,
+	}, true
+}
+
 // publishedDigestForAsset resolves the digest a release publishes for the asset
 // at assetURL, trying the release manifest, then a per-asset sidecar, then the
-// GitHub API. Returns ("", "", false) when the release publishes no digest for
-// it — which is reported as NOT VERIFIED, never as a pass.
+// GitHub API. It returns the zero publishedDigest when the release publishes no
+// digest for it — reported as NOT VERIFIED, never as a pass.
 //
-// independent reports whether the returned digest rests on an origin DIFFERENT
+// Independent reports whether the resolved digest rests on an origin DIFFERENT
 // from the one serving the package bytes:
 //
-//   - When the manifest (the signable, release-level source) publishes a
-//     digest AND the cross-check is enabled, the GitHub API digest is ALWAYS
-//     consulted too: agree ⇒ independent (two origins that never saw each
+//   - When the manifest (the signable, release-level source) publishes a digest
+//     AND the cross-check is enabled, the GitHub API digest is ALWAYS consulted
+//     too: agree ⇒ Independent (two GitHub-owned surfaces that never saw each
 //     other's bytes published the same digest — the decided policy, card
-//     t_a8d79292 option 1); disagree ⇒ ("", reason, false) with the reason
-//     naming both sources and both digests, which the callers treat as a
-//     FATAL anchor conflict, not an unverified pass.
+//     t_a8d79292 option 1); disagree ⇒ Conflict, with the reason naming both
+//     sources and both digests, which the callers refuse FATALLY rather than
+//     treating as an unverified pass.
 //   - Otherwise only the GitHub API is independent; the manifest and the
 //     sidecar are fetched from the asset's own host, so a hostile (or MITMed)
 //     host serves both and defeats them (cold review finding 2). The caller
 //     treats a non-independent match as UNVERIFIED.
-func publishedDigestForAsset(assetURL string) (digest, source string, independent bool) {
+//
+// getenv is injected rather than read through os.Getenv inside, so the escape
+// hatch and the whole resolution are testable without mutating the process
+// environment.
+func publishedDigestForAsset(assetURL string, getenv func(string) string) publishedDigest {
 	name := assetNameFromURL(assetURL)
 	if name == "" {
-		return "", "", false
+		return publishedDigest{}
 	}
 	manifestDigest, manifestSource := "", ""
 	if dir := releaseAssetDir(assetURL); dir != "" {
@@ -433,8 +483,11 @@ func publishedDigestForAsset(assetURL string) (digest, source string, independen
 	// manifest has a digest — verdicts are then byte-identical to the
 	// pre-cross-check policy (manifest/sidecar match ⇒ UNVERIFIED), which is
 	// what makes the escape hatch safe to investigate an anchor disagreement.
+	// The coupling is deliberate: disabling the cross-check IS the pre-change
+	// policy, and a separate flag would create a state (manifest present,
+	// cross-check on, API answer ignored) that has no defined verdict.
 	apiDigest, apiOK := "", false
-	if manifestDigest == "" || digestCrosscheckEnabled(os.Getenv) {
+	if manifestDigest == "" || digestCrosscheckEnabled(getenv) {
 		apiDigest, apiOK = githubReleaseAssetDigest(assetURL, name)
 	}
 	// The manifest is preferred as the compared-against digest: it is the
@@ -443,27 +496,36 @@ func publishedDigestForAsset(assetURL string) (digest, source string, independen
 	// never independent), and the API alone carries the verdict.
 	if manifestDigest != "" {
 		if apiDigest != "" && apiDigest != manifestDigest {
-			return "", fmt.Sprintf("ANCHOR CONFLICT: the %s publishes %s for %s but the GitHub release API publishes %s — two independent origins disagree about this asset, so neither is trusted", manifestSource, manifestDigest, name, apiDigest), false
+			return publishedDigest{
+				Source: fmt.Sprintf("ANCHOR CONFLICT: the %s publishes %s for %s but the GitHub release API publishes %s — two origins that must agree (the release host's manifest and api.github.com) disagree about this asset, so neither is trusted", manifestSource, manifestDigest, name, apiDigest),
+				// Digest stays empty and Conflict is the ONLY signal: a
+				// caller cannot read this as "nothing published".
+				Conflict: true,
+			}
 		}
 		if apiDigest == manifestDigest {
-			return manifestDigest, manifestSource + " (cross-checked against the GitHub release API)", true
+			return publishedDigest{
+				Digest:      manifestDigest,
+				Source:      manifestSource + " (cross-checked against the GitHub release API)",
+				Independent: true,
+			}
 		}
 		// No API answer (or cross-check disabled): manifest alone is
 		// same-origin — never a pass (cold review finding 2).
-		return manifestDigest, manifestSource, false
+		return publishedDigest{Digest: manifestDigest, Source: manifestSource}
 	}
 	if body, status, err := httpGetBytesForDigest(assetURL+sha256SidecarSuffix, nil); err == nil && status == http.StatusOK {
 		if d := firstDigestToken(body); d != "" {
 			// The sidecar is never cross-checked into a pass: it is a
 			// per-asset convenience file, not the signed manifest, so it
 			// stays same-origin ⇒ not independent (decided policy).
-			return d, "per-asset " + sha256SidecarSuffix + " sidecar", false
+			return publishedDigest{Digest: d, Source: "per-asset " + sha256SidecarSuffix + " sidecar"}
 		}
 	}
 	if apiOK {
-		return apiDigest, "GitHub release API asset digest", true
+		return publishedDigest{Digest: apiDigest, Source: "GitHub release API asset digest", Independent: true}
 	}
-	return "", "", false
+	return publishedDigest{}
 }
 
 // packageLooksStructural reports whether data can be the package format ext
@@ -590,23 +652,20 @@ func verifyPackageBytes(assetURL, ext string, data []byte) pkgIntegrity {
 			Got:    got,
 		}
 	}
-	want, source, independent := publishedDigestForAsset(assetURL)
+	pd := publishedDigestForAsset(assetURL, os.Getenv)
+	// Anchor conflict FIRST (decided policy, card t_a8d79292 option 1): the
+	// same-origin manifest and the independent API digest DISAGREE about this
+	// asset. That is a mispublished release or a compromised origin, and the
+	// deploy must stop rather than silently fall through to one anchor (which
+	// would hide the disagreement behind a green verdict built on only one of
+	// the two). conflictVerdict is the ONE conversion from a conflict to a
+	// verdict (cold cross-family review of PR #54, finding 1), so this branch
+	// cannot be confused with the ordinary "nothing published" case below.
+	if v, conflict := pd.conflictVerdict(fmt.Sprintf("%s from %s", assetNameFromURL(assetURL), assetURL), got); conflict {
+		return v
+	}
+	want, source, independent := pd.Digest, pd.Source, pd.Independent
 	if want == "" {
-		if source != "" {
-			// Not "no digest published" but an explicit ANCHOR CONFLICT
-			// (decided policy, card t_a8d79292 option 1): the same-origin
-			// manifest and the independent API digest DISAGREE about this
-			// asset. That is a mispublished release or a compromised origin,
-			// and the deploy must stop rather than silently fall through to
-			// the API (which would hide the disagreement behind a green
-			// verdict built on only one of the two anchors).
-			return pkgIntegrity{
-				Status: "mismatch",
-				Detail: fmt.Sprintf("REFUSING to install %s from %s: %s", assetNameFromURL(assetURL), assetURL, source),
-				Got:    got,
-				Source: source,
-			}
-		}
 		return pkgIntegrity{
 			Status: "unverified",
 			Detail: fmt.Sprintf("no published sha256 for %s (checked %s, the per-asset .sha256 sidecar, and the GitHub release API): installed bytes are UNVERIFIED (%s)",
@@ -691,8 +750,16 @@ func routerFileSHA256(client *ssh.Client, path string) string {
 // sha256 applet (or a release with no published digest) yields the unverified
 // verdict, never a pass.
 func checkRouterFileDigest(job *Job, client *ssh.Client, assetURL, ext, remotePath string) (pkgIntegrity, error) {
+	return routerDigestVerdict(job, assetURL, ext, remotePath, routerFileSHA256(client, remotePath))
+}
+
+// routerDigestVerdict is the decision half of checkRouterFileDigest: it takes
+// the hash the router produced (got) instead of an ssh.Client, so the whole
+// policy — including the anchor-conflict refusal — is testable without an SSH
+// server (cold cross-family review of PR #54, finding 1: this was the caller
+// whose safety depended on remembering to test `source != ""`).
+func routerDigestVerdict(job *Job, assetURL, ext, remotePath, got string) (pkgIntegrity, error) {
 	name := assetNameFromURL(assetURL)
-	got := routerFileSHA256(client, remotePath)
 	if got == "" {
 		v := pkgIntegrity{
 			Status: "unverified",
@@ -705,22 +772,18 @@ func checkRouterFileDigest(job *Job, client *ssh.Client, assetURL, ext, remotePa
 		job.addLog("WARNING: " + v.Detail)
 		return v, nil
 	}
-	want, source, independent := publishedDigestForAsset(assetURL)
-	switch {
-	case want == "" && source != "":
-		// ANCHOR CONFLICT (decided policy, card t_a8d79292 option 1): the
-		// manifest and the API digest disagree. Fatal for the router-side
-		// download too — the disagreement is about the RELEASE, not about
-		// which host the bytes came from.
-		v := pkgIntegrity{
-			Status: "mismatch",
-			Detail: fmt.Sprintf("REFUSING to install %s downloaded on the router: %s — refusing to install altered or corrupted package bytes",
-				name, source),
-			Got:    got,
-			Source: source,
-		}
+	pd := publishedDigestForAsset(assetURL, os.Getenv)
+	// ANCHOR CONFLICT FIRST (decided policy, card t_a8d79292 option 1): the
+	// manifest and the API digest disagree. Fatal for the router-side download
+	// too — the disagreement is about the RELEASE, not about which host the
+	// bytes came from — and it goes through the same shared conversion as the
+	// laptop-side path, so the two paths cannot drift.
+	if v, conflict := pd.conflictVerdict(name+" downloaded on the router", got); conflict {
 		job.addLog("ERROR: " + v.Detail)
 		return v, fmt.Errorf("%s", v.Detail)
+	}
+	want, source, independent := pd.Digest, pd.Source, pd.Independent
+	switch {
 	case want == "":
 		v := pkgIntegrity{
 			Status: "unverified",
