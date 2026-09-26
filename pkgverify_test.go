@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -221,7 +222,8 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		pd := publishedDigestForAsset(assetURL, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
@@ -243,9 +245,13 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		pd := publishedDigestForAsset(assetURL, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != "" {
 			t.Fatalf("digest = %q, want \"\" — a disagreement must not resolve to either anchor", got)
+		}
+		if !pd.Conflict {
+			t.Fatalf("an anchor conflict must set the NAMED Conflict field (cold cross-family review of PR #54, finding 1), got %+v", pd)
 		}
 		if independent {
 			t.Errorf("an anchor conflict must not be reported as independent")
@@ -261,12 +267,17 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		// The strict pre-cross-check verdict (cold review finding 2) still
 		// holds when the API is unreachable: same-origin data alone is never
 		// a pass.
+		// The fake release server is created with withAPI=false, i.e. it has
+		// no API route at all, so the API is genuinely unreachable here and
+		// the base URL needs no "/nonexistent" suffix (cold cross-family
+		// review of PR #54, finding 3).
 		_, assetURL, apiBase := fakeReleaseServer(t, assetName, want, want, true, true, false)
 		old := githubAPIBase
-		githubAPIBase = apiBase + "/nonexistent"
+		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		pd := publishedDigestForAsset(assetURL, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
@@ -288,11 +299,26 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		old := githubAPIBase
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
-		t.Setenv(digestCrosscheckEnv, "0")
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		// Exercised through the INJECTED getenv (cold cross-family review of
+		// PR #54, finding 4): no process-environment mutation, and the SAME
+		// fake release (manifest + a disagreeing API) is resolved twice — once
+		// with the flag off and once with it on — so the test pins that the
+		// flag is what changes the verdict, not the fixture.
+		off := func(string) string { return "0" }
+		on := func(string) string { return "1" }
+
+		if conflicted := publishedDigestForAsset(assetURL, on); !conflicted.Conflict {
+			t.Fatalf("control broken: with the cross-check ON the same fixture must conflict, got %+v", conflicted)
+		}
+
+		pd := publishedDigestForAsset(assetURL, off)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != want || independent {
 			t.Errorf("publishedDigestForAsset = (%q, %q, %v), want (%q, …, false) — the escape hatch must restore manifest-only ⇒ not independent", got, source, independent, want)
+		}
+		if pd.Conflict {
+			t.Errorf("with the cross-check disabled there is no second anchor, so no conflict, but Conflict=true: %q", source)
 		}
 		if strings.Contains(source, "ANCHOR CONFLICT") {
 			t.Errorf("with the cross-check disabled there is no second anchor, so no conflict: %q", source)
@@ -305,7 +331,8 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		pd := publishedDigestForAsset(assetURL, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
@@ -326,7 +353,8 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		pd := publishedDigestForAsset(assetURL, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != want {
 			t.Fatalf("digest = %q, want %q", got, want)
 		}
@@ -346,7 +374,8 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = apiBase + "/nonexistent"
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset(assetURL)
+		pd := publishedDigestForAsset(assetURL, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != "" || source != "" || independent {
 			t.Errorf("publishedDigestForAsset = (%q, %q, %v), want (\"\", \"\", false) so the caller reports UNVERIFIED", got, source, independent)
 		}
@@ -363,7 +392,8 @@ func TestPublishedDigestSourcePrecedence(t *testing.T) {
 		githubAPIBase = srv.URL
 		t.Cleanup(func() { githubAPIBase = old })
 
-		got, source, independent := publishedDigestForAsset("https://github.com/o/r/releases/download/v1/" + assetName)
+		pd := publishedDigestForAsset("https://github.com/o/r/releases/download/v1/"+assetName, os.Getenv)
+		got, source, independent := pd.Digest, pd.Source, pd.Independent
 		if got != "" || source != "" || independent {
 			t.Errorf("publishedDigestForAsset = (%q, %q, %v), want (\"\", \"\", false) — an empty digest is not a pass", got, source, independent)
 		}
@@ -658,7 +688,8 @@ func TestLivePackageDigestRejectsCorruptedBytes(t *testing.T) {
 	}
 	assetURL := feedAssetURL("aarch64_cortex-a53", ".ipk")
 
-	published, source, independent := publishedDigestForAsset(assetURL)
+	pd := publishedDigestForAsset(assetURL, os.Getenv)
+	published, source, independent := pd.Digest, pd.Source, pd.Independent
 	if published == "" {
 		t.Fatalf("the pinned feed release %s publishes no sha256 for %s (checked %s, the per-asset .sha256 sidecar, and the GitHub release API) — package integrity cannot be verified at deploy time",
 			feedReleaseTag, assetNameFromURL(assetURL), sha256SumsAssetName)
@@ -761,4 +792,101 @@ func TestRouterFeedInstallVerdictIsUnverifiedAndLegible(t *testing.T) {
 	if !strings.Contains(v.Detail, "never passed through this installer") {
 		t.Errorf("detail = %q, want it to say why nothing could be verified", v.Detail)
 	}
+}
+
+// TestAnchorConflictIsTypedNotAnEmptyDigest pins the SHAPE of the resolver's
+// result (cold cross-family review of PR #54, finding 1): an anchor conflict is
+// a NAMED field, not something a caller has to infer from an empty digest, and
+// conflictVerdict is the single conversion from it to a verdict. The mirror
+// cases prove the refusal is not merely the ordinary unverified path: a result
+// with no conflict never refuses, digest or no digest.
+func TestAnchorConflictIsTypedNotAnEmptyDigest(t *testing.T) {
+	conflict := publishedDigest{
+		Source:   "ANCHOR CONFLICT: the SHA256SUMS manifest publishes aa but the GitHub release API publishes bb",
+		Conflict: true,
+	}
+	v, fatal := conflict.conflictVerdict("foo.ipk from https://github.com/o/r/releases/download/v1/foo.ipk", "abc123")
+	if !fatal {
+		t.Fatalf("a Conflict result did not produce a refusal: %+v", v)
+	}
+	if v.Status != "mismatch" || !v.fatal() {
+		t.Errorf("refusal verdict = %+v, want a FATAL mismatch", v)
+	}
+	if !strings.Contains(v.Detail, "ANCHOR CONFLICT") {
+		t.Errorf("refusal detail = %q, want it to carry the conflict reason", v.Detail)
+	}
+	if v.Got != "abc123" || v.Source != conflict.Source {
+		t.Errorf("refusal = %+v, want the hash at hand and the conflict source recorded", v)
+	}
+
+	for _, c := range []struct {
+		name string
+		pd   publishedDigest
+	}{
+		{"nothing published", publishedDigest{}},
+		{"manifest-only (same-origin)", publishedDigest{Digest: "aa", Source: "SHA256SUMS manifest on https://…/"}},
+		{"API-only (independent)", publishedDigest{Digest: "aa", Source: "GitHub release API asset digest", Independent: true}},
+	} {
+		if v, fatal := c.pd.conflictVerdict("foo.ipk", "abc123"); fatal {
+			t.Errorf("%s: conflictVerdict refused a non-conflict result: %+v", c.name, v)
+		}
+	}
+}
+
+// TestRouterDigestVerdictRefusesAnchorConflict covers the router-side caller of
+// the resolver — the one whose safety used to rest on remembering to test
+// `source != ""` (cold cross-family review of PR #54, finding 1). It now takes
+// the hash the router produced, so the whole policy is pinned without an SSH
+// server: a release whose two anchors disagree is refused even when the router's
+// copy matches the manifest digest, an agreeing release still verifies, and an
+// altered router copy is still a fatal mismatch.
+func TestRouterDigestVerdictRefusesAnchorConflict(t *testing.T) {
+	const assetName = "tollgate-wrt_0.6.0_alpha2_pre9_aarch64_cortex-a53.ipk"
+	good := digestOf([]byte("package"))
+	other := digestOf([]byte("other bytes"))
+
+	t.Run("anchor conflict refuses a router copy that matches the manifest", func(t *testing.T) {
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, good, other, true, false, true)
+		old := githubAPIBase
+		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+
+		job := &Job{}
+		v, err := routerDigestVerdict(job, assetURL, ".ipk", "/tmp/"+assetName, good)
+		if err == nil {
+			t.Fatalf("router-side anchor conflict returned no error, verdict %+v", v)
+		}
+		if v.Status != "mismatch" || !v.fatal() {
+			t.Errorf("verdict = %+v, want a FATAL mismatch even though the bytes match the manifest", v)
+		}
+		for _, needle := range []string{"ANCHOR CONFLICT", good, other, assetName} {
+			if !strings.Contains(v.Detail, needle) {
+				t.Errorf("refusal detail %q does not name %q", v.Detail, needle)
+			}
+		}
+		if !strings.Contains(jobLog(job), "ANCHOR CONFLICT") {
+			t.Errorf("the refusal was not logged as an ERROR: %q", jobLog(job))
+		}
+	})
+
+	t.Run("agreeing anchors verify, altered router bytes stay fatal", func(t *testing.T) {
+		_, assetURL, apiBase := fakeReleaseServer(t, assetName, good, good, true, false, true)
+		old := githubAPIBase
+		githubAPIBase = apiBase
+		t.Cleanup(func() { githubAPIBase = old })
+
+		job := &Job{}
+		v, err := routerDigestVerdict(job, assetURL, ".ipk", "/tmp/"+assetName, good)
+		if err != nil || !v.verified() {
+			t.Fatalf("agreeing anchors: verdict = %+v err = %v, want verified", v, err)
+		}
+		if !strings.Contains(v.Detail, "cross-checked") {
+			t.Errorf("detail = %q, want it to record the cross-check", v.Detail)
+		}
+
+		v2, err2 := routerDigestVerdict(job, assetURL, ".ipk", "/tmp/"+assetName, other)
+		if err2 == nil || v2.Status != "mismatch" || !v2.fatal() {
+			t.Fatalf("altered router copy: verdict = %+v err = %v, want a fatal mismatch", v2, err2)
+		}
+	})
 }
