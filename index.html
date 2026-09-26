@@ -91,8 +91,9 @@
   }
   .success-msg h2 { font-size: 1.4rem; margin-bottom: 0.5rem; }
   .success-msg p { color: #8892b0; font-size: 0.85rem; }
-  /* One-time generated root credential. Shown once, on the success view;
-     nothing here persists it (no storage, no console, no re-render). */
+  /* One-time generated root credential. Shown once, on whichever view ends the
+     deploy (success or failure); nothing here persists it (no storage, no
+     console, no re-render). */
   .credential {
     margin-top: 1.2rem; padding: 1rem; border-radius: 12px;
     background: rgba(var(--tg-red-rgb),0.12); border: 1px solid var(--tg-red);
@@ -347,6 +348,31 @@
       <h2>Setup failed</h2>
       <p id="error-detail" style="margin-top:0.5rem;"></p>
       <button class="btn" style="margin-top:1rem;" onclick="location.reload()">Try again</button>
+    </div>
+    <!-- One-time root credential, FAILURE path. A deploy can fail AFTER step 4
+         already generated a root password for the router and set it (the
+         package download, the health probe, the STA reconnect...). The success
+         view is never reached then, so without this block the router would hold
+         a credential the operator never sees — the same lockout the success-path
+         fix removed, on the other screen. The server surrenders the value on the
+         first read of the FAILED job (handleStatus) and pollStatus pins it here
+         before this view is revealed. Mirror of the success view's
+         #generated-credential block: written as text, shown once, never
+         persisted, never through the log. -->
+    <div class="credential hidden" id="failed-generated-credential" role="alert">
+      <h3>Save the router's new root password</h3>
+      <p class="credential-warn">
+        This deploy failed AFTER the router's root password had already been generated and set. It is
+        shown ONCE and cannot be recovered. Store it in your password manager
+        now, before you close or reload this page — you will need it to reach the router.
+      </p>
+      <div class="credential-row">
+        <code id="failed-generated-password"></code>
+        <button type="button" class="btn btn-secondary" id="copy-failed-generated-password"
+                aria-label="Copy root password to clipboard"
+                onclick="copyFailedGeneratedPassword()">Copy</button>
+      </div>
+      <p class="hint" id="copy-failed-generated-status" role="status"></p>
     </div>
   </div>
 </div>
@@ -948,6 +974,41 @@ function copyGeneratedPassword() {
   }
 }
 
+// pinFailedGeneratedCredential reveals the one-time root password on the
+// FAILURE view — the mirror of pinGeneratedCredential above. A deploy can fail
+// AFTER step 4 already generated and set a root password on the router; the
+// success view is never reached then, so without this the operator would be
+// locked out of the router the wizard just changed. The server serves the value
+// on exactly ONE read (the first read of the failed job, handleStatus), so this
+// runs the moment a deploy reports failed, before the failure view appears. The
+// value is written as text (never markup) and is not stored anywhere else.
+function pinFailedGeneratedCredential(pw) {
+  if (!pw) return;
+  const box = document.getElementById('failed-generated-credential');
+  const code = document.getElementById('failed-generated-password');
+  if (!box || !code) return;
+  code.textContent = pw;
+  box.classList.remove('hidden');
+}
+
+// copyFailedGeneratedPassword is the failure view's copy control. Deliberately
+// its own function rather than a shared helper: each view's control must work
+// standalone (the success view's body is pinned by credential_ui_test.go), and
+// a copy that silently does nothing on the screen where the operator is already
+// dealing with a failure is the worst place to be clever.
+function copyFailedGeneratedPassword() {
+  const code = document.getElementById('failed-generated-password');
+  const status = document.getElementById('copy-failed-generated-status');
+  if (!code || !code.textContent) return;
+  const ok = () => { if (status) status.textContent = 'Copied to clipboard.'; };
+  const fail = () => { if (status) status.textContent = 'Copy failed. Select the password above and copy it manually.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code.textContent).then(ok, fail);
+  } else {
+    fail();
+  }
+}
+
 // The deploy status view renders step descriptions, step details and log lines
 // that carry the operator-selected WiFi SSID and RAW ROUTER OUTPUT. This page is
 // served from the wizard origin, which also holds #password (the router's root
@@ -1016,6 +1077,12 @@ async function pollStatus(jobId) {
     }, 1500);
   } else if (job.status === 'failed') {
     clearInterval(pollTimer);
+    // The deploy may have failed AFTER it generated and set a root password on
+    // the router. The server surrenders that credential on this first read of
+    // the failed job and never again, so pin it before the failure view is
+    // revealed — otherwise the router keeps a credential the operator never
+    // sees.
+    pinFailedGeneratedCredential(job.generated_password);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
       document.getElementById('error-detail').textContent = job.error || 'Unknown error. Check the log above.';
