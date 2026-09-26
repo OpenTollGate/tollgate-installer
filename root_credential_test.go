@@ -129,12 +129,50 @@ func TestGenerateRootPassword(t *testing.T) {
 // fakeCredentialRouter answers the probe and accepts passwd, like a real OpenWrt router.
 // refusePasswd models a passwd that reports success but leaves the shadow hash
 // empty — the exact silent failure the deploy must not walk past.
+//
+// It carries BOTH channels the deploy uses, because "the password took" is only
+// provable across them (see applyRootPassword):
+//
+//	run         the command channel: the /etc/shadow probe and passwd;
+//	proveLogin  a FRESH login attempt with a candidate credential — accepted
+//	            only when the router's live credential matches (and, like a real
+//	            router with an EMPTY shadow hash, accepted for ANY candidate).
+//
+// live is the credential a fresh login really is accepted with, and it moves
+// ONLY when passwd actually takes — driven by the plaintext the SHIPPED
+// passwdCommand carried (carriedPassword), so the fake cannot "prove" a
+// password the command text never sent.
 type fakeCredentialRouter struct {
 	hash         rootHashState
 	refusePasswd bool
 	cmds         []string
 	// passwdOut is what the router-side passwd prints.
 	passwdOut string
+	// live is the password a fresh login is accepted with.
+	live string
+	// proofs records every credential offered on the fresh-login channel.
+	proofs []string
+}
+
+// carriedPassword decodes the plaintext out of the octal carrier in a shipped
+// passwdCommand. It returns "" when the command carries no carrier, so a fake
+// router can never adopt a credential the command did not send.
+func carriedPassword(cmd string) string {
+	const open = `pw=$(printf '%b' '`
+	i := strings.Index(cmd, open)
+	if i < 0 {
+		return ""
+	}
+	rest := cmd[i+len(open):]
+	j := strings.Index(rest, `')`)
+	if j < 0 {
+		return ""
+	}
+	pw, err := decodeOctalCarrier(rest[:j])
+	if err != nil {
+		return ""
+	}
+	return pw
 }
 
 func (f *fakeCredentialRouter) run(cmd string) string {
@@ -145,10 +183,32 @@ func (f *fakeCredentialRouter) run(cmd string) string {
 	case strings.Contains(cmd, "passwd root"):
 		if !f.refusePasswd {
 			f.hash = rootHashSet
+			f.live = carriedPassword(cmd)
 		}
 		return f.passwdOut
 	}
 	return ""
+}
+
+// proveLogin models a FRESH SSH login with a candidate password:
+//
+//   - an EMPTY shadow hash accepts ANY password (rpcd's
+//     rpc_login_test_password() and dropbear both short-circuit to true) — which
+//     is precisely why the deploy must never treat a login as proof in that
+//     state;
+//   - otherwise only the credential passwd actually set is accepted.
+func (f *fakeCredentialRouter) proveLogin(pw string) bool {
+	f.proofs = append(f.proofs, pw)
+	if f.hash == rootHashEmpty {
+		return true
+	}
+	return f.hash == rootHashSet && pw != "" && pw == f.live
+}
+
+// offeredOnFreshLogin returns every credential the fresh-login channel was
+// offered, in order.
+func (f *fakeCredentialRouter) offeredOnFreshLogin() []string {
+	return append([]string(nil), f.proofs...)
 }
 
 func (f *fakeCredentialRouter) ranPasswd() bool {
@@ -185,7 +245,7 @@ func TestEnsureRootCredentialFreshDeployForcesACredential(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, passwdOut: "passwd: password changed\n"}
 
-	pw, ok := ensureRootCredential(job, fr.run, "")
+	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
 	if !ok {
 		t.Fatalf("ensureRootCredential failed on a fresh deploy: %s", job.Error)
 	}
@@ -232,7 +292,7 @@ func TestEnsureRootCredentialFailsClosedWhenPasswdDoesNotTake(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, refusePasswd: true, passwdOut: "passwd: password changed\n"}
 
-	if _, ok := ensureRootCredential(job, fr.run, ""); ok {
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); ok {
 		t.Fatal("ensureRootCredential returned ok=true although the router still has NO root password")
 	}
 	if job.Status != "failed" {
@@ -252,7 +312,7 @@ func TestEnsureRootCredentialUnreadableStateFailsClosed(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashUnknown}
 
-	if _, ok := ensureRootCredential(job, fr.run, ""); ok {
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); ok {
 		t.Fatal("ensureRootCredential accepted an unreadable root-hash state")
 	}
 	if job.Status != "failed" || job.Steps[4].Status != "failed" {
@@ -269,7 +329,7 @@ func TestEnsureRootCredentialHonoursSuppliedPassword(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, passwdOut: "passwd: password changed\n"}
 
-	pw, ok := ensureRootCredential(job, fr.run, "corr3ct-h0rse")
+	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "corr3ct-h0rse")
 	if !ok {
 		t.Fatalf("ensureRootCredential failed: %s", job.Error)
 	}
@@ -306,7 +366,7 @@ func TestEnsureRootCredentialLeavesAnExistingCredentialAlone(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashSet}
 
-	pw, ok := ensureRootCredential(job, fr.run, "")
+	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
 	if !ok {
 		t.Fatalf("ensureRootCredential failed: %s", job.Error)
 	}
@@ -334,7 +394,7 @@ func TestEnsureRootCredentialLeavesALockedPasswordAlone(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashLocked}
 
-	pw, ok := ensureRootCredential(job, fr.run, "")
+	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
 	if !ok {
 		t.Fatalf("ensureRootCredential failed: %s", job.Error)
 	}
@@ -352,7 +412,7 @@ func TestEnsureRootCredentialSuppliedPasswordOverridesLocked(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashLocked, passwdOut: "passwd: password changed\n"}
 
-	pw, ok := ensureRootCredential(job, fr.run, "unlock-me-please")
+	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "unlock-me-please")
 	if !ok || pw != "unlock-me-please" {
 		t.Fatalf("supplied password was not applied (ok=%v pw=%q err=%s)", ok, pw, job.Error)
 	}

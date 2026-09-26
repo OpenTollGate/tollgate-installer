@@ -69,6 +69,63 @@ func keyboardInteractiveAuth(password string) ssh.AuthMethod {
 	})
 }
 
+// proveRootPassword opens a FRESH SSH session to ip and authenticates as root
+// with exactly the candidate password — nothing else — reporting whether the
+// router accepted it.
+//
+// It exists to prove that a password CHANGE took (deploy step 4, see
+// applyRootPassword): re-reading /etc/shadow only shows that SOME hash is
+// present, so on a set→set transition a passwd that fails silently leaves the
+// OLD hash in place and the re-probe sees the `set` state it is looking for
+// (#46 follow-up review).
+//
+// Every fallback sshConnect() carries is deliberately ABSENT here:
+//
+//   - no empty-password retry: a fresh OpenWrt router accepts an empty password,
+//     so a fallback would report success for a credential the router never
+//     adopted — the same false-proof shape this function exists to remove;
+//   - no default-key authentication: a key-provisioned router would authenticate
+//     without the password, proving nothing about the shadow hash.
+//
+// The candidate itself crosses as both `password` and keyboard-interactive
+// (dropbear can present either method for a password login — see sshConnect);
+// both are offers of the SAME candidate, so neither widens the proof.
+//
+// It returns false on any failure — the caller must fail the deploy (fail
+// closed), never assume the password took. NOTE the empty-hash premise: on a
+// router whose root hash is EMPTY this returns true for ANY candidate, so it is
+// only a proof where the router had a real credential before the write; that is
+// the caller's condition (applyRootPassword).
+//
+// The router's host key is verified before the candidate is offered, exactly as
+// for the deploy session (routerHostKeyCallback): an untrusted key aborts the
+// handshake, so the candidate is never sent to a host the operator has not
+// trusted.
+func proveRootPassword(ip, password string) bool {
+	if password == "" {
+		// An empty candidate is not a proof of anything: an empty-hash router
+		// accepts it and a router with a real hash never does, so report refusal
+		// without sending it anywhere. (applyRootPassword only calls this for a
+		// non-empty candidate, and a generated credential is never empty.)
+		return false
+	}
+	config := &ssh.ClientConfig{
+		User:            "root",
+		HostKeyCallback: routerHostKeyCallback(ip),
+		Timeout:         10 * time.Second,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+			keyboardInteractiveAuth(password),
+		},
+	}
+	client, err := ssh.Dial("tcp", net.JoinHostPort(ip, sshDialPort), config)
+	if err != nil {
+		return false
+	}
+	closeSSHClient(client)
+	return true
+}
+
 // closeSSHClient closes a deploy SSH client, tolerating nil.
 //
 // The nil case is real and load-bearing: a subnet relocation that loses the
