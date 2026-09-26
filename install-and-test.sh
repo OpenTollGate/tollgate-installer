@@ -71,6 +71,12 @@ FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-alpha}"
 FEED_TAG_OVERRIDE="${TOLLGATE_FEED_RELEASE_TAG:-}"
 LIST_RELEASES=0
 POSITIONAL=()
+# Installer flags this script consumes but must still hand to the binary. The arg
+# loop below drains "$@" (every argument it does not recognise becomes a
+# POSITIONAL), so a flag forwarded as "$@" at the RUN_BIN line would never arrive
+# — and the flag itself would be read as the router IP. Collected here instead and
+# re-emitted when the binary is started (BLOCK 1 of the #41 review).
+TRUST_ARGS=()
 # --bin <path>: run a pre-built installer binary instead of downloading one.
 BIN_PATH=""
 # Filled in by preflight(). python3 is optional; ssh/sshpass are only needed
@@ -100,6 +106,10 @@ Options:
   --list             List recent feed releases (newest first) and exit.
   --bin <path>       Run this installer binary instead of downloading one
                      (e.g. a locally built ./tollgate-installer).
+  --trust-host-key <SHA256:…>
+                     Trust this router SSH host-key fingerprint for this run
+                     (verify it on the router's console first). Same as
+                     TOLLGATE_TRUST_HOST_KEY=<fingerprint>.
   -h, --help         Show this help.
 USAGE
 }
@@ -110,6 +120,13 @@ while [ $# -gt 0 ]; do
         --channel) FEED_CHANNEL="${2:-}"; shift 2 ;;
         --list)    LIST_RELEASES=1; shift ;;
         --bin)     BIN_PATH="${2:-}"; shift 2 ;;
+        --trust-host-key)
+            if [ -z "${2:-}" ]; then
+                echo "ERROR: --trust-host-key needs a fingerprint, e.g. --trust-host-key SHA256:AbCdEf…" >&2
+                usage >&2
+                exit 1
+            fi
+            TRUST_ARGS+=(--trust-host-key "$2"); shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *)         POSITIONAL+=("$1"); shift ;;
     esac
@@ -361,10 +378,15 @@ PORT="$(pick_port "${PORT}")"
 # --- 4. run the installer ---------------------------------------------------
 echo
 echo "Starting ${BIN_NAME} on http://localhost:${PORT} ..."
-# "$@" forwards installer flags (e.g. --trust-host-key SHA256:…) so an operator
-# can trust a router's SSH host key from the curl|bash flow too. The equivalent
-# environment variable (TOLLGATE_TRUST_HOST_KEY) works without it.
-"${RUN_BIN}" -port "${PORT}" "$@" >"${LOG_FILE}" 2>&1 &
+# Forward the installer flags this script consumed itself (see TRUST_ARGS) so an
+# operator can trust a router's SSH host key from the curl|bash flow too. The
+# equivalent environment variable (TOLLGATE_TRUST_HOST_KEY) works without it: the
+# binary is started from this shell, so it inherits the operator's environment.
+#
+# The "${TRUST_ARGS[@]+...}" guard (not a bare "${TRUST_ARGS[@]}") is required:
+# with `set -u` an empty array expansion is an "unbound variable" error on bash
+# 3.2, which macOS still ships and this script supports.
+"${RUN_BIN}" -port "${PORT}" ${TRUST_ARGS[@]+"${TRUST_ARGS[@]}"} >"${LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 trap 'kill ${SERVER_PID} 2>/dev/null || true' EXIT
 

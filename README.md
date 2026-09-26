@@ -115,6 +115,22 @@ It runs these steps automatically:
    DNS, LNURL in `identities.json`, captive portal, TollGate health ad
 5. Prints a clear `Deploy COMPLETE` / `Deploy FAILED` result
 
+The installer never sends the router's root password before it has verified the
+router's SSH host key. On a router it has not seen before it refuses, prints the
+fingerprint (SHA256:…) it was shown, and stops. Verify that fingerprint on the
+router's own console, then hand the launcher the value it printed — it is
+forwarded to the installer binary and the key is remembered for later runs (also
+after a re-flash, when the router comes back with a new key):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \
+    --trust-host-key SHA256:<fingerprint> <ROUTER_IP> <ROOT_PASSWORD> <LIGHTNING_ADDRESS>
+```
+
+The same decision can be passed in the environment as
+TOLLGATE_TRUST_HOST_KEY=<fingerprint>, or as -trust-host-key SHA256:<fingerprint>
+when running the binary directly; the launcher's --help lists its options.
+
 ### 3. Run the latest code without curl
 
 Just clone, build, and go:
