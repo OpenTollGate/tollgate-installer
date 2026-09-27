@@ -108,8 +108,7 @@ func TestRootHashProbeCmdClassifiesShadowFields(t *testing.T) {
 			if err := writeFileForTest(shadow, tc.shadow); err != nil {
 				t.Fatal(err)
 			}
-			cmd := strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow)
-			out := shRunStrict(t, cmd)
+			out := shRunStrict(t, rootHashProbeCmdFor(shadow))
 			if got := parseRootHashState(out); got != tc.want {
 				t.Fatalf("probe on %q = %q (raw %q), want %q", tc.shadow, got, out, tc.want)
 			}
