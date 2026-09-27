@@ -29,6 +29,18 @@ var (
 	// at least 6 lowercase bech32 data characters (covers the 6-char checksum).
 	// Real LNURLs are far longer; this is a lenient plausibility gate.
 	lnurlRe = regexp.MustCompile(`^lnurl1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}$`)
+
+	// Wireless-inventory parsers (see discoverWifiDevices). Each is anchored to
+	// the exact line shape the tool prints, so a refusal cannot be mistaken for
+	// an inventory:
+	//   iw interface.c:386  `phy#0`            → iwPhyRe
+	//   iw interface.c:391  `	Interface phy0-ap0` → iwInterfaceRe
+	//   iwinfo_cli.c:674    `… PHY name: phy0` → iwinfoPhyRe
+	//   `ls /sys/class/ieee80211/`             → sysfsPhyRe
+	iwPhyRe       = regexp.MustCompile(`(?m)^phy#(\d+)\s*$`)
+	iwInterfaceRe = regexp.MustCompile(`(?m)^\s*Interface\s+(\S+)\s*$`)
+	iwinfoPhyRe   = regexp.MustCompile(`(?m)PHY name:\s*(\S+)`)
+	sysfsPhyRe    = regexp.MustCompile(`^phy\d+$`)
 )
 
 // Build metadata, injected at build time:
@@ -613,12 +625,24 @@ func parseIwScan(output string) []wifiSSID {
 //     "Device or resource busy" / "No such device": nl80211/errno strings
 //     observed in the field (see docs/wifi-scan-fallthrough.md).
 //   - "command not found" / "Usage:": iwinfo/iw missing, or a command called
-//     with invalid syntax (e.g. `iw dev scan`).
+//     with invalid syntax (e.g. `iw dev scan`, `iw phy phy0 scan`).
+//   - "not found": the CLI itself is absent. iwinfo/iw are NOT guaranteed on a
+//     stock image (the `iwinfo` CLI is a separate package from the libiwinfo
+//     that LuCI's rpcd object uses), and busybox ash reports the absence as
+//     `-ash: iw: not found` — deliberately not the bash wording "command not
+//     found". Without this entry the shell's own "the tool is absent" message
+//     was treated as scan output and parsed to zero networks.
+//   - "No such phy": `iw phy <phy> scan` names a phy iw cannot look up.
 //
 // iwinfo line numbers: openwrt/iwinfo @ 66bdd1a.
+// iw line numbers: iw (git.sipsolutions.net/iw) — iw.h:70 HANDLER_RET_USAGE,
+// iw.c:471-474 idby mismatch, iw.c:640-641 usage on HANDLER_RET_USAGE,
+// scan.c:2642 TOPLEVEL(scan, … CIB_NETDEV …).
 var scanFailureSignatures = []string{
 	"command not found",
+	"not found",
 	"No such device",
+	"No such phy",
 	"No such wireless device",
 	"No such wireless backend",
 	"Operation not supported",
@@ -699,21 +723,205 @@ func wirelessInterfaces(iwinfoOut string) []string {
 	return devs
 }
 
+// wirelessPhys extracts phy names from bare `iwinfo` output. print_info prints
+// a `Supports VAPs: <yes|no>  PHY name: <phy>` line (iwinfo_cli.c:674), which
+// is the only place a phy name appears in that output.
+func wirelessPhys(iwinfoOut string) []string {
+	var phys []string
+	for _, m := range iwinfoPhyRe.FindAllStringSubmatch(iwinfoOut, -1) {
+		if m[1] != "" && m[1] != "?" {
+			phys = appendUnique(phys, m[1])
+		}
+	}
+	return phys
+}
+
+// iwInterfaceNames extracts netdev names from `iw dev` output, which prints
+//
+//	phy#0
+//		Interface phy0-ap0
+//
+// (iw interface.c:386 prints `phy#%d`, :391 prints `<indent>Interface %s`).
+// The names are exactly what `iw dev <dev> scan` / `iwinfo <dev> scan` need.
+func iwInterfaceNames(iwDevOut string) []string {
+	var ifaces []string
+	for _, m := range iwInterfaceRe.FindAllStringSubmatch(iwDevOut, -1) {
+		ifaces = appendUnique(ifaces, m[1])
+	}
+	return ifaces
+}
+
+// iwPhyNames extracts phy names from `iw dev`'s `phy#<n>` headers, rewritten to
+// the form iw itself resolves ("phy0" via /sys/class/ieee80211/<name>/index,
+// iw.c:265). Used for reporting only — see scanChain: iw has no phy-level scan.
+func iwPhyNames(iwDevOut string) []string {
+	var phys []string
+	for _, m := range iwPhyRe.FindAllStringSubmatch(iwDevOut, -1) {
+		phys = appendUnique(phys, "phy"+m[1])
+	}
+	return phys
+}
+
+// sysfsPhyNames extracts phy names from `ls /sys/class/ieee80211/`. This is the
+// last discovery probe: it answers "does this kernel have radios at all?" even
+// when there is no wireless netdev to enumerate, which distinguishes "radios
+// present but down" from "no wireless hardware".
+func sysfsPhyNames(lsOut string) []string {
+	var phys []string
+	for _, line := range strings.Split(lsOut, "\n") {
+		if m := sysfsPhyRe.FindString(strings.TrimSpace(line)); m != "" {
+			phys = appendUnique(phys, m)
+		}
+	}
+	return phys
+}
+
+// appendUnique appends s to list when it is not already present.
+func appendUnique(list []string, s ...string) []string {
+	for _, v := range s {
+		dup := false
+		for _, have := range list {
+			if have == v {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			list = append(list, v)
+		}
+	}
+	return list
+}
+
+// joinOrDash renders a name list for a log line, "-" when empty.
+func joinOrDash(names []string) string {
+	if len(names) == 0 {
+		return "-"
+	}
+	return strings.Join(names, ",")
+}
+
+// wifiDevices is the router's wireless inventory: discovered ONCE per scan and
+// used to build the per-interface strategies.
+//
+// This type is the fix for the mainline defect. The previous chain enumerated
+// interfaces ONLY from bare `iwinfo` (an optional CLI) and hardcoded every
+// phy/device name it afterwards scanned (`phy0`,`phy1`,`wlan0`,`wlan1`), so on
+// a stock image whose wireless netdevs are named `phy0-ap0`/`phy1-ap1` — and
+// whose `iwinfo` CLI may not exist at all — nothing ever learned the real
+// names and every strategy refused.
+type wifiDevices struct {
+	ifaces []string // netdev names, e.g. phy0-ap0 (scan targets)
+	phys   []string // phy names, e.g. phy0 (reported; iw has no phy-level scan)
+	log    string   // one line: what discovery found, or which probe said what
+}
+
+// discoverWifiDevices enumerates the router's wireless interfaces, in order of
+// authority, and returns an evidence line for every probe it ran:
+//
+//  1. `iw dev` — authoritative, and present on the operator's box (iw 6.17:
+//     proven by the usage text the installer's last-resort strategy printed).
+//     Gives the netdev names *and* the phy indices.
+//  2. bare `iwinfo` (no arguments) — for vendor/older images without iw.
+//     iwinfo_cli.c:979-1000 globs /sys/class/net/* and prints one
+//     `%-9s ESSID: …` block per wireless netdev (iwinfo_cli.c:635). Only
+//     consulted when `iw dev` found nothing, so an iwinfo build with a
+//     different output shape cannot overrule iw.
+//  3. `ls /sys/class/ieee80211/` — no interface names, only "are there radios?".
+//     Reached only when both enumerators found no interface, and it is what
+//     turns the failure report from "no wireless interfaces" into the
+//     actionable "2 phy(s) present but no wireless interface — the radios are
+//     down".
+//
+// Every probe's raw first line is kept, so the report says who refused and how.
+func discoverWifiDevices(run scanRunner) wifiDevices {
+	var d wifiDevices
+
+	iwOut := run("iw dev 2>&1")
+	d.ifaces = iwInterfaceNames(iwOut)
+	d.phys = iwPhyNames(iwOut)
+	if len(d.ifaces) > 0 {
+		d.log = fmt.Sprintf("iw dev: ifaces=%s phys=%s", joinOrDash(d.ifaces), joinOrDash(d.phys))
+		return d
+	}
+	iwSaid := firstLine(iwOut)
+
+	iwinfoOut := run("iwinfo 2>&1")
+	devs := wirelessInterfaces(iwinfoOut)
+	if len(devs) > 0 {
+		d.ifaces = devs
+		d.phys = appendUnique(d.phys, wirelessPhys(iwinfoOut)...)
+		d.log = fmt.Sprintf("iwinfo: ifaces=%s phys=%s (iw dev said: %s)",
+			joinOrDash(d.ifaces), joinOrDash(d.phys), orNoOutput(iwSaid))
+		return d
+	}
+	iwinfoSaid := firstLine(iwinfoOut)
+
+	classOut := run("ls /sys/class/ieee80211/ 2>&1")
+	d.phys = appendUnique(d.phys, sysfsPhyNames(classOut)...)
+
+	detail := fmt.Sprintf("no wireless interface discovered (iw dev said: %s; iwinfo said: %s; ls /sys/class/ieee80211 said: %s)",
+		orNoOutput(iwSaid), orNoOutput(iwinfoSaid), orNoOutput(firstLine(classOut)))
+	if len(d.phys) > 0 {
+		detail += fmt.Sprintf("; %d phy(s) present (%s) but no wireless interface — the radios are down (UCI `disabled 1`, or `wifi` was never started)",
+			len(d.phys), joinOrDash(d.phys))
+	}
+	d.log = detail
+	return d
+}
+
+// orNoOutput renders a probe's first output line, "no output" when it printed
+// nothing (an empty `iw dev` is itself evidence: the kernel has no wireless
+// netdev).
+func orNoOutput(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "no output"
+	}
+	return s
+}
+
 // runCmd executes one command and records it.
 func runCmd(run scanRunner, cmd string) scanCommand {
 	return scanCommand{cmd: cmd, out: run(cmd)}
 }
 
-// scanChain is the ordered strategy list. Every attempt runs with stderr
-// MERGED into stdout (2>&1): now that the failure class is recognised as
-// data, the router's real error message stays visible in the log/debug
-// fields instead of being discarded by 2>/dev/null.
-func scanChain() []scanStrategy {
+// scanChain is the ordered strategy list, built from the interfaces discovery
+// actually found. Every attempt runs with stderr MERGED into stdout (2>&1): the
+// failure class is data, so the router's real error message stays visible in
+// the log/debug fields.
+//
+// What changed for mainline OpenWrt, and why each old link was dead there:
+//
+//   - `iw dev scan` (old last resort) is invalid with no device: iw's own usage
+//     is `dev <devname> scan [-u] …`, so a device-less call can only print usage
+//     (that usage text is what the operator saw in the UI). Replaced by
+//     `iw dev <dev> scan` per DISCOVERED interface — iw's correct, and the only
+//     fallback that works when the `iwinfo` CLI is absent.
+//   - `iw phy phy0/phy1 scan` is invalid by construction on iw >= 6: `scan` is
+//     declared `TOPLEVEL(scan, …, CIB_NETDEV, handle_scan_combined)`
+//     (scan.c:2642) — a NETDEV command. Identifying it by phy makes iw return
+//     HANDLER_RET_USAGE (iw.c:471-474, iw.h:70) with no command matched, so main
+//     prints iw's TOP-LEVEL usage text (iw.c:640-641) and exits 1. There is no
+//     phy-level scan in iw at all, so this attempt was unfixable; it is dropped
+//     in favour of the per-interface `iw dev <dev> scan`.
+//   - the phy/device names were HARDCODED (`phy0`,`phy1`,`wlan0`,`wlan1`), so
+//     mainline's `phy0-ap0`/`phy1-ap1` netdevs were never addressed. Names now
+//     come from discoverWifiDevices.
+//
+// Vendor compatibility is kept where it is harmless: the device-less
+// `iwinfo scan` (some vendor builds accept it) and the GL.iNet `wlan0`/`wlan1`
+// naming stay — but as SEPARATE commands, never `a || b`, because a single
+// shell chain returns only the last command's output and would hide the first
+// device's refusal from the per-command judging in walkChain.
+func scanChain(d wifiDevices) []scanStrategy {
+	ifaceDetail := "ifaces=" + joinOrDash(d.ifaces)
+	noIfaceDetail := "no interface discovered to scan (see the discovery line)"
 	return []scanStrategy{
 		{
-			// Retained first: some vendor iwinfo builds accept a device-less
-			// scan. Upstream iwinfo needs the device argument, which now logs
-			// as an explicit refusal instead of an empty result.
+			// Retained for vendor iwinfo builds that accept a device-less
+			// scan. Upstream iwinfo needs the device argument: `argc > 1 &&
+			// argc < 3` prints its usage to stderr and exits 1
+			// (iwinfo_cli.c:962-977), which logs as an explicit refusal.
 			name:   "iwinfo scan",
 			parser: parseIwinfoScan,
 			run: func(run scanRunner) ([]scanCommand, string) {
@@ -721,70 +929,78 @@ func scanChain() []scanStrategy {
 			},
 		},
 		{
+			// The strategy that SHOULD have worked on mainline, and the one the
+			// discovery bug killed: the OpenWrt-native per-interface scan. It is
+			// only usable once a device list exists, which is why enumeration
+			// moved off the optional `iwinfo` CLI and onto `iw dev`.
 			name:   "iwinfo <dev> scan",
 			parser: parseIwinfoScan,
 			run: func(run scanRunner) ([]scanCommand, string) {
-				list := runCmd(run, "iwinfo 2>&1")
-				devs := wirelessInterfaces(list.out)
-				if len(devs) == 0 {
-					return []scanCommand{list}, "no wireless interfaces reported by iwinfo"
+				if len(d.ifaces) == 0 {
+					return nil, noIfaceDetail
 				}
-				cmds := make([]scanCommand, 0, len(devs))
-				for _, dev := range devs {
+				cmds := make([]scanCommand, 0, len(d.ifaces))
+				for _, dev := range d.ifaces {
 					cmds = append(cmds, runCmd(run, "iwinfo "+dev+" scan 2>&1"))
 				}
-				return cmds, "ifaces=" + strings.Join(devs, ",")
+				return cmds, ifaceDetail
 			},
 		},
 		{
-			// phy-level scan works regardless of interface mode.
-			name:   "iw phy <phy> scan",
+			// iw's only valid scan form. Runs when iwinfo refuses or is absent
+			// — the common case on a stock image, where `iw` is present but the
+			// `iwinfo` CLI may not be.
+			name:   "iw dev <dev> scan",
 			parser: parseIwScan,
 			run: func(run scanRunner) ([]scanCommand, string) {
-				var cmds []scanCommand
-				for _, phy := range []string{"phy0", "phy1"} {
-					cmds = append(cmds, runCmd(run, "iw phy "+phy+" scan 2>&1"))
+				if len(d.ifaces) == 0 {
+					return nil, noIfaceDetail
 				}
-				return cmds, "phy0,phy1"
+				cmds := make([]scanCommand, 0, len(d.ifaces))
+				for _, dev := range d.ifaces {
+					cmds = append(cmds, runCmd(run, "iw dev "+dev+" scan 2>&1"))
+				}
+				return cmds, ifaceDetail
 			},
 		},
 		{
+			// GL.iNet-era netdev naming, kept for those boxes. Two separate
+			// commands (see the doc comment): on mainline both refuse with
+			// "No such wireless device", which the log now shows one device at
+			// a time instead of losing the first refusal in an `||` chain.
 			name:   "iwinfo wlan0/wlan1 scan",
 			parser: parseIwinfoScan,
 			run: func(run scanRunner) ([]scanCommand, string) {
-				return []scanCommand{runCmd(run, "iwinfo wlan0 scan 2>&1 || iwinfo wlan1 scan 2>&1")}, "wlan0,wlan1"
-			},
-		},
-		{
-			// Last resort. `iw dev scan` is invalid syntax in iw >= 6 and
-			// prints its usage text; that text is now recognised as a
-			// refusal like any other, so it can never again be reported as a
-			// successful empty scan.
-			name:   "iw dev scan",
-			parser: parseIwScan,
-			run: func(run scanRunner) ([]scanCommand, string) {
-				return []scanCommand{runCmd(run, "iw dev scan 2>&1")}, "all wireless devices"
+				return []scanCommand{
+					runCmd(run, "iwinfo wlan0 scan 2>&1"),
+					runCmd(run, "iwinfo wlan1 scan 2>&1"),
+				}, "vendor device names"
 			},
 		},
 	}
 }
 
-// scanViaChain walks scanChain() and returns the first attempt that yields at
-// least one network. An attempt is a SUCCESS only when at least one of its
-// commands produced output that is not a recognised iwinfo/iw refusal and
-// that parses to >= 1 network. Anything else — no output, a refusal like
-// "Scanning not possible", or output that parses to zero networks — NEVER
-// ends the walk: the next strategy runs. When every strategy fails, the
-// result reports Strategy strategyNone with the per-attempt log and the last
-// raw output, so the operator can see which methods were tried and why each
-// one failed.
-func scanViaChain(run scanRunner) scanResult {
-	res := scanResult{Strategy: strategyNone}
-	for i, st := range scanChain() {
+// walkChain runs the strategies in order against a result accumulator and
+// returns the first attempt that yields at least one network. An attempt is a
+// SUCCESS only when at least one of its commands produced output that is not a
+// recognised iwinfo/iw refusal and that parses to >= 1 network. Anything else —
+// no output, a refusal like "Scanning not possible", or output that parses to
+// zero networks — NEVER ends the walk. A strategy that had nothing to run (no
+// interface discovered) is logged as such rather than as an empty attempt.
+//
+// Kept separate from scanViaChain so tests can drive the pre-fix chain through
+// the identical walker (see TestLegacyChainCannotScanMainline).
+func walkChain(run scanRunner, chain []scanStrategy, res scanResult) scanResult {
+	for i, st := range chain {
 		cmds, detail := st.run(run)
 		label := fmt.Sprintf("[%d] %s", i+1, st.name)
 		if detail != "" {
 			label += " (" + detail + ")"
+		}
+
+		if len(cmds) == 0 {
+			res.Log = append(res.Log, label+": not run")
+			continue
 		}
 
 		var good []string
@@ -827,6 +1043,50 @@ func scanViaChain(run scanRunner) scanResult {
 	return res
 }
 
+// scanViaChain discovers the router's wireless interfaces, then walks
+// scanChain(). When every strategy fails, the result reports Strategy
+// strategyNone with one log line per attempt (including a discovery line), so
+// the operator can see which methods were tried and why each one failed.
+func scanViaChain(run scanRunner) scanResult {
+	d := discoverWifiDevices(run)
+	return walkChain(run, scanChain(d), scanResult{
+		Strategy: strategyNone,
+		Log:      []string{"[discovery] " + d.log},
+	})
+}
+
+// scanRefusalSummary is the operator-facing sentence for a walk in which EVERY
+// strategy refused. It names each method tried with the router's own reason,
+// and says plainly that this is a refusal — because "No WiFi networks detected"
+// reads as "there are no networks nearby" and sends the operator hunting for a
+// password problem instead of the real one. Returns "" when a strategy won.
+func scanRefusalSummary(res scanResult) string {
+	if len(res.SSIDs) > 0 || res.Strategy != strategyNone {
+		return ""
+	}
+	var attempts []string
+	discovery := ""
+	for _, line := range res.Log {
+		if strings.HasPrefix(line, "[discovery]") {
+			// Kept as its own sentence: it carries the "radios are down" hint,
+			// which is the actionable half of an all-refused scan.
+			discovery = strings.TrimSpace(strings.TrimPrefix(line, "[discovery]"))
+			continue
+		}
+		attempts = append(attempts, line)
+	}
+	if len(attempts) == 0 {
+		attempts = []string{"no scan method could be run"}
+	}
+	msg := fmt.Sprintf(
+		"WiFi scan refused by every method the installer tried (%d) — this is the router refusing to scan, NOT an empty list of nearby networks.",
+		len(attempts))
+	if discovery != "" {
+		msg += " Interface discovery: " + discovery + "."
+	}
+	return msg + " Per-method result: " + strings.Join(attempts, " | ")
+}
+
 // firstLine returns the first non-blank line of s, trimmed — used to keep the
 // per-attempt log readable.
 func firstLine(s string) string {
@@ -842,7 +1102,10 @@ func firstLine(s string) string {
 // HTTP status. Pure — unit-tested without a router.
 //
 //   - networks found           -> 200 {ssids:[...], strategy:"<winner>", log}
-//   - every strategy refused   -> 200 {ssids:[], strategy:"none", log, debug}
+//   - every strategy refused   -> 200 {ssids:[], strategy:"none", log, debug,
+//     error} where `error` names every method tried and the router's reason for
+//     each. It never says "no networks detected": that phrasing reads as "there
+//     is nothing nearby" and hides a refusal behind a plausible empty result.
 //   - nothing came back at all -> 500 {ssids:[], strategy:"none", log, error}
 func buildScanResponse(res scanResult) (int, map[string]any) {
 	ssids := res.SSIDs
@@ -857,11 +1120,13 @@ func buildScanResponse(res scanResult) (int, map[string]any) {
 	if len(ssids) > 0 {
 		return http.StatusOK, body
 	}
+	reason := scanRefusalSummary(res)
 	if strings.TrimSpace(res.LastRaw) != "" {
+		body["error"] = truncate(reason, 900)
 		body["debug"] = truncate(res.LastRaw, 200)
 		return http.StatusOK, body
 	}
-	body["error"] = "WiFi scan failed — no wireless interfaces found or iwinfo/iw not available. The router may have been left in a partially-configured state by a previous deployment. Try factory resetting the router."
+	body["error"] = truncate(reason+" Not one byte came back from the router: iwinfo and iw are both missing, or the kernel has no wireless device at all. The router may have been left in a partially-configured state by a previous deployment — try factory resetting it.", 900)
 	return http.StatusInternalServerError, body
 }
 

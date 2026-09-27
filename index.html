@@ -705,8 +705,16 @@ async function wifiScan() {
     if (scanToken !== wifiScanToken) return;
 
     if (data.error) {
+      // The server explains a refusal itself (which methods ran, and what the
+      // router said about each). Keep the password hint ONLY when there is no
+      // evidence from the router at all — a refused scan is not a password
+      // problem, and reporting it as "no networks detected" is what sent the
+      // operator hunting for one.
+      const evidence = data.log || data.debug;
       ssidSelect.innerHTML = '<option value="">Scan failed</option>';
-      ssidHint.textContent = data.error + ' — check router password and try Rescan.';
+      ssidHint.textContent = evidence
+        ? data.error
+        : data.error + ' — check router password and try Rescan.';
       ssidSelect.disabled = true;
       wifiScanned = false;
       return;
@@ -720,8 +728,8 @@ async function wifiScan() {
       // "not detected", so the real refusal is visible to the operator.
       const detail = data.log || data.debug;
       ssidHint.textContent = detail
-        ? 'No WiFi networks detected. Attempts: ' + detail
-        : 'No WiFi networks detected. Try Rescan.';
+        ? 'Scan returned no network list. Attempts: ' + detail
+        : 'Scan returned no network list. Try Rescan.';
       ssidSelect.disabled = true;
       wifiScanned = true;
       return;

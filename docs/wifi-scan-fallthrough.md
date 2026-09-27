@@ -65,8 +65,12 @@ shell/`iw` class).
 
 ### 2. The chain falls through — `scanChain` / `scanViaChain`
 
-The strategy list is data: `iwinfo scan` → `iwinfo <dev> scan` →
-`iw phy phy0/phy1 scan` → `iwinfo wlan0/wlan1 scan` → `iw dev scan`.
+The strategy list is data: `iwinfo scan` → `iwinfo <dev> scan` (per interface)
+→ `iw dev <dev> scan` (per interface) → `iwinfo wlan0`/`wlan1` (vendor naming,
+two separate commands). The interface list comes from `discoverWifiDevices`
+(`iw dev` → bare `iwinfo` → sysfs) — see "Mainline OpenWrt" below for why the
+older, hardcoded list (`iw phy phy0/phy1 scan`, `iw dev scan`) could never work
+on a stock image.
 `scanViaChain` runs them in order and treats an attempt as a **success only
 when at least one of its commands produced output that is not a recognised
 refusal *and* parses to ≥ 1 network**. Otherwise it moves to the next strategy:
@@ -150,7 +154,7 @@ blocked on access, not closed green on unit tests. What is needed is either
 
 ```sh
 # on the box (or via the installer's SSH path), with the radios up:
-iwinfo phy0-ap0 scan ; iwinfo phy1-ap0 scan        # raw output pasted
+iwinfo phy0-ap0 scan ; iwinfo phy1-ap1 scan        # raw output pasted
 curl -s -X POST -H 'Content-Type: application/json' \
      -d '{"ip":"192.168.8.1","password":"<root pw>"}' \
      http://localhost:8099/api/wifi-scan | jq        # strategy + ssids
@@ -158,3 +162,70 @@ curl -s -X POST -H 'Content-Type: application/json' \
 
 or an SSH login (key or root password) to the router on its LAN address.
 Until that runs, treat the MT3000 result as unverified.
+
+## Mainline OpenWrt: why ALL five strategies refused (fixed here)
+
+A second field failure, on a **stock OpenWrt 25.12.5 filogic box (GL-MT3000)**,
+reached the UI as `No WiFi networks detected. Router returned: Usage: iw
+[options] command … (6.17)`. That usage text is iw's TOP-LEVEL usage, and it is
+the tell: every link of the chain was dead on mainline, for four *different*
+reasons, and the discovery that would have saved it never ran.
+
+| Strategy | On a stock mainline filogic box | Why |
+|---|---|---|
+| `iwinfo scan` | dead | upstream iwinfo prints usage when a device is missing: `argc > 1 && argc < 3` (iwinfo_cli.c:962-977) |
+| `iwinfo <dev> scan` | **should have worked** | it is the OpenWrt-native per-interface scan — but its device list came ONLY from bare `iwinfo` (main.go, `wirelessInterfaces`), an OPTIONAL CLI. With no `iwinfo` binary (or an empty enumeration) the strategy is dead before it starts, and no other enumerator existed |
+| `iw phy phy0/phy1 scan` | dead by construction | `scan` is declared `TOPLEVEL(scan, …, CIB_NETDEV, handle_scan_combined)` (iw scan.c:2642) — a NETDEV command. Identifying it by phy mismatches the idby, `__handle_cmd` returns `HANDLER_RET_USAGE` (iw.c:471-474; iw.h:70) with no command matched, and main prints iw's top-level usage (iw.c:640-641). **There is no phy-level scan in iw at all.** The names were hardcoded too |
+| `iwinfo wlan0 scan \|\| iwinfo wlan1 scan` | dead | 25.12 names wireless netdevs `phy0-ap0`/`phy1-ap1`; `wlan0`/`wlan1` is GL.iNet naming. The `\|\|` also made it ONE scanCommand, so the first device's refusal could never be logged or judged |
+| `iw dev scan` | dead by construction | `iw dev` needs a device: `dev <devname> scan`. Being last, its usage text is what `LastRaw`/`debug` carried to the UI — hence the operator's message |
+
+### The fix
+
+* **Real discovery** — `discoverWifiDevices()` runs `iw dev` (authoritative, and
+  present: iw 6.17 on the box; line shapes `phy#0` / `\tInterface phy0-ap0`,
+  iw interface.c:386/391) → bare `iwinfo` (vendor/older images, `%-9s ESSID:`
+  blocks, iwinfo_cli.c:635) → `ls /sys/class/ieee80211/` (answers "are there
+  radios at all?", which turns "no wireless interfaces" into the actionable
+  "2 phy(s) present but no wireless interface — the radios are down").
+* **No dead command, no hardcoded name** — the chain is now
+  `iwinfo scan` (vendor) → `iwinfo <dev> scan` per discovered interface →
+  `iw dev <dev> scan` per discovered interface (new; the only form that works
+  when the `iwinfo` CLI is absent) → `iwinfo wlan0`/`wlan1` as two separate
+  commands (vendor naming retained, still judged per command). The invalid
+  `iw phy <phy> scan` and `iw dev scan` are gone.
+* **Honest failure** — when every method refuses, `/api/wifi-scan` now returns
+  an `error` naming the discovery result and each method with the router's own
+  reason (`WiFi scan refused by every method the installer tried (4) — this is
+  the router refusing to scan, NOT an empty list of nearby networks. …`), and
+  the UI shows that sentence instead of "No WiFi networks detected". The
+  password hint is kept ONLY for responses with no router evidence at all
+  (e.g. the SSH failure), because a refused scan is not a credential problem.
+* `"not found"` joined `scanFailureSignatures`: busybox ash reports a missing
+  CLI as `-ash: iw: not found` — *not* bash's "command not found".
+
+### Verification (hermetic)
+
+`wifi_scan_chain_test.go` drives a scripted router; no hardware involved. The
+mainline fixture is the operator's box (iw present and printing usage, iwinfo
+CLI absent, netdevs `phy0-ap0`/`phy1-ap1`, 2.4 GHz scan answers, 5 GHz busy):
+
+* `TestScanChainFindsNetworksOnMainlineFilogic` — the fixed chain wins with
+  `iw dev <dev> scan` and returns the two networks; it also asserts no
+  device-less `iw dev scan` and no `iw phy` command is ever run.
+* `TestLegacyChainCannotScanMainline` — the PRE-FIX chain, kept in the test file
+  as a control, finds nothing on the same fixture through the same walker
+  (guarded by a probe proving the fixture's scan command really returns 2
+  networks, so the control is not vacuous).
+* `TestScanRefusalSummaryIsHonest` — the all-refused path names every method,
+  the absent tools, and the radios-down hint, and never claims "no networks".
+* `TestScanChainTreatsUsageTextAsRefusal` — the operator's verbatim iw usage
+  text is classified as a refusal and surfaces as such.
+* `TestScanChainUsesDiscoveredNamesOnly`, `TestDiscoverWifiDevices`,
+  `TestWirelessInterfaces`, `TestScanUiNeverClaimsNoNetworks`.
+
+**Still not verified:** the fixed chain has not been run against a physical
+mainline router from here — no router access. The hermetic fixture encodes the
+observed refusal (the iw usage text in the UI) and the tool inventory the box
+demonstrably has (`iw` 6.17), but the winning `iw dev phy0-ap0 scan` output is
+modelled, not captured.
+
