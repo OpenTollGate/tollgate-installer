@@ -33,6 +33,30 @@ func shRun(t *testing.T, script string) string {
 	return shRunEnv(t, os.Environ(), script)
 }
 
+// shRunStrict / shRunEnvStrict are shRun/shRunEnv for a SHIPPED router-side
+// probe whose exit status is part of its contract — the root-hash probe always
+// exits 0, because every unreadable/undecidable path inside it is
+// `echo unknown; exit 0`. A NON-ZERO status therefore means the command text
+// never ran to completion (missing applet, or the shell refusing to parse it),
+// and its output is a shell diagnostic that says nothing about the router
+// state. shRun's "log the status and use the output anyway" is exactly how a
+// broken harness reads as a probe verdict, so these variants fail the test.
+func shRunStrict(t *testing.T, script string) string {
+	t.Helper()
+	return shRunEnvStrict(t, os.Environ(), script)
+}
+
+func shRunEnvStrict(t *testing.T, env []string, script string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the probe shell exited non-zero (%v) — the shipped command text did not run, so its output is a shell diagnostic, not a state: raw %q", err, out)
+	}
+	return string(out)
+}
+
 // ─── /etc/shadow state parsing ───────────────────────────────────
 
 // TestParseRootHashState covers the probe contract. The EMPTY case is the
@@ -85,7 +109,7 @@ func TestRootHashProbeCmdClassifiesShadowFields(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow)
-			out := shRun(t, cmd)
+			out := shRunStrict(t, cmd)
 			if got := parseRootHashState(out); got != tc.want {
 				t.Fatalf("probe on %q = %q (raw %q), want %q", tc.shadow, got, out, tc.want)
 			}

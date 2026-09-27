@@ -34,7 +34,7 @@ import (
 func TestRootHashProbeCmdClassifiesUnreadableShadowAsUnknown(t *testing.T) {
 	t.Run("missing shadow file", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "shadow-does-not-exist")
-		out := shRun(t, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", missing))
+		out := shRunStrict(t, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", missing))
 		if got := parseRootHashState(out); got != rootHashUnknown {
 			t.Fatalf("missing /etc/shadow classified as %q (raw output %q), want %q — `empty` would overwrite a real password",
 				got, out, rootHashUnknown)
@@ -49,7 +49,7 @@ func TestRootHashProbeCmdClassifiesUnreadableShadowAsUnknown(t *testing.T) {
 		if err := os.WriteFile(shadow, []byte("root:$1$abc$defghijklmnop:0:0:99999:7:::\n"), 0o000); err != nil {
 			t.Fatal(err)
 		}
-		out := shRun(t, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow))
+		out := shRunStrict(t, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow))
 		if got := parseRootHashState(out); got != rootHashUnknown {
 			t.Fatalf("an unreadable /etc/shadow classified as %q (raw output %q), want %q — the router HAS a password the probe could not read",
 				got, out, rootHashUnknown)
@@ -67,7 +67,7 @@ func TestRootHashProbeCmdClassifiesUnreadableShadowAsUnknown(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := []string{"PATH=" + t.TempDir(), "HOME=" + t.TempDir()}
-		out := shRunEnv(t, env, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow))
+		out := shRunEnvStrict(t, env, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow))
 		if got := parseRootHashState(out); got != rootHashUnknown {
 			t.Fatalf("PATH-stripped awk classified as %q (raw output %q), want %q", got, out, rootHashUnknown)
 		}
@@ -78,7 +78,7 @@ func TestRootHashProbeCmdClassifiesUnreadableShadowAsUnknown(t *testing.T) {
 		if err := writeFileForTest(shadow, "root:$1$abc$defghijklmnop:0:0:99999:7:::\n"); err != nil {
 			t.Fatal(err)
 		}
-		out := shRun(t, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow))
+		out := shRunStrict(t, strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", shadow))
 		if got := parseRootHashState(out); got != rootHashSet {
 			t.Fatalf("readable hash classified as %q (raw output %q), want %q", got, out, rootHashSet)
 		}
@@ -137,7 +137,14 @@ func TestRootHashProbeCmdClassifiesUnreadableShadowAsUnknown(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				cmd := exec.Command(bb, "ash", "-c", strings.ReplaceAll(rootHashProbeCmd, "/etc/shadow", tc.path))
 				cmd.Env = os.Environ()
-				out, _ := cmd.CombinedOutput()
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					// Same contract as shRunStrict: the probe exits 0 for every
+					// state it can report, so a non-zero status means busybox
+					// ash never ran the command text (here: it refused to parse
+					// the substituted path) and `out` is a shell diagnostic.
+					t.Fatalf("busybox ash did not run the probe (%v): the harness failed, not the router — raw %q", err, out)
+				}
 				if got := parseRootHashState(string(out)); got != tc.state {
 					t.Fatalf("busybox ash: %s → %q (raw %q), want %q (%s)", tc.name, got, out, tc.state, tc.reason)
 				}
