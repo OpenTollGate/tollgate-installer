@@ -229,3 +229,103 @@ observed refusal (the iw usage text in the UI) and the tool inventory the box
 demonstrably has (`iw` 6.17), but the winning `iw dev phy0-ap0 scan` output is
 modelled, not captured.
 
+## The box had NO wireless interface at all: the wifi-enable step (fixed here)
+
+The discovery fix above makes the chain ask the *right* question, but on the
+same stock box it had nothing to ask it of. Measured 2026-09-27 on a freshly
+flashed stock OpenWrt 25.12.5 filogic box (GL-MT3000, mediatek/filogic):
+
+```
+# /etc/config/wireless, as shipped
+config wifi-device 'radio0'
+        option disabled '0'          <- the RADIO is enabled
+config wifi-iface 'default_radio0'
+        option ssid 'OpenWrt'
+        option disabled '1'          <- the INTERFACE is disabled
+(same for radio1 / default_radio1)
+```
+
+Nothing at first boot re-enables the ifaces. The consequence on the box:
+
+* `ubus call network.wireless status` → both radios `"up": true`, both
+  `"interfaces": []`
+* `iw dev` → **nothing**; no SSID is broadcast; there is no wireless interface
+  for ANY scan to use.
+
+Two defects in `enableWifiAndWait()` (the pre-flight before `/api/wifi-scan`):
+
+1. **It enabled the radios only.** Its `uci` loop selected `=wifi-device`
+   sections (`sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"`), so on this
+   image it wrote nothing that mattered: `uci commit wireless` committed the
+   same values back and the box stayed interface-less.
+2. **Its success poll was vacuous.** `allRadiosUp()` only checked `"up": true`
+   per radio — already true on a box with *zero* interfaces — so the wait
+   returned "done" on its first poll and the scan then failed with iw/iwinfo
+   usage text. That is exactly the operator's `No WiFi networks detected.
+   Router returned: Usage: iw …`.
+
+**Proof of the mechanism** (hardware): after ONLY
+
+```sh
+uci set wireless.default_radio0.disabled='0'
+uci set wireless.default_radio1.disabled='0'
+uci commit wireless
+wifi up
+```
+
+the box produced `phy0-ap0` (ch 1) and `phy1-ap0` (ch 36), the ubus `interfaces`
+arrays became non-empty, and `iwinfo phy0-ap0 scan` returned real cells (e.g.
+`ESSID: "Vodafone-823182"`).
+
+### The fix
+
+* `wifiEnableCmd` enables the wifi-**iface** sections as well as the
+  wifi-devices: a second `uci` loop over `=wifi-iface`, with
+  `[ "$(uci -q get wireless.$i.mode)" = "sta" ] && continue` — a **`mode sta`
+  iface is deliberately left alone**. A station iface is an upstream
+  connection; switching one on during a scan could hijack the very uplink the
+  scan is about to be used to replace, and it is not what "make WiFi work" means
+  for a box that is being onboarded. Explicit `uci` was chosen over the
+  platform's `wifi config` because the result is deterministic and minimal:
+  `wifi config` regenerates the runtime wireless config from the UCI state, it
+  does not *flip* `disabled` flags, and its verb set differs across images.
+* The wait now polls for a real wireless **interface** — `wifiInterfaceReady()`
+  counts ubus's per-radio `interfaces` arrays (`parseWirelessStatus`) and
+  cross-checks `iw dev` — instead of a radio flag.
+* On timeout it returns a reason, which `enableWifiAndWait` logs as
+  `wifi-enable …`: `no wireless interface appeared after enabling the radios and
+  their interfaces (waited 15s) — the radios report up but no VAP exists, so no
+  scan can run. ubus radios: radio0 up=true ifaces=0, radio1 up=true ifaces=0
+  (ubus VAPs=0); iw dev: -`. The scan still runs (it reports its own failure),
+  but "radios up, no VAP" is now distinguishable from an empty airspace.
+* `allRadiosUp()` is retained **only** as the non-vacuity control's oracle; it
+  is off the enable/scan path and must not be used as a readiness check.
+
+### Verification (hermetic, no hardware)
+
+`wifi_enable_step_test.go` models the box as a **state machine**, because the
+defect is a state transition the old code never triggered:
+
+* `TestWifiEnableStepEnablesInterfacesOnStockBox` — the fixed step enables both
+  the radio and the iface sections (and carries the `mode sta` exclusion), and
+  the wait then accepts a real interface (`phy0-ap0`).
+* `TestWifiEnableWaitRejectsRadiosUpWithoutInterface` — the **non-vacuity
+  control**: the fixture's before-state satisfies `allRadiosUp` (radios up)
+  while `iw dev` lists 0 interfaces; the new predicate rejects it and reports
+  `radio0 up=true ifaces=0 … iw dev: -`.
+* `TestLegacyWifiEnableStepDeclaresSuccessWithoutInterface` — the PRE-FIX step
+  (verbatim command string, kept in the test file like `legacyScanChain`)
+  declares success on that same box and never touches the iface sections.
+* `TestWifiEnableReportsReasonWhenNoInterfaceAppears` — the honest-reason path.
+* `TestParseWirelessStatus` — the parser, including ubus refusals and arrays.
+* `~/worktrees/_wifi-enable-shell-harness.sh` runs the **exact command string
+  extracted from `main.go`** through a minimal `uci`/`wifi` shim over the stock
+  config and asserts the resulting writes: both AP ifaces enabled, the `mode
+  sta` iface untouched. `--legacy` runs the pre-fix string for the control
+  (fails: the AP ifaces stay `disabled='1'`). Syntax-checked with
+  `busybox ash -n`.
+
+**Still not verified: no router access.** Both halves — the iface-enable and the
+interface-level wait — are proven by the transcript quoted above and by hermetic
+tests only; neither was re-run on hardware by this change.
+

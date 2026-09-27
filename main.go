@@ -1479,28 +1479,167 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// enableWifiAndWait enables all UCI wifi-devices, starts wifi, and polls
-// `ubus call network.wireless status` until every radio reports up
-// (~15s budget; fixed sleeps race slow driver init, polling removes that).
-// Best-effort: the scan proceeds regardless after the timeout — errors
-// surface in the scan step itself where they are actionable.
+// wifiEnableCmd is the UCI step that makes a scan possible: enable every
+// wifi-DEVICE section, then every wifi-IFACE section that is not a station,
+// commit, and bring wifi up.
+//
+// Why the ifaces too: a freshly flashed stock OpenWrt 25.12.5 image ships
+// /etc/config/wireless with the radios ENABLED and both default AP ifaces
+// DISABLED —
+//
+//	config wifi-device 'radio0'        option disabled '0'
+//	config wifi-iface 'default_radio0' option ssid 'OpenWrt'
+//	                                   option disabled '1'
+//
+// (and the same for radio1/default_radio1). Nothing at first boot re-enables
+// the ifaces, so selecting only `=wifi-device` sections commits no change at
+// all and the box keeps ZERO wireless interfaces.
+//
+// `mode sta` ifaces are deliberately LEFT ALONE: a station iface is an upstream
+// connection, and switching one on during a scan could hijack the very uplink
+// the scan is about to be used to replace. Only the scannable/AP-side ifaces
+// are enabled.
+const wifiEnableCmd = `for r in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do uci -q set wireless.$r.disabled='0'; done` +
+	` && for i in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)=wifi-iface$/\1/p"); do [ "$(uci -q get wireless.$i.mode)" = "sta" ] && continue; uci -q set wireless.$i.disabled='0'; done` +
+	` && uci commit wireless` +
+	` && (wifi up 2>/dev/null || wifi 2>/dev/null || true)`
+
+// enableWifiAndWait makes a WiFi scan POSSIBLE and waits until it is. Two
+// field defects are fixed here, both measured on a freshly flashed stock
+// OpenWrt 25.12.5 filogic box (GL-MT3000, mediatek/filogic):
+//
+//  1. The step used to enable only the wifi-DEVICE sections, so on the stock
+//     image it enabled nothing that mattered: the radios were already up while
+//     every AP iface stayed disabled='1', leaving the box with no wireless
+//     interface whatsoever. `ubus call network.wireless status` therefore
+//     reported both radios `"up": true` with `"interfaces": []`, `iw dev`
+//     printed NOTHING, no SSID was broadcast, and no scan of any kind could
+//     run. `wifiEnableCmd` now enables the interfaces as well.
+//
+//  2. The success poll was radio-level (`allRadiosUp`), and `"up": true` is
+//     ALREADY true on that interface-less box — so the old code returned "done"
+//     on its first poll and the scan then failed with iw/iwinfo usage text
+//     ("No WiFi networks detected. Router returned: Usage: iw …"). The wait now
+//     requires an actual wireless INTERFACE, and reports a reason when none
+//     appears instead of proceeding silently.
+//
+// The scan still runs after a timeout (it reports its own failure), but the
+// reason is logged, so "radios up but no VAP" is distinguishable from an empty
+// airspace.
 func enableWifiAndWait(client *ssh.Client) {
-	sshRun(client, strings.Join([]string{
-		`for r in $(uci -q show wireless 2>/dev/null | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do uci -q set wireless.$r.disabled='0'; done`,
-		`uci commit wireless`,
-		`wifi up 2>/dev/null || wifi 2>/dev/null || true`,
-	}, " && "))
-	for i := 0; i < 10; i++ {
-		if allRadiosUp(sshRun(client, "ubus call network.wireless status 2>/dev/null")) {
-			return
-		}
-		time.Sleep(1500 * time.Millisecond)
+	if reason := enableWifiAndWaitWith(func(cmd string) string { return sshRun(client, cmd) }); reason != "" {
+		log.Printf("wifi-enable %s", reason)
 	}
 }
 
-// allRadiosUp parses `ubus call network.wireless status` output
-// ({"radio0":{"up":true,...},"radio1":{...}}) and reports whether EVERY
-// radio reports up. Empty/garbage output parses to false (keep polling).
+// enableWifiAndWaitWith is the testable core of enableWifiAndWait: run the UCI
+// step, then poll for a real interface. "" means an interface exists; anything
+// else is the reason none did.
+func enableWifiAndWaitWith(run scanRunner) string {
+	return enableWifiPoll(run, 10, 1500*time.Millisecond)
+}
+
+// enableWifiPoll is the polling loop with an injectable budget: production uses
+// 10 attempts × 1.5s (~15s, because a fixed sleep races slow driver init);
+// tests use a single zero-delay attempt so a genuinely interface-less box does
+// not cost 15s per run.
+func enableWifiPoll(run scanRunner, attempts int, delay time.Duration) string {
+	run(wifiEnableCmd)
+	for i := 0; i < attempts; i++ {
+		if ready, _ := wifiInterfaceReady(run); ready {
+			return ""
+		}
+		if i < attempts-1 {
+			time.Sleep(delay)
+		}
+	}
+	_, detail := wifiInterfaceReady(run)
+	return fmt.Sprintf("no wireless interface appeared after enabling the radios and their interfaces (waited %s) — the radios report up but no VAP exists, so no scan can run. %s",
+		time.Duration(attempts)*delay, detail)
+}
+
+// radioState is one entry of `ubus call network.wireless status`.
+type radioState struct {
+	name       string // UCI radio section name, e.g. radio0
+	up         bool   // the radio's own "up" flag — NOT interface readiness
+	interfaces int    // how many VAPs the radio currently carries
+}
+
+// parseWirelessStatus parses `ubus call network.wireless status`:
+//
+//	{"radio0":{"up":true,"interfaces":[{...}]},"radio1":{"up":true,"interfaces":[]}}
+//
+// The `interfaces` arrays are the decisive field: a radio can be up with an
+// empty array, which is exactly the stock-image state. Radios come back in a
+// stable (name-sorted) order; ok is false when the output is not the expected
+// non-empty JSON object (empty output, a ubus refusal such as "Failed to parse
+// message", or an array).
+func parseWirelessStatus(statusJSON string) (radios []radioState, ok bool) {
+	var status map[string]struct {
+		Up         bool              `json:"up"`
+		Interfaces []json.RawMessage `json:"interfaces"`
+	}
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil || len(status) == 0 {
+		return nil, false
+	}
+	names := make([]string, 0, len(status))
+	for name := range status {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		radios = append(radios, radioState{
+			name:       name,
+			up:         status[name].Up,
+			interfaces: len(status[name].Interfaces),
+		})
+	}
+	return radios, true
+}
+
+// wifiInterfaceReady reports whether the box now exposes at least one wireless
+// interface, from two independent sources, plus a one-line description of what
+// was seen (for the timeout reason). A radio-level `"up": true` is NOT enough:
+// on the stock image ubus reports up=true with `"interfaces": []` and `iw dev`
+// prints nothing, which is precisely the state the old poll accepted.
+func wifiInterfaceReady(run scanRunner) (bool, string) {
+	radios, ok := parseWirelessStatus(run("ubus call network.wireless status 2>/dev/null"))
+	ubusIfaces := 0
+	for _, r := range radios {
+		ubusIfaces += r.interfaces
+	}
+	ifaces := iwInterfaceNames(run("iw dev 2>&1"))
+
+	detail := "ubus radios: "
+	if !ok {
+		detail += "unreadable status"
+	} else {
+		detail += describeRadios(radios)
+	}
+	detail += fmt.Sprintf(" (ubus VAPs=%d); iw dev: %s", ubusIfaces, joinOrDash(ifaces))
+	return ubusIfaces > 0 || len(ifaces) > 0, detail
+}
+
+// describeRadios renders one clause per radio: name, up flag, VAP count.
+func describeRadios(radios []radioState) string {
+	if len(radios) == 0 {
+		return "none reported"
+	}
+	parts := make([]string, 0, len(radios))
+	for _, r := range radios {
+		parts = append(parts, fmt.Sprintf("%s up=%t ifaces=%d", r.name, r.up, r.interfaces))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// allRadiosUp is the PRE-FIX success predicate, kept for ONE reason: it is the
+// oracle the non-vacuity control drives (TestLegacyWifiEnableDeclaresSuccess-
+// WithoutInterface, and TestAllRadiosUp in field_fixes_test.go). It is no
+// longer on the enable/scan path and must not be used as a readiness check: it
+// parses `ubus call network.wireless status` and reports whether EVERY radio
+// carries `"up": true` — which is already true on a stock box whose
+// `interfaces` arrays are empty and which therefore has no wireless interface
+// at all. That vacuity is the defect; see wifiInterfaceReady for the fix.
 func allRadiosUp(statusJSON string) bool {
 	var status map[string]map[string]any
 	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
