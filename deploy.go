@@ -915,12 +915,11 @@ func runDeployment(job *Job, req deployRequest) {
 	// outage must not turn into a silent downgrade reported as success.
 	pkgCandidates, fallbackRefusal := pkgCandidateURLsWithFallback(
 		routerArch, pkgExtension, githubFallbackAllowed())
-	switch {
-	case fallbackRefusal != nil:
-		job.addLog("GitHub fallback NOT used: " + fallbackRefusal.Error())
-	case len(pkgCandidates) > 1:
-		job.addLog("GitHub fallback allowed by explicit opt-in (installs " +
-			githubFallbackPkgVersion(routerArch, pkgExtension) + ", not " + feedPkgVersion() + "): " + pkgCandidates[1])
+	// The selection-time report goes through fallbackSelectionLogLine, which
+	// says what was DECIDED, not that the requested release is unavailable:
+	// nothing has been downloaded yet at this point (C2-I-02 follow-up).
+	if line := fallbackSelectionLogLine(routerArch, pkgExtension, pkgCandidates, fallbackRefusal); line != "" {
+		job.addLog(line)
 	}
 	if pkgExtension == ".apk" {
 		job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
@@ -2803,12 +2802,14 @@ func stageAssetURLs(isStockGL bool, glModel, pkgMgr string) []string {
 }
 
 // fallbackSuppressedError reports that the older GitHub fallback was not
-// prefetched, and why. Pre-staging runs BEFORE any download attempt, so it
-// cannot reuse the list-level refusal: that error asserts the requested
-// release "is not downloadable", which is only established once a download has
-// actually failed (deploy step 6). What a pre-stage reader needs to know is
-// narrower and always true: no package from another release was cached, and
-// the explicit opt-in is what would change that.
+// prefetched and will not be used, and why. It is the wording for every
+// PRE-DOWNLOAD report (the step-6 candidate selection and the pre-stage
+// report), so it may not reuse the list-level refusal: that error asserts the
+// requested release "is not downloadable", which is only established once a
+// download has actually failed (deploy step 6's fail-loud gate,
+// refuseMissingRequestedRelease). What a pre-download reader needs to know is
+// narrower and always true: no package from another release was taken, and the
+// explicit opt-in is what would change that.
 type fallbackSuppressedError struct {
 	requestedTag string
 	arch         string
@@ -2816,8 +2817,48 @@ type fallbackSuppressedError struct {
 }
 
 func (e *fallbackSuppressedError) Error() string {
-	return fmt.Sprintf("the older GitHub fallback for %s (package %s, a different and OLDER release than %s) was not prefetched — it is staged only with the explicit opt-in (--allow-fallback or %s=1)",
+	return fmt.Sprintf("the older GitHub fallback for %s (package %s, a different and OLDER release than %s) was not prefetched or used — it is installed only with the explicit opt-in (--allow-fallback or %s=1)",
 		e.arch, e.fbVersion, e.requestedTag, githubFallbackEnv)
+}
+
+// fallbackSuppressedReason builds the pre-download suppression report for arch
+// and its package format. It derives the report from the REQUEST (the effective
+// feed tag, the arch, the fallback's package version) rather than from a failed
+// download, so the same wording is true in the pre-stage report and in step 6's
+// candidate-selection line — and neither can drift back into the list-level
+// "is not downloadable" claim (C2-I-02 follow-up).
+func fallbackSuppressedReason(arch, ext string) *fallbackSuppressedError {
+	return &fallbackSuppressedError{
+		requestedTag: feedReleaseTag,
+		arch:         arch,
+		fbVersion:    githubFallbackPkgVersion(arch, ext),
+	}
+}
+
+// fallbackSelectionLogLine is step 6's candidate-selection report: which
+// fallback decision was taken for this arch, in wording that is true BEFORE any
+// download has been attempted. The list-level refusal returned by
+// pkgCandidateURLsWithFallback must NOT be published here — it asserts the
+// requested release "is not downloadable", which is only knowable once every
+// candidate has failed, and on a healthy non-opted-in aarch64 deploy the feed
+// asset downloads and installs cleanly right after this line. That refusal is
+// published at fail time by refuseMissingRequestedRelease instead.
+//
+// Returns "" when there is nothing operator-worthy to say: the arch has no
+// pinned fallback, so no candidate was withheld and none was added.
+func fallbackSelectionLogLine(arch, ext string, candidates []string, refusal error) string {
+	switch {
+	case refusal != nil:
+		// A pinned fallback exists and the operator did not opt in: name the
+		// withheld release and the opt-in, and keep the asset URL the old
+		// list-level line carried so nothing debuggable is lost.
+		return "GitHub fallback NOT used: " + fallbackSuppressedReason(arch, ext).Error() +
+			" (fallback asset: " + githubFallbackURL(arch, ext) + ")"
+	case len(candidates) > 1:
+		return "GitHub fallback allowed by explicit opt-in (installs " +
+			githubFallbackPkgVersion(arch, ext) + ", not " + feedPkgVersion() + "): " + candidates[1]
+	}
+	return ""
 }
 
 // stageAssetURLsForArch is the arch-aware variant of stageAssetURLs used by
@@ -2850,11 +2891,7 @@ func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) 
 		// provenance trap (C2-I-02).
 		candidates, err := pkgCandidateURLsWithFallback(arch, ext, githubFallbackAllowed())
 		if err != nil && refusal == nil {
-			refusal = &fallbackSuppressedError{
-				requestedTag: feedReleaseTag,
-				arch:         arch,
-				fbVersion:    pkgVersionFromReleaseURL(githubFallbackURL(arch, ext)),
-			}
+			refusal = fallbackSuppressedReason(arch, ext)
 		}
 		return candidates
 	}

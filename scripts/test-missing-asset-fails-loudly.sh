@@ -32,6 +32,26 @@ CONTAINER="tg-missing-asset-fixture"
 log() { printf '%s\n' "$*"; }
 emit() { log "$*"; if [ -n "$EVIDENCE" ]; then printf '%s\n' "$*" >> "$EVIDENCE"; fi; }
 
+# emit_lines — send each line of stdin through emit(), so a section's content
+# lands in the evidence artifact as well as on the console. A plain pipeline
+# (`grep … | sed …`) writes to stdout only: section 5 was empty in the RED and
+# GREEN artifacts for exactly that reason, so the artifact never showed the
+# failure text it exists to record.
+emit_lines() { while IFS= read -r line; do emit "  $line"; done; }
+
+# emit_matches <pattern> — the run-output lines matching <pattern>, trimmed and
+# indented, into the console AND the artifact. An empty match set is reported
+# explicitly rather than silently leaving the section blank.
+emit_matches() {
+  local lines
+  lines="$(grep -n "$1" "$OUT" 2>/dev/null | tail -20 | sed -e 's/\(.\{400\}\).*/\1.../')"
+  if [ -z "$lines" ]; then
+    emit "  (no line in the run output matches: $1)"
+    return 0
+  fi
+  printf '%s\n' "$lines" | emit_lines
+}
+
 if ! command -v docker >/dev/null 2>&1; then
   log "ENVIRONMENT: docker is required for this process-level test"; exit 3
 fi
@@ -95,7 +115,7 @@ fi
 sleep 2
 if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
   log "ENVIRONMENT: the fixture container exited immediately:"
-  docker logs "$CONTAINER" 2>&1 | head -10 | sed 's/^/  /'
+  docker logs "$CONTAINER" 2>&1 | head -10 | emit_lines
   exit 3
 fi
 ROUTER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CONTAINER")
@@ -103,30 +123,73 @@ if [ -z "$ROUTER_IP" ]; then
   log "ENVIRONMENT: the fixture container has no IP address"; exit 3
 fi
 emit "fixture router container IP: $ROUTER_IP"
-docker logs "$CONTAINER" 2>&1 | head -2 | sed 's/^/  /'
+docker logs "$CONTAINER" 2>&1 | head -2 | emit_lines
 emit
 
 emit "--- 4. drive it with the repo's own headless script (install-and-test.sh) ---"
 emit "    TOLLGATE_FEED_RELEASE_TAG=$TAG install-and-test.sh --bin $BIN $ROUTER_IP <pw> e2e@example.com"
+# The fixture generates a FRESH host key on every start and PRINTS the
+# fingerprint it will present, so read it from the fixture's own log — that is
+# the authoritative value, and on this host the only one available: ssh-keyscan
+# gets nothing usable out of the stub (measured: repeated attempts return an
+# empty fingerprint while the stub's own line names the one the installer then
+# presents and refuses). Without the key the deploy stops at the verify step
+# ("not trusted … no credentials were sent") and never reaches step 6 — which
+# left section 5 empty, while the "refus" assertions below were satisfied by
+# that host-key refusal ("CONNECTION REFUSED") rather than by the
+# missing-asset refusal this test exists for.
+fixture_fingerprint() {
+  docker logs "$CONTAINER" 2>&1 |
+    sed -n 's/.*host key fingerprint \(SHA256:[A-Za-z0-9+/=]*\).*/\1/p' | tail -1
+}
+FINGERPRINT=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  FINGERPRINT="$(fixture_fingerprint)"
+  [ -n "$FINGERPRINT" ] && break
+  FINGERPRINT="$(ssh-keyscan -T 5 -t ssh-ed25519 -p 22 "$ROUTER_IP" 2>/dev/null | awk 'NF>=3 {print $2" "$3}' | head -1 | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')"
+  [ -n "$FINGERPRINT" ] && break
+  sleep 2
+done
+if [ -z "$FINGERPRINT" ]; then
+  log "ENVIRONMENT: could not read the fixture's SSH host key fingerprint"
+  docker logs "$CONTAINER" 2>&1 | head -5 | emit_lines
+  exit 3
+fi
+emit "fixture SSH host key (trusted out of band, from the fixture's own log): $FINGERPRINT"
 # Make every package-manager install attempt observable *on the fixture*: a
 # shim that records the call and refuses. If the refusal path is correct, this
 # is never invoked.
 docker exec "$CONTAINER" sh -c 'rm -f /tmp/stub-cmds.log; : > /tmp/install-attempts.log; printf "#!/bin/sh\necho \"apk \$@\" >> /tmp/install-attempts.log\nexit 1\n" > /usr/local/bin/apk; chmod +x /usr/local/bin/apk' 2>/dev/null
 OUT="$WORK/install-and-test.out"
+# Only reachable with the pin above: without it the deploy stops at the verify
+# step ("not trusted … no credentials were sent"), never reaches step 6, and
+# section 5 stays empty while the "refus" assertions are satisfied by the
+# host-key refusal instead of the missing-asset refusal this test exists for.
 TOLLGATE_FEED_RELEASE_TAG="$TAG" PORT="$PORT" \
   bash "$TREE/install-and-test.sh" --bin "$BIN" "$ROUTER_IP" "router-root-pw" "e2e@example.com" \
+  --trust-host-key "$FINGERPRINT" \
   > "$OUT" 2>&1
 RC=$?
 emit "install-and-test.sh EXIT CODE: $RC"
 emit
 emit "--- 5. the failure the operator sees (verbatim, untrimmed) ---"
-grep -n 'ERROR\|"error"\|DEPLOY FAILED\|source:' "$OUT" | tail -20 | sed -e 's/\(.\{400\}\).*/\1.../' | sed 's/^/  /'
+emit_matches 'ERROR\|"error"\|DEPLOY FAILED\|source:'
 emit
 emit "--- 6. what the fixture router was asked to do (its own log) ---"
 emit "install attempts recorded on the fixture:"
-docker exec "$CONTAINER" cat /tmp/install-attempts.log 2>/dev/null | sed 's/^/  /' || emit "  (none)"
+ATTEMPTS="$(docker exec "$CONTAINER" cat /tmp/install-attempts.log 2>/dev/null || true)"
+if [ -z "$ATTEMPTS" ]; then
+  emit "  (none — the fixture was never asked to install anything)"
+else
+  printf '%s\n' "$ATTEMPTS" | emit_lines
+fi
 emit "tollgate-wrt package files on the fixture:"
-docker exec "$CONTAINER" sh -c 'ls -la /tmp/*.ipk /tmp/*.apk /etc/tollgate 2>/dev/null' | sed 's/^/  /' || emit "  (none — nothing was installed)"
+PKGFILES="$(docker exec "$CONTAINER" sh -c 'ls -la /tmp/*.ipk /tmp/*.apk /etc/tollgate 2>/dev/null' || true)"
+if [ -z "$PKGFILES" ]; then
+  emit "  (none — nothing was installed)"
+else
+  printf '%s\n' "$PKGFILES" | emit_lines
+fi
 emit
 
 # ---------------------------------------------------------------- assertions
@@ -159,6 +222,17 @@ if grep -qi 'refus' "$OUT"; then
   emit "  PASS  the refusal wording is present"
 else
   emit "  FAIL  no refusal wording in the run output"; FAILED=1
+fi
+# The two checks above are generic: an SSH host-key refusal at the verify step
+# ("CONNECTION REFUSED") also satisfies them, and so does the tag the run prints
+# from /api/config — which is how this test could report PASS without ever
+# reaching the code under test. Pin the step-6 detail itself.
+if grep -q "refusing to install an older package" "$OUT"; then
+  emit "  PASS  the run reached step 6 and refused there (step detail present)"
+else
+  emit "  FAIL  the run never reached step 6's missing-asset refusal: the step detail"
+  emit "        \"refusing to install an older package\" is absent — section 5 shows what"
+  emit "        happened instead"; FAILED=1
 fi
 if [ -z "$raw_attempts" ]; then
   emit "  PASS  fixture recorded zero install attempts"
