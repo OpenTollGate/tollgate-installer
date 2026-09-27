@@ -397,6 +397,18 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 			},
 			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "MyNewNetwork",
 		},
+		{
+			// The private SSID is interpolated into a single-quoted shell line
+			// by brandingCommands, so a value carrying a quote must not be
+			// adopted as the nym AND must not be preserved as-is: the resolver
+			// falls back to the default nym and the code-derived SSID.
+			name: "a value that cannot be quoted is neither adopted nor preserved",
+			seed: []string{
+				"system.@system[0].hostname=tollgate-OQ3Q",
+				"wireless.private_radio0.ssid=x';reboot #-1234",
+			},
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+		},
 	}
 
 	for _, tc := range cases {
@@ -560,6 +572,35 @@ func TestPrivateSSIDCommandIsANoOpWithoutTheSection(t *testing.T) {
 	}
 	if got := uciStateValue(t, state, "wireless.private_radio0.ssid"); got != "old" {
 		t.Errorf("private_radio0.ssid = %q, want it untouched by another section's command", got)
+	}
+}
+
+// TestPrivateSSIDCommandRefusesAValueItCannotQuote closes the hole the resolver
+// cannot close on its own: the branding lines are joined with " && " and run as
+// root on the router, so an SSID carrying a single quote would end the quote and
+// let the rest of the value be read as shell syntax. A value like that is refused
+// rather than escaped — and the refusal must not be a blanket no-op, so the safe
+// case is asserted in the same test.
+func TestPrivateSSIDCommandRefusesAValueItCannotQuote(t *testing.T) {
+	unsafe := privateSSIDCommand("private_radio0", "x';reboot #")
+	if strings.Contains(unsafe, "reboot") {
+		t.Errorf("the value that cannot be quoted reached the command line: %q", unsafe)
+	}
+	if !strings.Contains(unsafe, "not written") {
+		t.Errorf("expected a refusal for an unquotable value, got %q", unsafe)
+	}
+	if !ssidSafeForShell("c08r4d0r-OQ3Q") || ssidSafeForShell("x'y") || ssidSafeForShell("") {
+		t.Errorf("ssidSafeForShell disagrees with the refusal above")
+	}
+	safe := privateSSIDCommand("private_radio0", "c08r4d0r-OQ3Q")
+	if !strings.Contains(safe, "uci -q set wireless.private_radio0.ssid='c08r4d0r-OQ3Q'") {
+		t.Errorf("a quotable value was not written: %q", safe)
+	}
+	// The refusal must still leave the " && " chain intact.
+	env, _, _ := uciStubEnv(t, []string{"wireless.private_radio0=wifi-iface"})
+	out := shRunEnv(t, env, privateSSIDCommand("private_radio0", "x'y")+" && echo CHAIN_OK")
+	if !strings.Contains(out, "CHAIN_OK") {
+		t.Fatalf("the refusal truncated the command chain:\n%s", out)
 	}
 }
 

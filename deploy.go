@@ -468,13 +468,31 @@ type deviceIdentity struct {
 // router says otherwise (the same default the module compiles in).
 const deviceIdentityDefaultNym = "c08r4d0r"
 
+// ssidSafeForShell reports whether a value can be carried inside the
+// single-quoted `uci -q set …` lines this file builds. Those lines are joined
+// with " && " and run as root on the router, so a value containing a single
+// quote would end the quote and let the remainder be read as shell syntax. The
+// private SSID is built from the operator's own nym and from an SSID read back
+// off the router, so by the time it reaches here it is NOT a fixed alphabet.
+func ssidSafeForShell(ssid string) bool {
+	return ssid != "" && !strings.ContainsAny(ssid, "'\n\r")
+}
+
 // privateSSIDCommand writes the private SSID on a private_radio* section, and
 // only when that section exists (the module owns the private network's layout).
 // An `if` without an else is used deliberately: a bare `uci -q get ... && uci
 // -q set ...` returns non-zero when the section is missing, and these commands
 // are joined with " && " on the router, so it would abort everything after it —
 // including the commits.
+//
+// A value that cannot be quoted safely is REFUSED rather than escaped: the
+// resolver decides the value (deviceIdentityScript's ssid_safe), so arriving here
+// with one that cannot be quoted means it came from somewhere unexpected, and a
+// no-op that says so is better than a line whose quoting cannot hold.
 func privateSSIDCommand(section, ssid string) string {
+	if !ssidSafeForShell(ssid) {
+		return "echo 'private SSID not written: the value cannot be quoted safely'"
+	}
 	return "if uci -q get wireless." + section + " >/dev/null 2>&1; then " +
 		"uci -q set wireless." + section + ".ssid='" + ssid + "'; fi"
 }
@@ -496,10 +514,10 @@ func privateSSIDCommand(section, ssid string) string {
 //
 // Adoption order — identical to the module's, and pinned on both sides:
 //
-//	1. tollgate.device.code in /etc/config/tollgate   (authoritative)
-//	2. a machine-shaped hostname                      (tollgate-OQ3Q)
-//	3. a machine-shaped captive SSID                  (TollGate-OQ3Q, tollgate-0GLK)
-//	4. mint                                           (only when nothing above hit)
+//  1. tollgate.device.code in /etc/config/tollgate   (authoritative)
+//  2. a machine-shaped hostname                      (tollgate-OQ3Q)
+//  3. a machine-shaped captive SSID                  (TollGate-OQ3Q, tollgate-0GLK)
+//  4. mint                                           (only when nothing above hit)
 //
 // BusyBox ash only: no bashisms, no `od` (the target has no guarantee of it),
 // no GNU sed. Every branch is a POSIX `case` so the same alphabet is enforced
@@ -532,6 +550,18 @@ minted_suffix() {
     esac
     return 0
 }
+# Can this value be carried inside one of the single-quoted "uci -q set" lines
+# brandingCommands builds? Those are joined with " && " and run as root on the
+# router, so a single quote in the value would end the quote and let the rest be
+# read as shell syntax. The private SSID is built from an SSID read off the router,
+# so it is checked here (and again, in Go, by ssidSafeForShell) rather than
+# assumed to be machine-shaped text.
+ssid_safe() {
+    case "$1" in
+        ''|*"'"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
 
 CODE=$(code_norm "$(uci -q get tollgate.device.code 2>/dev/null)")
 SRC=store
@@ -563,7 +593,7 @@ esac
 if [ -z "$NYM" ]; then
     PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
     P=${PRI%%-*}; S=${PRI#*-}
-    if [ "$S" != "$PRI" ] && [ -n "$P" ] && minted_suffix "$S"; then
+    if [ "$S" != "$PRI" ] && [ -n "$P" ] && minted_suffix "$S" && ssid_safe "$P"; then
         NYM="$P"
     else
         NYM=` + strconv.Quote(deviceIdentityDefaultNym) + `
@@ -578,7 +608,7 @@ HOSTNAME="tollgate-$CODE"
 SSID="TollGate-$CODE"
 PRIVATE_SSID="$NYM-$CODE"
 PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
-if [ -n "$PRI" ]; then
+if [ -n "$PRI" ] && ssid_safe "$PRI"; then
     P=${PRI%%-*}; S=${PRI#*-}
     if [ "$P" != "$NYM" ] || [ "$S" = "$PRI" ] || ! minted_suffix "$S"; then
         PRIVATE_SSID="$PRI"

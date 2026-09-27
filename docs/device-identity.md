@@ -67,6 +67,17 @@ writer moves the hostname and the SSID, and the store still wins.
 * The private SSID is *not* re-derived when the operator renamed it
   (`tollgate network private rename <name>`): only a machine-shaped suffix
   (four characters, or digits) is treated as machine-managed.
+* **A value that cannot be quoted safely is refused, never interpolated.** The
+  private SSID is written as a single-quoted `uci -q set wireless.<section>.ssid='…'`
+  line, and every branding line is joined with `&&` and run as root on the
+  router — so a single quote in the value would end the quote, break the chain
+  *before the commits*, and with the right bytes be read as shell syntax. The
+  value is not a fixed alphabet: it is built from an SSID read off the router.
+  Both layers refuse it — `ssid_safe` in the resolver (so a quote-bearing SSID
+  donates no nym and is not preserved as-is) and `ssidSafeForShell` in the writer
+  (which emits a no-op that says so, rather than a line whose quoting cannot
+  hold). `TestPrivateSSIDCommandRefusesAValueItCannotQuote` pins both, including
+  that the refusal still leaves the `&&` chain intact.
 
 The prefix case is deliberate on both sides: the captive SSID keeps `TollGate-`
 (reseller-mode upstream discovery in the module matches `TollGate-*`
