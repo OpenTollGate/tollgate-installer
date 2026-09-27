@@ -451,11 +451,258 @@ func configJqCmd(margin int, ownerFactor, devFactor, mint string, includeTestnut
 		"mv /tmp/cfg.tmp /etc/tollgate/config.json && echo 'config updated' || echo 'no config'"
 }
 
+// deviceIdentity is the router's ONE device code and the names derived from it.
+// Produced by deviceIdentityScript (router side) + parseDeviceIdentity, and
+// consumed by brandingCommands (writer). Nothing else in this repo may mint or
+// derive a code.
+type deviceIdentity struct {
+	Code        string // four characters of [A-Z0-9]
+	Nym         string // the operator's nym — the private SSID's prefix
+	Source      string // where the code came from: store|hostname|captive-ssid|minted
+	Hostname    string // tollgate-<code>
+	SSID        string // TollGate-<code> (brand prefix, as the discovery code expects)
+	PrivateSSID string // <nym>-<code>, or the operator's own rename
+}
+
+// deviceIdentityDefaultNym is the private SSID's prefix when nothing on the
+// router says otherwise (the same default the module compiles in).
+const deviceIdentityDefaultNym = "c08r4d0r"
+
+// ssidSafeForShell reports whether a value can be carried inside the
+// single-quoted `uci -q set …` lines this file builds. Those lines are joined
+// with " && " and run as root on the router, so a value containing a single
+// quote would end the quote and let the remainder be read as shell syntax. The
+// private SSID is built from the operator's own nym and from an SSID read back
+// off the router, so by the time it reaches here it is NOT a fixed alphabet.
+func ssidSafeForShell(ssid string) bool {
+	return ssid != "" && !strings.ContainsAny(ssid, "'\n\r")
+}
+
+// privateSSIDCommand writes the private SSID on a private_radio* section, and
+// only when that section exists (the module owns the private network's layout).
+// An `if` without an else is used deliberately: a bare `uci -q get ... && uci
+// -q set ...` returns non-zero when the section is missing, and these commands
+// are joined with " && " on the router, so it would abort everything after it —
+// including the commits.
+//
+// A value that cannot be quoted safely is REFUSED rather than escaped: the
+// resolver decides the value (deviceIdentityScript's ssid_safe), so arriving here
+// with one that cannot be quoted means it came from somewhere unexpected, and a
+// no-op that says so is better than a line whose quoting cannot hold.
+func privateSSIDCommand(section, ssid string) string {
+	if !ssidSafeForShell(ssid) {
+		return "echo 'private SSID not written: the value cannot be quoted safely'"
+	}
+	return "if uci -q get wireless." + section + " >/dev/null 2>&1; then " +
+		"uci -q set wireless." + section + ".ssid='" + ssid + "'; fi"
+}
+
+// deviceIdentityScript is the router-side half of the device-code contract. ONE
+// code, minted once, stored in UCI and reused; the module's uci-defaults script
+// (OpenTollGate/tollgate-module-basic-go,
+// packaging/files/etc/uci-defaults/99-tollgate-setup → setup_device_identity)
+// resolves it the same way, and the decision record lives in
+// docs/architecture/one-device-code.md there.
+//
+// Why the installer asks the ROUTER instead of minting here: this repo was a
+// second mint. It generated a fresh code on every deploy and wrote only the
+// hostname and the captive SSID, so a later deploy re-named a router that the
+// module had already named (bench MT3000: hostname=tollgate-OQ3Q, open SSID
+// re-minted to tollgate-0GLK, private SSID carrying a third suffix). Resolving
+// on the router means the store is read and written in one place, by both
+// writers, and the value cannot drift between them.
+//
+// Adoption order — identical to the module's, and pinned on both sides:
+//
+//  1. tollgate.device.code in /etc/config/tollgate   (authoritative)
+//  2. a machine-shaped hostname                      (tollgate-OQ3Q)
+//  3. a machine-shaped captive SSID                  (TollGate-OQ3Q, tollgate-0GLK)
+//  4. mint                                           (only when nothing above hit)
+//
+// BusyBox ash only: no bashisms, no `od` (the target has no guarantee of it),
+// no GNU sed. Every branch is a POSIX `case` so the same alphabet is enforced
+// on both sides.
+var deviceIdentityScript = `CODE_STORE=/etc/config/tollgate
+[ -f "$CODE_STORE" ] || touch "$CODE_STORE" 2>/dev/null
+uci -q get tollgate.device >/dev/null 2>&1 || uci -q set tollgate.device='device'
+
+code_norm() {
+    v=$(trim_ws "$1" | tr 'a-z' 'A-Z')
+    case "$v" in
+        [A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]) printf '%s' "$v" ;;
+    esac
+}
+code_from_name() {
+    p=$(trim_ws "${1%%-*}" | tr 'A-Z' 'a-z')
+    s=${1#*-}
+    case "$p" in
+        tollgate|net4sats) code_norm "$s" ;;
+    esac
+}
+trim_ws() {
+    printf '%s' "$1" | tr -d ' \011\015\012'
+}
+minted_suffix() {
+    case "$1" in
+        '') return 1 ;;
+        [A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) return 0 ;;
+        *[!0-9]*) return 1 ;;
+    esac
+    return 0
+}
+# Can this value be carried inside one of the single-quoted "uci -q set" lines
+# brandingCommands builds? Those are joined with " && " and run as root on the
+# router, so a single quote in the value would end the quote and let the rest be
+# read as shell syntax. The private SSID is built from an SSID read off the router,
+# so it is checked here (and again, in Go, by ssidSafeForShell) rather than
+# assumed to be machine-shaped text.
+ssid_safe() {
+    case "$1" in
+        ''|*"'"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+CODE=$(code_norm "$(uci -q get tollgate.device.code 2>/dev/null)")
+SRC=store
+if [ -z "$CODE" ]; then
+    CODE=$(code_from_name "$(uci -q get system.@system[0].hostname 2>/dev/null)")
+    SRC=hostname
+fi
+if [ -z "$CODE" ]; then
+    CODE=$(code_from_name "$(uci -q get wireless.tollgate_2g_open.ssid 2>/dev/null)")
+    SRC=captive-ssid
+fi
+if [ -z "$CODE" ]; then
+    CODE=$(code_from_name "$(uci -q get wireless.default_radio0.ssid 2>/dev/null)")
+    SRC=captive-ssid
+fi
+if [ -z "$CODE" ]; then
+    CODE=$(code_norm "$(hexdump -n 3 -e '4/1 "%02X"' /dev/urandom 2>/dev/null | cut -c1-4)")
+    SRC=minted
+fi
+if [ -z "$CODE" ]; then
+    CODE=$(printf '%04X' "$(( $(date +%s) % 65536 ))")
+    SRC=minted
+fi
+
+NYM=$(trim_ws "$(uci -q get tollgate.device.nym 2>/dev/null)")
+case "$NYM" in
+    ''|*[!A-Za-z0-9_-]*) NYM="" ;;
+esac
+if [ -z "$NYM" ]; then
+    PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
+    P=${PRI%%-*}; S=${PRI#*-}
+    if [ "$S" != "$PRI" ] && [ -n "$P" ] && minted_suffix "$S" && ssid_safe "$P"; then
+        NYM="$P"
+    else
+        NYM=` + strconv.Quote(deviceIdentityDefaultNym) + `
+    fi
+fi
+
+uci -q set tollgate.device.code="$CODE"
+uci -q set tollgate.device.nym="$NYM"
+uci commit tollgate
+
+HOSTNAME="tollgate-$CODE"
+SSID="TollGate-$CODE"
+PRIVATE_SSID="$NYM-$CODE"
+PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
+if [ -n "$PRI" ] && ssid_safe "$PRI"; then
+    P=${PRI%%-*}; S=${PRI#*-}
+    if [ "$P" != "$NYM" ] || [ "$S" = "$PRI" ] || ! minted_suffix "$S"; then
+        PRIVATE_SSID="$PRI"
+    fi
+fi
+
+echo "TG_CODE=$CODE"
+echo "TG_CODE_SOURCE=$SRC"
+echo "TG_NYM=$NYM"
+echo "TG_HOSTNAME=$HOSTNAME"
+echo "TG_SSID=$SSID"
+echo "TG_PRIVATE_SSID=$PRIVATE_SSID"
+`
+
+// parseDeviceIdentity reads the TG_* markers deviceIdentityScript echoes. It
+// returns the zero identity when no code was resolved (the router-side resolver
+// produced nothing at all) so the caller can fall back LOUDLY rather than
+// brand a router with an empty name.
+func parseDeviceIdentity(out string) deviceIdentity {
+	var id deviceIdentity
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "TG_CODE":
+			id.Code = value
+		case "TG_CODE_SOURCE":
+			id.Source = value
+		case "TG_NYM":
+			id.Nym = value
+		case "TG_HOSTNAME":
+			id.Hostname = value
+		case "TG_SSID":
+			id.SSID = value
+		case "TG_PRIVATE_SSID":
+			id.PrivateSSID = value
+		}
+	}
+	if id.Code == "" {
+		return deviceIdentity{}
+	}
+	return id
+}
+
+// fallbackDeviceIdentity mints a code LOCALLY, for the case where the router-side
+// resolver returned nothing usable at all (no uci, no /dev/urandom — a router
+// that is already broken in a way the deploy should still report). It is the
+// same shape and the same derived names as the router-side resolver, and the
+// caller logs that the code could not be stored, so a router branded this way
+// will be re-named by the next install that can reach its UCI.
+func fallbackDeviceIdentity() deviceIdentity {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	suffix := make([]byte, 4)
+	randBytes := make([]byte, 4)
+	if _, err := cryptorand.Read(randBytes); err != nil {
+		// Fallback: time-seeded
+		for i := range randBytes {
+			randBytes[i] = byte(time.Now().UnixNano() >> uint(i*8))
+		}
+	}
+	for i := range suffix {
+		suffix[i] = alphabet[int(randBytes[i])%len(alphabet)]
+	}
+	code := string(suffix)
+	return deviceIdentity{
+		Code:        code,
+		Nym:         deviceIdentityDefaultNym,
+		Source:      "minted-locally",
+		Hostname:    "tollgate-" + code,
+		SSID:        "TollGate-" + code,
+		PrivateSSID: deviceIdentityDefaultNym + "-" + code,
+	}
+}
+
 // brandingCommands returns the router-side commands that brand a deployed
-// router: hostname, captive SSID, DNS/domain records and the NoDogSplash
-// pre-auth allow list. Lifted verbatim out of runDeployment so a test can run
-// the SHIPPED commands against a stub `uci` and assert what a paying-nothing
-// captive client can reach (branding_test.go).
+// router: hostname, captive SSID, private SSID, DNS/domain records and the
+// NoDogSplash pre-auth allow list. Lifted verbatim out of runDeployment so a test
+// can run the SHIPPED commands against a stub `uci` and assert what a paying-
+// nothing captive client can reach (branding_test.go).
+//
+// The three names come from ONE device identity (devdeviceIdentityScript below):
+// the hostname, the captive SSID and the private SSID all carry the same code,
+// so a router is recognisable at a glance and two writers cannot disagree about
+// what it is called. This function WRITES the resolved values; it never derives,
+// compares or mints a code of its own (a second mint here is what gave the bench
+// MT3000 three different names — see docs/architecture/one-device-code.md in
+// OpenTollGate/tollgate-module-basic-go).
+//
+// The private APs ARE written here now (they used to be skipped on purpose,
+// which left the private SSID with a code no other name used). The KEY is still
+// never touched: the module owns it, and re-writing it would drop every paired
+// admin device off the management network.
 //
 // NoDogSplash's users_to_router IS the pre-authentication allow list: every
 // entry in it is reachable by a client that has paid nothing, on a network
@@ -467,16 +714,29 @@ func configJqCmd(margin int, ownerFactor, devFactor, mint string, includeTestnut
 // to ADD :8090 to the list right after that script removed it, re-arming the
 // exposure on every fresh deploy; it now REMOVES the entry (and the :8443
 // sibling) from an already-deployed router instead.
-func brandingCommands(nodeName, routerIP string) []string {
+func brandingCommands(id deviceIdentity, routerIP string) []string {
 	// Deduplicate /etc/hosts entries, then write fresh ones
 	hostsCmd := "sed -i '/tollgate\\.lan/d; /tollgate\\.local/d' /etc/hosts && " +
 		"echo '" + routerIP + " tollgate.lan tollgate.local' >> /etc/hosts"
+	// The captive (guest) APs, by BOTH spellings: the module names them
+	// tollgate_2g_open / tollgate_5g_open, a stock OpenWrt router calls them
+	// default_radio0/1, and a deploy can meet either. The uplink STA is skipped
+	// (it is not an AP at all) and so is every private_* section — the private
+	// APs share the private SSID with the private network, written below.
+	guestSSIDCmd := "for i in $(uci -q show wireless 2>/dev/null | sed -n 's/^\\(wireless\\.[A-Za-z0-9_]*\\)=wifi-iface$/\\1/p'); do " +
+		"case \"$i\" in *default_radio[0-9]|*tollgate_2g_open|*tollgate_5g_open) " +
+		"if [ \"$(uci -q get \"$i.mode\" 2>/dev/null)\" != \"sta\" ]; then uci -q set \"$i.ssid=" + id.SSID + "\"; fi ;; esac; done; true"
 	return []string{
 		// Hostname
-		"uci -q set system.@system[0].hostname='" + nodeName + "'",
-		// WiFi SSID — only on default_radio* (public captive portal WiFi)
-		// Skip private_radio* (admin LAN) and *_uplink (WAN repeater)
-		"for i in $(uci -q show wireless 2>/dev/null | grep 'default_radio.*=wifi-iface' | awk -F. '{print $2}' | awk -F= '{print $1}'); do uci -q set wireless.$i.ssid='" + nodeName + "'; done",
+		"uci -q set system.@system[0].hostname='" + id.Hostname + "'",
+		// Captive SSID — the guest APs only
+		guestSSIDCmd,
+		// Private SSID — the operator's admin LAN, same code, nym prefix. The
+		// section is only written when it EXISTS: the module owns the private
+		// network's layout, and creating a wifi-iface here that the module did
+		// not sanction would be a second writer for the same interface.
+		privateSSIDCommand("private_radio0", id.PrivateSSID),
+		privateSSIDCommand("private_radio1", id.PrivateSSID),
 		// DNS: deduplicated /etc/hosts entries
 		hostsCmd,
 		// Ensure dnsmasq serves .lan domain
@@ -498,7 +758,7 @@ func brandingCommands(nodeName, routerIP string) []string {
 		// network: set domain on lan interface
 		"uci -q set network.lan.domain='lan'",
 		// NoDogSplash config
-		"uci -q set nodogsplash.@nodogsplash[0].gatewayname='" + nodeName + "'",
+		"uci -q set nodogsplash.@nodogsplash[0].gatewayname='" + id.SSID + "'",
 		// Rebrand gateway domain to tollgate.lan so the captive portal serves
 		// on tollgate.lan (DNS already resolves it).
 		"uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'",
@@ -1264,24 +1524,30 @@ func runDeployment(job *Job, req deployRequest) {
 	// fixes built in — no binary replacement needed.
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 7: Brand as TollGate — hostname, SSID, DNS, nodogsplash config
+	// Step 7: Brand as TollGate — hostname, SSIDs, DNS, nodogsplash config.
+	//
+	// ONE device code names all three identifiers (hostname, captive SSID,
+	// private SSID). It is resolved ON THE ROUTER — which reads the store
+	// (/etc/config/tollgate) the module's uci-defaults wrote, and only mints
+	// when nothing on the router carries a code — so a redeploy of an existing
+	// router keeps the name it already answers to instead of re-minting one.
+	// This used to mint a fresh code here on EVERY deploy (crypto/rand), which
+	// is why the bench box showed hostname=tollgate-OQ3Q with an open SSID of
+	// tollgate-0GLK: the module minted, then the installer minted again.
 	job.setStep(7, "running", "")
-	// Generate unique suffix (e.g. tollgate-a7f2) so multiple routers don't clash
-	const ssidChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	suffix := make([]byte, 4)
-	randBytes := make([]byte, 4)
-	if _, err := cryptorand.Read(randBytes); err != nil {
-		// Fallback: time-seeded
-		for i := range randBytes {
-			randBytes[i] = byte(time.Now().UnixNano() >> uint(i*8))
-		}
+
+	idOut := sshRun(client, deviceIdentityScript)
+	id := parseDeviceIdentity(idOut)
+	if id.Code == "" {
+		// The router-side resolver returned nothing usable (no uci, no
+		// /dev/urandom). Brand anyway — the deploy is far past the point of no
+		// return — and say so, because a locally minted code could not be
+		// stored and the next install will therefore re-name the router.
+		id = fallbackDeviceIdentity()
+		job.addLog("WARNING: could not resolve a device code on the router (" + truncate(strings.TrimSpace(idOut), 80) + ") — minted " + id.Code + " locally; it is NOT stored on the router")
+	} else {
+		job.addLog("Device code " + id.Code + " (" + id.Source + "): hostname=" + id.Hostname + ", captive SSID=" + id.SSID + ", private SSID=" + id.PrivateSSID)
 	}
-	for i := range suffix {
-		suffix[i] = ssidChars[int(randBytes[i])%len(ssidChars)]
-	}
-	// SSID/hostname pattern: "TollGate-" + 4 random chars (ALLCAPS, no lowercase).
-	nodeName := "tollgate-" + string(suffix)
-	job.addLog("Branding as " + nodeName + "...")
 
 	// Get router LAN IP first (needed for DNS entries). netifd stores
 	// network.lan.ipaddr as "192.168.1.1/24" on current OpenWrt, so the value
@@ -1300,7 +1566,7 @@ func runDeployment(job *Job, req deployRequest) {
 	// Try to install mdnsd for .local mDNS support (non-fatal if unavailable)
 	mdnsCmd := "opkg update >/dev/null 2>&1 && opkg install mdnsd >/dev/null 2>&1 && /etc/init.d/mdnsd enable 2>/dev/null; /etc/init.d/mdnsd start 2>/dev/null; echo ok"
 
-	brandOut := sshRun(client, strings.Join(brandingCommands(nodeName, routerIP), " && "))
+	brandOut := sshRun(client, strings.Join(brandingCommands(id, routerIP), " && "))
 	// (brandingCommands holds the command list; it is extracted so the shipped
 	// commands can be run against a stub `uci` in branding_test.go.)
 	// Install mdnsd for .local (non-fatal, runs separately)
@@ -1311,8 +1577,8 @@ func runDeployment(job *Job, req deployRequest) {
 		job.addLog("mDNS (.local) support: not available (opkg may not have mdnsd)")
 	}
 	if strings.Contains(brandOut, "branded") {
-		job.addLog("Branded: hostname=" + nodeName + ", SSID=" + nodeName + ", DNS=tollgate.lan")
-		job.setStep(7, "done", "hostname+SSID+DNS+nodogsplash")
+		job.addLog("Branded: code=" + id.Code + ", hostname=" + id.Hostname + ", SSID=" + id.SSID + ", private SSID=" + id.PrivateSSID + ", DNS=tollgate.lan")
+		job.setStep(7, "done", "device code "+id.Code+" → hostname+SSIDs+DNS+nodogsplash")
 	} else {
 		job.addLog("Branding attempted: " + truncate(brandOut, 60))
 		job.setStep(7, "done", "configured (partial)")

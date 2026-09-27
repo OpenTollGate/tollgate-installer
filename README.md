@@ -205,7 +205,7 @@ The deployment runs a sequence of steps over SSH:
 | 3 | Set password | Sets the root password you entered |
 | 4 | Configure upstream | WiFi STA mode or WAN passthrough |
 | 5 | Install tollgate-wrt | Downloads the .ipk/.apk on the laptop, pushes over SSH, installs via opkg/apk |
-| 6 | Brand router | Sets hostname + SSID to `TollGate-XXXX`, DNS to `tollgate.lan`, nodogsplash gateway name |
+| 6 | Brand router | Resolves the router's one device code (stored in UCI, reused) and writes hostname + captive SSID + private SSID from it, DNS to `tollgate.lan`, nodogsplash gateway name |
 | 7 | Configure Lightning | Sets your Lightning address, dev split, margin, mint |
 | 8 | Restart services | Restarts `tollgate-wrt` + `nodogsplash` + `rpcd` |
 | 9 | Health check | Verifies the TollGate API is responding on `:2121` |
@@ -214,6 +214,17 @@ The tollgate-wrt `.ipk`/`.apk` ships the captive portal
 (`/etc/tollgate/tollgate-captive-portal-site`), the rpcd plugin, and the
 nftables enforcement rules — the wizard only installs the package and points
 nodogsplash/uhttpd at it.
+
+### The router's device identity — one code, minted once
+
+Branding resolves **one** four-character code on the router and builds every
+name from it: hostname tollgate-<code>, captive SSID TollGate-<code>, private
+SSID nym-<code>. The code is kept in the router's uci store, etc/config/tollgate,
+under the `code` option, and REUSED — a redeploy of an existing router keeps the
+name it already answers to, instead of minting a new one. Adoption order: the
+store, then a machine-shaped hostname, then a machine-shaped captive SSID, then
+a mint. The contract is shared with tollgate-module-basic-go (same store, same
+order, same alphabet); see [docs/device-identity.md](docs/device-identity.md).
 
 ### Which `tollgate-wrt` package gets installed
 
