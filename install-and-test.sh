@@ -435,7 +435,7 @@ print("Installing: %s %s%s" % (c.get("feed_repo", "?"), c.get("feed_release_tag"
 pkg = c.get("feed_pkg_version", "?")
 err = ("  [" + c["feed_pin_error"] + "]") if c.get("feed_pin_error") else ""
 print("            package %s%s" % (pkg, err))
-print("            installer %s (%s)" % (c.get("installer_version", "?"), c.get("installer_commit", "?")))
+print("            installer %s (%s)  [installer build tag]" % (c.get("installer_version", "?"), c.get("installer_commit", "?")))
 ' 2>/dev/null || true
         return 0
     fi
@@ -450,7 +450,7 @@ print("            installer %s (%s)" % (c.get("installer_version", "?"), c.get(
     printf '            package %s%s\n' \
         "$(first_json_string "${cfg}" feed_pkg_version)" \
         "${err:+  [${err}]}"
-    printf '            installer %s (%s)\n' \
+    printf '            installer %s (%s)  [installer build tag]\n' \
         "$(first_json_string "${cfg}" installer_version)" \
         "$(first_json_string "${cfg}" installer_commit)"
 }
@@ -494,6 +494,15 @@ fi
 echo "Job: ${JOB_ID}"
 echo "Polling status..."
 
+# The installer's OWN version string embeds a feed pre-number (e.g.
+# `v0.6.0-alpha2-pre19-rc1`), because that is the feed release it was cut
+# alongside. It is a README-visible trap: an installer tagged `...-pre19-...`
+# happily installs pre20, the two lines print adjacently, and the reader
+# reasonably concludes they are the same namespace. Verified on a real
+# operator terminal (2026-09-28, pre20): "is it using pre19 or pre20?".
+# So the installer line is LABELLED, and short enough not to wrap. Keep both
+# printf branches identical —
+# scripts/test-installer-version-not-conflated-with-feed.sh pins that.
 # Print the deploy state + step summary, and echo provenance lines (package
 # source + installed build) exactly once as they appear in the job log.
 #

@@ -406,7 +406,7 @@ async function loadBuildInfo() {
     const c = await r.json();
     const modulePart = c.feed_module_pin7 ? ` · module ${c.feed_module_pin7}` : '';
     el.textContent = `tollgate-wrt ${c.feed_pkg_version}${modulePart} · ${c.feed_repo} `
-      + `(${c.feed_release_tag}) — installer ${c.installer_version} (${c.installer_commit})`;
+      + `(${c.feed_release_tag}) — installer build ${c.installer_version} (${c.installer_commit})`;
   } catch (e) {
     el.textContent = 'version info unavailable on this installer build';
   }
