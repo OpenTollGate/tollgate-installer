@@ -349,6 +349,28 @@ flags, so anyone can repeat the build). `--publish` needs `gh` with write access
 and uploads with `--clobber`, so re-running after a fix updates the release in
 place. Nothing here depends on GitHub Actions.
 
+### Installer release tags are the installer's OWN version line
+
+The tag given to release-binaries.sh is stamped into the binary as its version,
+and an operator reads it printed **directly beneath the feed release being
+installed**. So the tag must NOT embed a feed pre-number: an installer cut
+alongside feed pre19 and tagged v0.6.0-alpha2-pre19-rc1 announces pre19 while
+installing whatever the feed channel resolves — on 2026-09-28 that was feed
+pre20, and the operator reasonably asked which one they had actually got.
+
+Tag the installer on its own version line (v0.6.0-alpha2-rc2, or v0.7.0) and
+describe the feed it was cut alongside in the release notes. The script refuses
+a tag containing pre followed by digits; setting ALLOW_FEED_PRENUMBER_TAG to 1
+is the deliberate override. A bare "pre" with no digits is fine:
+v0.6.0-alpha2-pre-rc1 is a real historical tag. Pinned by
+scripts/test-installer-tag-scheme.sh.
+
+(Values here are deliberately not backticked: this README carries a
+pre-existing table row naming a password, which arms the fleet pre-commit
+markdown value scan on the whole file, and a backticked value in an added line
+is then reported as a password-like value. See the repo's own combined
+"password-like value in markdown table" block.)
+
 Asset names are `tollgate-installer-<os>-<arch>[.exe]` — exactly what
 `install-and-test.sh` fetches from `releases/latest/download/`. For a one-off
 single binary, `GOOS=darwin GOARCH=arm64 go build -o dist/tollgate-installer-darwin-arm64 .`

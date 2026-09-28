@@ -80,6 +80,26 @@ done
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 note() { printf '  ! %s\n' "$1" >&2; }
+# --- tag scheme -------------------------------------------------------------
+# The installer's version string is stamped from --tag (see LDFLAGS below) and
+# an operator reads it printed DIRECTLY BENEATH the feed release being
+# installed. So a tag that embeds a FEED pre-number makes an installer cut
+# alongside feed pre19 announce "pre19" while installing whatever the feed
+# channel resolves -- measured on a real operator terminal 2026-09-28, feed
+# pre20: "is it using pre19 or pre20?". The installer is versioned on its OWN
+# line; the feed it was cut alongside belongs in the release notes.
+#
+# `pre` WITHOUT a number is fine (v0.6.0-alpha2-pre-rc1 is a real historical
+# tag); only `pre<digits>` is the feed pre-number.
+FEED_PRENUMBER_RE='(^|[^A-Za-z0-9])pre[0-9]+([^0-9]|$)'
+if [ -n "${TAG}" ] && printf '%s' "${TAG}" | grep -Eq "${FEED_PRENUMBER_RE}"; then
+    if [ "${ALLOW_FEED_PRENUMBER_TAG:-0}" = "1" ]; then
+        note "tag '${TAG}' embeds a feed pre-number; proceeding because ALLOW_FEED_PRENUMBER_TAG=1"
+    else
+        die "refusing to stamp the installer with a FEED pre-number: --tag '${TAG}' -- see the comment above this check. Tag the installer on its own version line (e.g. --tag v0.6.0-alpha2-rc2, or --tag v0.7.0) and put the feed it was cut alongside in --notes. Deliberate override: ALLOW_FEED_PRENUMBER_TAG=1"
+    fi
+fi
+
 
 # --- preflight --------------------------------------------------------------
 command -v go >/dev/null 2>&1 || die "go not found: install Go (https://go.dev/dl/) and re-run"
