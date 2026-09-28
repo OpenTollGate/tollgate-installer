@@ -14,6 +14,23 @@ import (
 // in-process SSH server; production always uses 22.
 var sshDialPort = "22"
 
+// sshHostKeyAlgorithms pins the ORDERED host-key preference for every SSH
+// dial in this package.
+//
+// WHY (2026-09-28): these configs previously set no HostKeyAlgorithms, so
+// golang.org/x/crypto/ssh negotiated by its own preference and picked RSA
+// against an OpenWrt box serving BOTH ed25519 and rsa. An operator verifying
+// on the router console (dropbearkey -y) or with ssh-keyscan -t ed25519 saw a
+// DIFFERENT fingerprint than the installer, so a correct pin could never
+// match. ed25519 is first because that is what every operator-facing check
+// reports. rsa/rsa-sha2 remain as fallbacks: older firmware may ship only
+// an RSA host key.
+var sshHostKeyAlgorithms = []string{
+	ssh.KeyAlgoED25519,
+	ssh.KeyAlgoRSASHA256,
+	ssh.KeyAlgoRSA,
+}
+
 // sshConnect establishes an SSH session to the router.
 //
 // Auth chain, tried in order (a fresh-reset OpenWrt router ships root with
@@ -31,9 +48,10 @@ var sshDialPort = "22"
 func sshConnect(ip, password string) *ssh.Client {
 	forgetHostKeyRefusal(ip)
 	config := &ssh.ClientConfig{
-		User:            "root",
-		HostKeyCallback: routerHostKeyCallback(ip),
-		Timeout:         10 * time.Second,
+		User:              "root",
+		HostKeyCallback:   routerHostKeyCallback(ip),
+		Timeout:           10 * time.Second,
+		HostKeyAlgorithms: sshHostKeyAlgorithms,
 	}
 
 	auth := []ssh.AuthMethod{}
@@ -111,8 +129,9 @@ func proveRootPassword(ip, password string) bool {
 	}
 	config := &ssh.ClientConfig{
 		User:            "root",
-		HostKeyCallback: routerHostKeyCallback(ip),
-		Timeout:         10 * time.Second,
+		HostKeyCallback:   routerHostKeyCallback(ip),
+		Timeout:           10 * time.Second,
+		HostKeyAlgorithms: sshHostKeyAlgorithms,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(password),
 			keyboardInteractiveAuth(password),
