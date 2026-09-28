@@ -1,0 +1,9 @@
+Port 2222
+ListenAddress 127.0.0.1
+HostKey /home/c03rad0r/worktrees/tgi-e2e-fixture/host_ed25519
+HostKey /home/c03rad0r/worktrees/tgi-e2e-fixture/host_rsa
+UsePAM no
+PermitRootLogin yes
+PasswordAuthentication yes
+PidFile /home/c03rad0r/worktrees/tgi-e2e-fixture/sshd.pid
+LogLevel ERROR
