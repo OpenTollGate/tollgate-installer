@@ -185,6 +185,8 @@ troubleshooting table.
 |----------|--------|---------|
 | `/` | GET | Web UI |
 | `/api/scan` | GET | Discover routers on LAN |
+| `/api/identify` | POST | Re-identify a router (returns `ssh_refusal` + `ssh_fingerprint`) |
+| `/api/trust-host-key` | POST | Trust a router's SSH host key after verifying its fingerprint on the console |
 | `/api/deploy` | POST | Start a deploy job |
 | `/api/status/<id>` | GET | Poll deploy progress |
 | `/api/wifi-scan` | GET | Scan SSIDs (STA/repeater mode) |

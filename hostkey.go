@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -280,9 +281,18 @@ func verifyStoreResolvesTo(path, host string, key ssh.PublicKey) error {
 	return nil
 }
 
+// hostKeyRefusal is the most recent refusal for one router address: the
+// operator-facing message plus the fingerprint the router actually presented.
+// The fingerprint is kept structurally (not only embedded in the prose) so the
+// browser wizard can offer to trust exactly the key it just showed.
+type hostKeyRefusal struct {
+	message     string
+	fingerprint string
+}
+
 var (
 	hostKeyRefusalsMu sync.Mutex
-	hostKeyRefusals   = map[string]string{}
+	hostKeyRefusals   = map[string]hostKeyRefusal{}
 )
 
 // forgetHostKeyRefusal drops the recorded refusal for ip. Called at the start of
@@ -296,10 +306,11 @@ func forgetHostKeyRefusal(ip string) {
 // recordHostKeyRefusal remembers why the connect attempt to ip was refused — the
 // HTTP handlers surface this text, so the operator sees the fingerprint and the
 // way to trust it instead of a generic "cannot connect" — and returns it as the
-// handshake error that aborts the connection.
-func recordHostKeyRefusal(ip, msg string) error {
+// handshake error that aborts the connection. fingerprint is the key the router
+// presented, or "" when none was seen before the attempt failed.
+func recordHostKeyRefusal(ip, msg, fingerprint string) error {
 	hostKeyRefusalsMu.Lock()
-	hostKeyRefusals[ip] = msg
+	hostKeyRefusals[ip] = hostKeyRefusal{message: msg, fingerprint: fingerprint}
 	hostKeyRefusalsMu.Unlock()
 	return errors.New(msg)
 }
@@ -309,7 +320,16 @@ func recordHostKeyRefusal(ip, msg string) error {
 func lastHostKeyRefusal(ip string) string {
 	hostKeyRefusalsMu.Lock()
 	defer hostKeyRefusalsMu.Unlock()
-	return hostKeyRefusals[ip]
+	return hostKeyRefusals[ip].message
+}
+
+// lastHostKeyFingerprint returns the fingerprint the most recent refusal for ip
+// named, or "" when there was no refusal (or it carried no fingerprint). It lets
+// the wizard name the exact key to trust without parsing the message text.
+func lastHostKeyFingerprint(ip string) string {
+	hostKeyRefusalsMu.Lock()
+	defer hostKeyRefusalsMu.Unlock()
+	return hostKeyRefusals[ip].fingerprint
 }
 
 // sshConnectFailureMessage is the operator-facing text for a failed connect: the
@@ -390,7 +410,7 @@ func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 			if !sameFingerprint(want, fingerprint) {
 				return recordHostKeyRefusal(ip, fmt.Sprintf(
 					"router SSH host key mismatch: %s presents %s but %s pins %s and no credentials were sent. Check the fingerprint on the router's console and pass the one it actually prints.",
-					hostname, fingerprint, "--trust-host-key", want))
+					hostname, fingerprint, "--trust-host-key", want), fingerprint)
 			}
 			if err := rememberHostKey(hostname, key); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not remember %s in %s: %v\n", fingerprint, storeDescription(knownHostsPath()), err)
@@ -407,7 +427,7 @@ func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 				if err != nil {
 					return recordHostKeyRefusal(ip, fmt.Sprintf(
 						"cannot read the SSH trust store %s: %v — refusing to connect to %s and no credentials were sent.",
-						store, err, hostname))
+						store, err, hostname), fingerprint)
 				}
 				if err := checker(hostname, remote, key); err != nil {
 					var keyErr *knownhosts.KeyError
@@ -416,15 +436,60 @@ func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 						for _, k := range keyErr.Want {
 							known = append(known, ssh.FingerprintSHA256(k.Key))
 						}
-						return recordHostKeyRefusal(ip, changedHostKeyMessage(hostname, fingerprint, known, store))
+						return recordHostKeyRefusal(ip, changedHostKeyMessage(hostname, fingerprint, known, store), fingerprint)
 					}
-					return recordHostKeyRefusal(ip, untrustedHostKeyMessage(hostname, fingerprint, store))
+					return recordHostKeyRefusal(ip, untrustedHostKeyMessage(hostname, fingerprint, store), fingerprint)
 				}
 				return nil // seen before, and the key still matches
 			}
 		}
 
 		// 3. Unseen host and nothing pinned: fail safe.
-		return recordHostKeyRefusal(ip, untrustedHostKeyMessage(hostname, fingerprint, store))
+		return recordHostKeyRefusal(ip, untrustedHostKeyMessage(hostname, fingerprint, store), fingerprint)
 	}
+}
+
+// trustHostKeyForHost verifies that ip presents exactly the fingerprint the
+// operator supplied and, only then, records the key in the trust store so later
+// connects need no pin. It is the browser wizard's equivalent of
+// --trust-host-key: the operator reads the fingerprint off the router's console,
+// the wizard shows it back, and this persists that one decision for that host.
+//
+// The client config carries NO auth methods, so no credential is ever offered to
+// the router — verifying the host key is the entire purpose. A mismatch records
+// the refusal (so /api/identify keeps explaining it) and returns an error
+// without writing anything to the store; a malformed fingerprint never reaches
+// here (see handleTrustHostKey).
+//
+// Note it deliberately does NOT consult or set the process-global
+// --trust-host-key pin: trust granted here is for this host only, so one
+// operator confirmation cannot silently trust every other address.
+func trustHostKeyForHost(ip, fingerprint string) (ssh.PublicKey, error) {
+	var key ssh.PublicKey
+	config := &ssh.ClientConfig{
+		User:    "root",
+		Timeout: 10 * time.Second,
+		HostKeyCallback: func(hostname string, remote net.Addr, presented ssh.PublicKey) error {
+			got := ssh.FingerprintSHA256(presented)
+			if !sameFingerprint(fingerprint, got) {
+				return recordHostKeyRefusal(ip, fmt.Sprintf(
+					"router SSH host key mismatch: %s presents %s but %s was supplied and nothing was trusted.",
+					hostname, got, fingerprint), got)
+			}
+			key = presented
+			return nil
+		},
+	}
+	client, err := ssh.Dial("tcp", net.JoinHostPort(ip, sshDialPort), config)
+	if err != nil && key == nil {
+		// The callback refused, or the dial never got far enough to present a key.
+		return nil, err
+	}
+	if client != nil {
+		client.Close() // handshake done; auth is irrelevant to host-key trust
+	}
+	if err := rememberHostKey(net.JoinHostPort(ip, sshDialPort), key); err != nil {
+		return key, fmt.Errorf("verified %s but could not remember it: %w", ssh.FingerprintSHA256(key), err)
+	}
+	return key, nil
 }
