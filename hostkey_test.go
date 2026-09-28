@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"errors"
 	"net"
@@ -501,4 +502,126 @@ func TestHashedStoreLineIsReportedNotSilentlyIgnored(t *testing.T) {
 		again.Close()
 		t.Fatal("a hashed entry that shadows the recorded key was nevertheless accepted")
 	}
+}
+
+// rsaHostKeySigner mints a fresh RSA host key, so a test can present the key
+// type OpenWrt dropbear actually negotiated against in the 2026-09-28 defect.
+func rsaHostKeySigner(t *testing.T) ssh.Signer {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa host key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("signer from rsa key: %v", err)
+	}
+	return signer
+}
+
+func TestParsePinForms(t *testing.T) {
+	cases := []struct {
+		in, typ, fp string
+	}{
+		{"SHA256:abc", "", "SHA256:abc"},
+		{"  SHA256:abc  ", "", "SHA256:abc"},
+		{"ed25519 SHA256:abc", "ed25519", "SHA256:abc"},
+		{"ssh-ed25519 SHA256:abc", "ed25519", "SHA256:abc"},
+		{"RSA SHA256:abc", "rsa", "SHA256:abc"},
+		{"rsa-sha2-256 SHA256:abc", "rsa", "SHA256:abc"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		typ, fp := parsePin(c.in)
+		if typ != c.typ || fp != c.fp {
+			t.Errorf("parsePin(%q) = (%q, %q), want (%q, %q)", c.in, typ, fp, c.typ, c.fp)
+		}
+	}
+}
+
+func TestNormalizeKeyTypeName(t *testing.T) {
+	cases := map[string]string{
+		"ssh-ed25519":         "ed25519",
+		"ed25519":             "ed25519",
+		"ssh-rsa":             "rsa",
+		"rsa-sha2-256":        "rsa",
+		"rsa-sha2-512":        "rsa",
+		"ecdsa-sha2-nistp256": "ecdsa",
+	}
+	for in, want := range cases {
+		if got := normalizeKeyTypeName(in); got != want {
+			t.Errorf("normalizeKeyTypeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHostKeyTypeName(t *testing.T) {
+	if got := hostKeyTypeName(hostKeySigner(t).PublicKey()); got != "ed25519" {
+		t.Errorf("ed25519 key type = %q, want ed25519", got)
+	}
+	if got := hostKeyTypeName(rsaHostKeySigner(t).PublicKey()); got != "rsa" {
+		t.Errorf("rsa key type = %q, want rsa", got)
+	}
+}
+
+// TestPinnedKeyMatchesIsKeyTypeAware is the unit guard for the 2026-09-28 defect:
+// a pin that names a key type must not accept a key of a different type, even
+// when the fingerprint matches.
+func TestPinnedKeyMatchesIsKeyTypeAware(t *testing.T) {
+	ed := hostKeySigner(t).PublicKey()
+	rsaKey := rsaHostKeySigner(t).PublicKey()
+	edFP := ssh.FingerprintSHA256(ed)
+	rsaFP := ssh.FingerprintSHA256(rsaKey)
+
+	if !pinnedKeyMatches("ed25519 "+edFP, ed) {
+		t.Error("a correctly typed ed25519 pin must match an ed25519 key")
+	}
+	if !pinnedKeyMatches("ssh-ed25519 "+edFP, ed) {
+		t.Error("an ssh-ed25519-spelled pin must match an ed25519 key")
+	}
+	if pinnedKeyMatches("rsa "+edFP, ed) {
+		t.Error("an rsa pin must NOT match an ed25519 key even if the fingerprint field matches")
+	}
+	if pinnedKeyMatches("ed25519 "+rsaFP, rsaKey) {
+		t.Error("an ed25519 pin must NOT match an rsa key")
+	}
+	if !pinnedKeyMatches("rsa "+rsaFP, rsaKey) {
+		t.Error("an rsa pin must match an rsa key")
+	}
+	// Legacy bare-fingerprint pin: still matches on the fingerprint alone.
+	if !pinnedKeyMatches(edFP, ed) {
+		t.Error("a bare fingerprint pin must keep matching (back-compat)")
+	}
+	if pinnedKeyMatches(edFP, rsaKey) {
+		t.Error("a bare fingerprint pin must not match a different key")
+	}
+}
+
+// TestTypedPinRejectsWrongKeyType drives the REAL sshConnect path: a pin that is
+// the correct fingerprint but names the wrong key type is refused, and the same
+// fingerprint with the right type is accepted.
+func TestTypedPinRejectsWrongKeyType(t *testing.T) {
+	knownHostsStore(t)
+	hostKey := hostKeySigner(t)
+	router := startRogueRouter(t, hostKey)
+	fp := ssh.FingerprintSHA256(hostKey.PublicKey())
+
+	withTrustedFingerprint(t, "rsa "+fp) // correct fingerprint, wrong key type
+	if client := dialRogueRouter(t, router); client != nil {
+		client.Close()
+		t.Fatal("a pin naming the wrong key type must be refused even when the fingerprint matches")
+	}
+	if refusal := lastHostKeyRefusal(router.host()); !strings.Contains(refusal, "mismatch") {
+		t.Errorf("refusal should report a mismatch, got: %s", refusal)
+	}
+
+	// The same fingerprint with the right type is accepted.
+	knownHostsStore(t)
+	router2 := startRogueRouter(t, hostKey)
+	withTrustedFingerprint(t, "ed25519 "+fp)
+	client := dialRogueRouter(t, router2)
+	if client == nil {
+		t.Fatalf("a correctly typed pin was refused: %s", lastHostKeyRefusal(router2.host()))
+	}
+	client.Close()
 }
