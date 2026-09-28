@@ -215,6 +215,9 @@
       <label>Select your router</label>
       <select id="router-select" onchange="onRouterChange()"></select>
       <div class="hint hidden" id="trust-hint"></div>
+      <button type="button" class="btn btn-secondary hidden" id="trust-btn"
+              style="width:auto; padding:10px 14px; margin-top:0.5rem;"
+              onclick="trustHostKey()">Trust this router's SSH host key</button>
     </div>
     <div class="field">
       <label for="password">Router password</label>
@@ -712,9 +715,16 @@ async function wifiScan() {
       // operator hunting for one.
       const evidence = data.log || data.debug;
       ssidSelect.innerHTML = '<option value="">Scan failed</option>';
-      ssidHint.textContent = evidence
-        ? data.error
-        : data.error + ' — check router password and try Rescan.';
+      if (isHostKeyRefusal(data.error)) {
+        // Not a password problem: show the refusal as-is and surface the trust
+        // control next to the router, which is the only thing that can fix it.
+        ssidHint.textContent = data.error;
+        showTrustHint(selectedRouterInfo());
+      } else {
+        ssidHint.textContent = evidence
+          ? data.error
+          : data.error + ' — check router password and try Rescan.';
+      }
       ssidSelect.disabled = true;
       wifiScanned = false;
       return;
@@ -856,6 +866,69 @@ function showTrustHint(r) {
   const msg = (r && r.ssh_refusal) ? r.ssh_refusal : '';
   el.textContent = msg;
   el.classList.toggle('hidden', !msg);
+
+  // The refusal carries the fingerprint the router presented (ssh_fingerprint),
+  // so the operator can trust exactly that key here instead of killing the
+  // wizard and relaunching with --trust-host-key.
+  const btn = document.getElementById('trust-btn');
+  if (btn) {
+    window._trustFingerprint = (r && r.ssh_fingerprint) ? r.ssh_fingerprint : '';
+    btn.classList.toggle('hidden', !(msg && window._trustFingerprint));
+  }
+}
+
+// isHostKeyRefusal reports whether an error string is the router host-key
+// refusal rather than a scan/password failure. Both the refusal text and the
+// launcher's instruction name --trust-host-key; matching on that (or the
+// no-credentials sentence) keeps a trust refusal from being reported to the
+// operator as a password problem.
+function isHostKeyRefusal(msg) {
+  return !!msg && (msg.indexOf('--trust-host-key') !== -1 ||
+                   msg.indexOf('no credentials were sent') !== -1);
+}
+
+// trustHostKey pins the selected router's SSH host key after the operator has
+// verified the fingerprint on the router's console. The confirm dialog is the
+// out-of-band step made concrete: it names the full fingerprint so a hurried
+// click cannot bless a key the operator never read.
+async function trustHostKey() {
+  const ip = document.getElementById('router-select').value;
+  const fingerprint = window._trustFingerprint || '';
+  if (!ip || !fingerprint) return;
+
+  const ok = window.confirm(
+    "Trust this router's SSH host key?\n\n" +
+    fingerprint + "\n\n" +
+    "Verify this exact fingerprint on the router's console first, e.g.\n" +
+    "  ssh-keygen -lf /etc/dropbear/dropbear_ed25519_host_key.pub\n\n" +
+    "Trusting a key you have not verified would send your router password to " +
+    "an impostor on the LAN.");
+  if (!ok) return;
+
+  const btn = document.getElementById('trust-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch('/api/trust-host-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, fingerprint: fingerprint }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const hint = document.getElementById('trust-hint');
+      if (hint) hint.textContent = data.error || 'Could not trust the router host key.';
+      return;
+    }
+    // Trusted: re-identify (which clears the hint) and restart the pre-download
+    // that selection-time pre-staging had to skip while the key was untrusted.
+    await refreshRouterName();
+    schedulePreStage();
+  } catch (e) {
+    const hint = document.getElementById('trust-hint');
+    if (hint) hint.textContent = 'Network error while trusting the router host key.';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // refreshRouterName re-identifies the selected router with the password the

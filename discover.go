@@ -29,6 +29,11 @@ type RouterInfo struct {
 	// carry it and the UI renders it next to the router (RISK item of the #41
 	// review).
 	SSHRefusal string `json:"ssh_refusal,omitempty"`
+	// SSHFingerprint is the OpenSSH SHA256 fingerprint the router presented when
+	// it was refused, kept as its own field so the browser wizard can offer to
+	// trust exactly that key (POST /api/trust-host-key) instead of trying to
+	// parse it back out of the prose in SSHRefusal. Empty when no key was seen.
+	SSHFingerprint string `json:"ssh_fingerprint,omitempty"`
 }
 
 // sshProbePort is the TCP port that decides whether a host answers SSH. It is a
@@ -199,8 +204,10 @@ func probeRouterWithPassword(ip, password string) RouterInfo {
 			info.Model = model
 		} else if refusal := lastHostKeyRefusal(ip); refusal != "" {
 			// The connect was refused: say so instead of rendering a router whose
-			// firmware is simply "unknown".
+			// firmware is simply "unknown". The fingerprint travels as its own
+			// field so the UI can act on it.
 			info.SSHRefusal = refusal
+			info.SSHFingerprint = lastHostKeyFingerprint(ip)
 		}
 	}
 

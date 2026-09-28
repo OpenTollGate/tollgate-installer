@@ -1662,6 +1662,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/scan", handleScan)
 	mux.HandleFunc("/api/identify", handleIdentify)
+	mux.HandleFunc("/api/trust-host-key", handleTrustHostKey)
 	mux.HandleFunc("/api/wifi-scan", handleWifiScan)
 	mux.HandleFunc("/api/wifi-test", handleWifiTest)
 	mux.HandleFunc("/api/prestage", handlePreStage)

@@ -81,6 +81,11 @@ func TestIdentifyReportsHostKeyRefusal(t *testing.T) {
 	if !strings.Contains(got.SSHRefusal, "--trust-host-key") {
 		t.Errorf("/api/identify response does not carry the trust instruction — a browser-first operator cannot act on it:\n%s", rec.Body.String())
 	}
+	// The fingerprint must also travel as its own field: the trust control needs
+	// the value, and parsing it back out of the prose is the bug this avoids.
+	if want := ssh.FingerprintSHA256(hostKey.PublicKey()); got.SSHFingerprint != want {
+		t.Errorf("/api/identify must carry the presented fingerprint structurally (want %s, got %q):\n%s", want, got.SSHFingerprint, rec.Body.String())
+	}
 }
 
 // TestTrustedRouterCarriesNoRefusal is the other half: once the key is trusted the
