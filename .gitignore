@@ -4,3 +4,6 @@ setupwizzard-*
 setupwizzard
 coverage*.out
 DLEQ-FIX-PLAN.md
+node_modules
+test-results
+*.png
