@@ -917,6 +917,23 @@ async function trustHostKey() {
     if (!resp.ok) {
       const hint = document.getElementById('trust-hint');
       if (hint) hint.textContent = data.error || 'Could not trust the router host key.';
+      // The router is presenting a key that differs from the one this prompt was
+      // built with (re-keyed, a different device on this address, or an
+      // impostor). Cache the CURRENT one so the next click confirms what is
+      // actually there instead of re-posting the stale value forever — that loop
+      // is the "trust host key button does not work" defect (2026-10-01).
+      //
+      // Deliberately NOT trusted here: refreshing the value only changes what the
+      // NEXT confirm dialog asks about. Blessing it automatically would turn one
+      // click on a stale prompt into trust for a host the operator never checked.
+      if (data.ssh_fingerprint && data.ssh_fingerprint !== fingerprint) {
+        window._trustFingerprint = data.ssh_fingerprint;
+        if (hint) {
+          hint.textContent = (data.error || '') +
+            '\n\nThe router now presents ' + data.ssh_fingerprint +
+            ' — verify THAT on the router console, then click Trust again to confirm it.';
+        }
+      }
       return;
     }
     // Trusted: re-identify (which clears the hint) and restart the pre-download
