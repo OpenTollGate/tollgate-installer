@@ -130,3 +130,40 @@ scripts/test-installer-version-not-conflated-with-feed.sh
 
 RED control: the new tests fail on the pre-change base (35db30d) and pass on the
 head. No `ssh.InsecureIgnoreHostKey` anywhere in the install path.
+
+## Follow-up fix, 2026-10-01: the Trust button became an unbreakable loop
+
+Operator report: *"the trust host key button doesn't work"* — with three identical
+errors in the UI:
+
+```
+{"error":"ssh: handshake failed: router SSH host key mismatch: 192.168.1.1:22
+ presents SHA256:iKF/TR/LQ6vMVgrngAyW6ipSfn3GO9iJUfzXYNujQKw but
+ SHA256:p1IVyP8jjaMhmY0G1OKskIWzotj5n1A6LTkOq4Ef1RY was supplied and nothing was trusted."}
+```
+
+**Cause.** `trustHostKeyForHost` records the fingerprint the router actually
+presents, and the refusal prose names it — but `handleTrustHostKey` returned it
+only as *prose*, and `index.html`'s `!resp.ok` branch refreshed the hint text
+without updating `window._trustFingerprint`. The next click therefore re-posted
+the value cached when the prompt was drawn. Once the presented key had changed
+once, **every** click failed identically: the operator was told to "correct the
+value and retry" with no way to correct it.
+
+**Fix.** The refusal now carries the presented fingerprint structurally, in
+`ssh_fingerprint` — the same field the scan refusal already uses (`discover.go`)
+— and the UI refreshes its cached value from it, telling the operator which
+fingerprint to verify next.
+
+**Constraint 1 is preserved, deliberately.** Refreshing the cached value only
+changes what the *next* confirm dialog asks about; the new value is not trusted.
+A changed host key is exactly the impersonation case, so it still requires an
+out-of-band console check and a fresh explicit confirmation. Auto-trusting the
+refreshed value would have turned one click on a stale prompt into trust for a
+host the operator never verified.
+
+**Environment note.** It surfaced under the same conditions as the 2026-09-28
+incident above: **two devices answering at `192.168.1.1`** (a gateway and the
+test router), so the presented key changed between connections. The fix removes
+the dead end; it does **not** make a conflicting address safe to trust. Topology
+first (one device per address), then the console check, then Trust.
