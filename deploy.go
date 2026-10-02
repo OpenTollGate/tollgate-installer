@@ -359,11 +359,12 @@ func ensureRootCredential(job *Job, run routerRun, prove routerAuthProof, suppli
 		} else {
 			job.setCredentialFile(path)
 		}
-		if !applyRootPassword(job, run, prove, pw, "generated") {
-			return "", false
-		}
-		job.setGeneratedPassword(pw)
-		return pw, true
+		// DEFER the set. The router keeps the empty credential that got the
+		// deploy in until the whole deploy has succeeded (finalizeRootCredential),
+		// so a failure at any later step leaves the operator's access untouched.
+		job.setPendingRootPassword(pw)
+		job.setStep(4, "done", "deferred until the install is verified")
+		return "", true
 	default:
 		// rootHashUnknown: /etc/shadow missing or unreadable, no awk, or a
 		// dead session. Never assume this is the credential-less state —
@@ -374,6 +375,45 @@ func ensureRootCredential(job *Job, run routerRun, prove routerAuthProof, suppli
 				"Re-run the deploy and supply the router's root password explicitly.")
 		return "", false
 	}
+}
+
+// finalizeRootCredential applies a credential DEFERRED by ensureRootCredential
+// (the router had no root password, so the deploy generated one). It is set
+// here, once, after the deploy's last gate — the health check — has passed, and
+// only then is it armed for the one-shot view.
+//
+// Why the deferral: setting a root password OVERWRITES the router's existing
+// access, which on a freshly-reset router is "log in with an empty password".
+// Doing it at step 4 — before the package download (step 6), the branding, the
+// portal, the LNURL config, the service restarts and the health check — means
+// any later failure leaves the operator locked out of hardware the wizard just
+// changed. Persisting the value (PR #70) makes that recoverable; not re-keying
+// until the work has actually succeeded means it does not happen at all.
+//
+// Arming happens ONLY here, so the failure view's "this deploy failed AFTER the
+// router's root password had already been generated and set" can never be shown
+// for a credential that was never set.
+//
+// Returns false after jobFail when the deploy must not be reported successful:
+// a deploy that does not establish the credential it promised is not complete.
+func finalizeRootCredential(job *Job, run routerRun, prove routerAuthProof) bool {
+	pw := job.takePendingRootPassword()
+	if pw == "" {
+		// Nothing was deferred: the operator supplied the password, or the
+		// router already had one, or this deploy never reached step 4.
+		return true
+	}
+	// applyRootPassword owns step 4's status (it marks it done on success and
+	// fails the job otherwise) — deliberately no extra setStep here, which would
+	// add a second "running" marker for step 4 (TestDeployStepIndexGuard).
+	if !applyRootPassword(job, run, prove, pw, "generated") {
+		// The value was persisted before it was ever used (step 4), so this
+		// deployment is recoverable by hand even though it is not complete.
+		job.addLog("The generated root credential could NOT be applied — take it from the credential file named above and set it on the router by hand.")
+		return false
+	}
+	job.setGeneratedPassword(pw)
+	return true
 }
 
 // applyRootPassword sets password on the router and PROVES that password — not
@@ -1858,6 +1898,18 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate service not listening on :2121",
 				"The tollgate-wrt service is NOT listening on :2121 (crash-looping or still initializing).\n"+diag)
 		}
+		return
+	}
+
+	// The health check was the last gate, so the install has succeeded: this is
+	// the point at which re-keying the router can no longer strand the operator.
+	// Apply the credential deferred at step 4, and only now arm it for the
+	// one-shot view.
+	if !finalizeRootCredential(job, func(cmd string) string {
+		return sshRun(client, cmd)
+	}, func(pw string) bool {
+		return proveRootPassword(req.IP, pw)
+	}) {
 		return
 	}
 

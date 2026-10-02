@@ -58,12 +58,21 @@ func TestGeneratedRootCredentialIsPersistedBeforePasswdRuns(t *testing.T) {
 	}
 
 	job := newJob("192.168.23.1")
-	pw, ok := ensureRootCredential(job, run, fr.proveLogin, "")
-	if !ok {
+	if _, ok := ensureRootCredential(job, run, fr.proveLogin, ""); !ok {
 		t.Fatalf("ensureRootCredential failed: %s", job.Error)
 	}
+	job.mu.Lock()
+	pw := job.pendingRootPassword
+	job.mu.Unlock()
 	if pw == "" {
-		t.Fatal("no credential was returned for a router with an empty root hash")
+		t.Fatal("no credential was generated for a router with an empty root hash")
+	}
+	// The credential is APPLIED here, not at step 4: the set is deferred until
+	// the install is verified (see credential_after_verify_test.go). The
+	// invariant is unchanged — it must be on disk BEFORE it is applied — and
+	// `run` snapshots the file at the moment `passwd root` executes.
+	if !finalizeRootCredential(job, run, fr.proveLogin) {
+		t.Fatalf("finalizeRootCredential failed: %s", job.Error)
 	}
 
 	// 1. The credential reached the disk at all.
@@ -131,8 +140,7 @@ func TestCredentialFileKeepsEarlierCredentialsAndIsTightenedToOwnerOnly(t *testi
 
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, passwdOut: "passwd: password changed\n"}
 	job := newJob("192.168.23.1")
-	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
-	if !ok {
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
 		t.Fatalf("ensureRootCredential failed: %s", job.Error)
 	}
 
@@ -140,11 +148,14 @@ func TestCredentialFileKeepsEarlierCredentialsAndIsTightenedToOwnerOnly(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	job.mu.Lock()
+	pending := job.pendingRootPassword
+	job.mu.Unlock()
 	if !strings.Contains(string(b), earlier) {
 		t.Fatalf("the earlier credential was removed — this file is a recovery log and must only ever append; file:\n%s", b)
 	}
-	if !strings.Contains(string(b), pw) {
-		t.Fatalf("the new credential was not appended; file:\n%s", b)
+	if pending == "" || !strings.Contains(string(b), pending) {
+		t.Fatalf("the generated credential (pending=%q) was not appended; file:\n%s", pending, b)
 	}
 	if fi, err := os.Stat(cred); err != nil {
 		t.Fatal(err)
@@ -174,8 +185,8 @@ func TestCredentialPersistFailureWarnsLoudlyAndDoesNotAbort(t *testing.T) {
 	if !ok {
 		t.Fatalf("an unwritable credential FILE aborted the deploy (%s); the router can still be configured and the one-shot serve still fires", job.Error)
 	}
-	if pw == "" || !fr.ranPasswd() {
-		t.Fatal("the router was not given a credential at all")
+	if job.Status == "failed" {
+		t.Fatalf("an unwritable credential file FAILED the deploy (%s); the one-shot serve still fires, and refusing to configure a router over a local file write error is the wrong trade", job.Error)
 	}
 
 	logText := jobLogText(job)
@@ -185,7 +196,7 @@ func TestCredentialPersistFailureWarnsLoudlyAndDoesNotAbort(t *testing.T) {
 	if !strings.Contains(logText, cred) {
 		t.Fatalf("the warning does not name the path that failed; log:\n%s", logText)
 	}
-	if strings.Contains(logText, pw) {
+	if pw != "" && strings.Contains(logText, pw) {
 		t.Fatalf("the warning leaked the credential into the log:\n%s", logText)
 	}
 

@@ -268,15 +268,25 @@ func TestEnsureRootCredentialFreshDeployForcesACredential(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, passwdOut: "passwd: password changed\n"}
 
-	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
-	if !ok {
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
 		t.Fatalf("ensureRootCredential failed on a fresh deploy: %s", job.Error)
 	}
+	// Two-phase contract: step 4 GENERATES the credential and holds it, but does
+	// NOT apply it. The router keeps the empty credential that got the deploy in
+	// until the work has actually succeeded, so a failure at any later step
+	// cannot strand the operator on a router the wizard just re-keyed.
+	job.mu.Lock()
+	pw := job.pendingRootPassword
+	job.mu.Unlock()
 	if pw == "" {
-		t.Fatal("no credential was established on a password-less router")
+		t.Fatal("no credential was generated on a password-less router")
 	}
 	if len(pw) != rootPasswordLength {
 		t.Fatalf("generated credential length = %d, want %d", len(pw), rootPasswordLength)
+	}
+	// The set happens at finalization, once the deploy's last gate has passed.
+	if !finalizeRootCredential(job, fr.run, fr.proveLogin) {
+		t.Fatalf("finalizeRootCredential failed on a fresh deploy: %s", job.Error)
 	}
 	if !fr.ranPasswd() {
 		t.Fatal("passwd root was never run — the router was left with NO root password")
@@ -315,8 +325,13 @@ func TestEnsureRootCredentialFailsClosedWhenPasswdDoesNotTake(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, refusePasswd: true, passwdOut: "passwd: password changed\n"}
 
-	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); ok {
-		t.Fatal("ensureRootCredential returned ok=true although the router still has NO root password")
+	// Two-phase contract: step 4 defers the set, so a passwd that does not take
+	// has to be observed at finalization — where the write actually happens.
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
+		t.Fatalf("ensureRootCredential failed on a fresh deploy: %s", job.Error)
+	}
+	if finalizeRootCredential(job, fr.run, fr.proveLogin) {
+		t.Fatal("finalizeRootCredential returned ok=true although the router still has NO root password")
 	}
 	if job.Status != "failed" {
 		t.Fatalf("job status = %q, want failed", job.Status)

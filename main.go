@@ -194,6 +194,13 @@ type Job struct {
 	// exists, and it still names it after the one-shot value has been consumed.
 	// Guarded by mu.
 	credentialFile string
+	// pendingRootPassword is a credential that was generated for a router with
+	// NO root password but NOT yet applied to it: the set is deferred until the
+	// deploy has actually succeeded (see finalizeRootCredential). Until then the
+	// router keeps the empty credential that got the deploy in, so a deploy that
+	// fails mid-way leaves the operator's access exactly as it found it. Guarded
+	// by mu.
+	pendingRootPassword string
 	// stageCache holds pre-downloaded deploy assets keyed by the exact
 	// asset URL, populated by the PreStage phase (stageAssets) so the
 	// flash/install steps can consume staged bytes without live network.
@@ -301,6 +308,24 @@ func (j *Job) setCredentialFile(path string) {
 	j.credentialFile = path
 	j.mu.Unlock()
 	j.addLog("A copy of the generated root credential was saved to " + path + " (mode 600) — recoverable if you close this page before copying it.")
+}
+
+// setPendingRootPassword records a generated credential that must NOT be applied
+// to the router yet (see finalizeRootCredential).
+func (j *Job) setPendingRootPassword(pw string) {
+	j.mu.Lock()
+	j.pendingRootPassword = pw
+	j.mu.Unlock()
+}
+
+// takePendingRootPassword returns the deferred credential and clears it, so a
+// second finalization can never re-apply (or re-arm) the same value.
+func (j *Job) takePendingRootPassword() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	pw := j.pendingRootPassword
+	j.pendingRootPassword = ""
+	return pw
 }
 
 func (j *Job) setStep(i int, status, detail string) {
