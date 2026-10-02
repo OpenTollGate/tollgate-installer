@@ -197,7 +197,12 @@ func TestEnsureRootCredentialSetEmptyUnknownAreDistinct(t *testing.T) {
 		wantHash rootHashState
 	}{
 		{name: "set — left untouched", state: rootHashSet, wantOK: true, wantSet: false, wantHash: rootHashSet},
-		{name: "empty — a credential is generated and set", state: rootHashEmpty, wantOK: true, wantSet: true, wantHash: rootHashSet},
+		// The empty state still GENERATES (and persists) a credential, but as of
+		// pr/credential-after-verify it is deliberately NOT applied here: the set
+		// is deferred to finalization, after the health check passes, so a deploy
+		// that fails mid-way cannot strand an operator on a router it just
+		// re-keyed (see credential_after_verify_test.go).
+		{name: "empty — a credential is generated and persisted, applied only at finalization", state: rootHashEmpty, wantOK: true, wantSet: false, wantHash: rootHashEmpty},
 		{name: "unknown — fail closed, nothing written", state: rootHashUnknown, wantOK: false, wantSet: false, wantHash: rootHashUnknown},
 	}
 	for _, tc := range cases {

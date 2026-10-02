@@ -205,7 +205,12 @@ func TestEmptyHashRouterDoesNotAcceptAFreshLoginAsProof(t *testing.T) {
 		t.Fatal("fixture is wrong: an empty-hash router must accept any password")
 	}
 
-	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); ok {
+	// Two-phase contract: the write happens at finalization, so that is where a
+	// router left holding an EMPTY hash must stop the deploy.
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
+		t.Fatalf("ensureRootCredential failed on a fresh deploy: %s", job.Error)
+	}
+	if finalizeRootCredential(job, fr.run, fr.proveLogin) {
 		t.Fatal("the deploy walked past a router whose root password hash is still EMPTY (a fresh OpenWrt accepts any password, so an auth attempt proves nothing)")
 	}
 	if job.Status != "failed" || job.Steps[4].Status != "failed" {
@@ -225,12 +230,18 @@ func TestGeneratedCredentialOnAnEmptyRouterNeedsNoLoginProof(t *testing.T) {
 	job := newJob("192.168.8.1")
 	fr := &fakeCredentialRouter{hash: rootHashEmpty, passwdOut: "passwd: password changed\n"}
 
-	pw, ok := ensureRootCredential(job, fr.run, fr.proveLogin, "")
-	if !ok {
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
 		t.Fatalf("ensureRootCredential failed on a fresh router: %s", job.Error)
 	}
+	job.mu.Lock()
+	pw := job.pendingRootPassword
+	job.mu.Unlock()
 	if pw == "" || len(pw) != rootPasswordLength {
 		t.Fatalf("generated credential = %q, want %d characters", pw, rootPasswordLength)
+	}
+	// The set is deferred to finalization, after the deploy's last gate.
+	if !finalizeRootCredential(job, fr.run, fr.proveLogin) {
+		t.Fatalf("finalizeRootCredential failed on a fresh router: %s", job.Error)
 	}
 	if fr.hash != rootHashSet {
 		t.Fatalf("router hash = %q, want %q", fr.hash, rootHashSet)
