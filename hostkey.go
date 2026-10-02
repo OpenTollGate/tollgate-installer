@@ -487,9 +487,18 @@ func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 		// 1. Explicit pin for this run (--trust-host-key / env).
 		if want := hostKeyTrust(); want != "" {
 			if !pinnedKeyMatches(want, key) {
+				// Name the PIN's key type too. Without it the operator is shown two
+				// unlabelled fingerprints and has to guess which is which — the
+				// shape of the 2026-10-02 loop, where a pin taken for the RSA key
+				// could never satisfy a router now presenting ed25519, and the
+				// message never said the pin itself was the wrong key type.
+				hint := ""
+				if pinType, _ := parsePin(want); pinType != "" && pinType != hostKeyTypeName(key) {
+					hint = fmt.Sprintf(" The pin is a %s key while the router presented its %s key — one router serves one host key per algorithm, so these are two different keys, and only the %s one can match this handshake.", pinType, hostKeyTypeName(key), hostKeyTypeName(key))
+				}
 				return recordHostKeyRefusal(ip, fmt.Sprintf(
-					"router SSH host key mismatch: %s presents a %s key %s but %s pins %s and no credentials were sent. Check the fingerprint (and its key type) on the router's console and pass the one it actually prints.",
-					hostname, hostKeyTypeName(key), fingerprint, "--trust-host-key", want), fingerprint)
+					"router SSH host key mismatch: %s presents a %s key %s but %s pins %s and no credentials were sent.%s Verify the %s key on the router's console and pass the fingerprint it actually prints.",
+					hostname, hostKeyTypeName(key), fingerprint, "--trust-host-key", want, hint, hostKeyTypeName(key)), fingerprint)
 			}
 			if err := rememberHostKey(hostname, key); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not remember %s in %s: %v\n", fingerprint, storeDescription(knownHostsPath()), err)
@@ -510,12 +519,42 @@ func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 				}
 				if err := checker(hostname, remote, key); err != nil {
 					var keyErr *knownhosts.KeyError
-					if errors.As(err, &keyErr) && len(keyErr.Want) > 0 {
-						known := make([]string, 0, len(keyErr.Want))
-						for _, k := range keyErr.Want {
-							known = append(known, fmt.Sprintf("%s %s", hostKeyTypeName(k.Key), ssh.FingerprintSHA256(k.Key)))
+					if errors.As(err, &keyErr) {
+						if len(keyErr.Want) > 0 {
+							known := make([]string, 0, len(keyErr.Want))
+							sameType := false
+							for _, k := range keyErr.Want {
+								known = append(known, fmt.Sprintf("%s %s", hostKeyTypeName(k.Key), ssh.FingerprintSHA256(k.Key)))
+								if hostKeyTypeName(k.Key) == hostKeyTypeName(key) {
+									sameType = true
+								}
+							}
+							// A store entry of a DIFFERENT key type is not a changed
+							// key. OpenWrt's dropbear serves one host key per
+							// algorithm, so the same router legitimately answers with
+							// its rsa key when the negotiated algorithm changes — and
+							// x/crypto hands us those cross-type keys in Want. Running
+							// that through the CHANGED message told an operator who had
+							// trusted this very router "either the router was
+							// re-flashed/re-keyed or something on the LAN is
+							// impersonating it" (measured 2026-10-02). Only a stored
+							// key of the SAME type with a different fingerprint is the
+							// MITM signature.
+							if !sameType {
+								return recordHostKeyRefusal(ip, differentKeyTypeMessage(hostname, hostKeyTypeName(key), fingerprint, known, store), fingerprint)
+							}
+							return recordHostKeyRefusal(ip, changedHostKeyMessage(hostname, hostKeyTypeName(key), fingerprint, known, store), fingerprint)
 						}
-						return recordHostKeyRefusal(ip, changedHostKeyMessage(hostname, hostKeyTypeName(key), fingerprint, known, store), fingerprint)
+						// An empty Want does NOT mean "unknown host": x/crypto only
+						// offers the keys it holds FOR THE ALGORITHM JUST PRESENTED
+						// (knownhosts.go indexes knownKeys by key type), so a host
+						// stored under ed25519 that presents its rsa key lands here.
+						// Reporting that as "not in the trust store" told an operator
+						// who HAD trusted the router that nothing was trusted — the
+						// 2026-10-02 defect. Say what the store actually holds.
+						if stored := storeKeyEntriesForHost(store, hostname); len(stored) > 0 {
+							return recordHostKeyRefusal(ip, differentKeyTypeMessage(hostname, hostKeyTypeName(key), fingerprint, stored, store), fingerprint)
+						}
 					}
 					return recordHostKeyRefusal(ip, untrustedHostKeyMessage(hostname, hostKeyTypeName(key), fingerprint, store), fingerprint)
 				}
@@ -526,6 +565,69 @@ func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 		// 3. Unseen host and nothing pinned: fail safe.
 		return recordHostKeyRefusal(ip, untrustedHostKeyMessage(hostname, hostKeyTypeName(key), fingerprint, store), fingerprint)
 	}
+}
+
+// storeKeyEntriesForHost lists what the trust store holds for host, as
+// "type fingerprint", across EVERY key type — not just the one the router just
+// presented.
+//
+// Hashed ("|1|…") store lines cannot be attributed to a host without their
+// per-line salt and are therefore not listed; they are still enforced by the
+// checker, and verifyStoreResolvesTo is what surfaces them when they shadow a
+// write.
+func storeKeyEntriesForHost(path, host string) []string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	for _, line := range strings.Split(string(body), "\n") {
+		if !knownHostsLineCovers(line, host) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue // a comment, or a line without a key
+		}
+		// The store is OpenSSH known_hosts layout: "<pattern> <keytype> <base64>
+		// [comment]". Dropping the pattern leaves exactly an authorized-key line.
+		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.Join(fields[1:], " ")))
+		if err != nil {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s %s", hostKeyTypeName(pub), ssh.FingerprintSHA256(pub)))
+	}
+	return out
+}
+
+// differentKeyTypeMessage reports a host that IS in the store, under a key type
+// other than the one it just presented. A different key type is not a changed
+// key: OpenWrt's dropbear serves one host key per algorithm, so the same router
+// legitimately answers with a different key when the negotiated algorithm
+// changes. This still refuses and still demands out-of-band verification — it
+// just stops pretending the host is unknown, which sent the operator hunting for
+// an impostor instead of at the key their own store already held.
+func differentKeyTypeMessage(host, keyType, fingerprint string, stored []string, store string) string {
+	fmt.Fprintf(os.Stderr, `
+================================================================================
+ ROUTER SSH HOST KEY TYPE NOT IN THE TRUST STORE — CONNECTION REFUSED
+================================================================================
+  router      : %s
+  presented   : %s %s
+  store holds : %s
+This host IS in the trust store (%s) — but not under the key type it just
+presented. A different key type is not a changed key. Verify the %s key on the
+router's own console, for example:
+  ssh-keygen -lf /etc/dropbear/dropbear_%s_host_key.pub
+If it matches, trust it explicitly:
+  --trust-host-key %s
+  TOLLGATE_TRUST_HOST_KEY=%s   (for the curl|bash launcher)
+================================================================================
+`, host, keyType, fingerprint, strings.Join(stored, ", "), storeDescription(store), keyType, keyType, fingerprint, fingerprint)
+
+	return fmt.Sprintf(
+		"router SSH host key type not trusted: %s presents a %s key %s, and the trust store holds %s for this host. This is a different key TYPE, not a changed key — verify the %s fingerprint on the router's console, then re-run with --trust-host-key %s (curl|bash: prefix the command with %s=%s).",
+		host, keyType, fingerprint, strings.Join(stored, ", "), keyType, fingerprint, trustHostKeyEnv, fingerprint)
 }
 
 // trustHostKeyForHost verifies that ip presents exactly the fingerprint the
