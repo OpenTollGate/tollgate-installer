@@ -650,6 +650,17 @@ func trustHostKeyForHost(ip, fingerprint string) (ssh.PublicKey, error) {
 	config := &ssh.ClientConfig{
 		User:    "root",
 		Timeout: 10 * time.Second,
+		// WHY (2026-10-02): this dial had no HostKeyAlgorithms, so x/crypto fell
+		// back to its own preference and negotiated the router's RSA key — while
+		// the fingerprint the operator is shown (and the one this function is
+		// then asked to verify) comes from the scan path, which is ed25519-first.
+		// The comparison could therefore never match on a dropbear box serving
+		// both key types, and the Trust button returned 502 forever:
+		//   "router SSH host key mismatch: … presents SHA256:rsKww… but
+		//    SHA256:CSPcG8Gu… was supplied and nothing was trusted."
+		// Every dial in this package shares ONE preference, as the
+		// sshHostKeyAlgorithms docstring already claims.
+		HostKeyAlgorithms: sshHostKeyAlgorithms,
 		HostKeyCallback: func(hostname string, remote net.Addr, presented ssh.PublicKey) error {
 			got := ssh.FingerprintSHA256(presented)
 			if !sameFingerprint(fingerprint, got) {
