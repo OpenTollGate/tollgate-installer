@@ -877,6 +877,23 @@ function showTrustHint(r) {
   }
 }
 
+// clearTrustHint drops the refusal banner, the Trust button and the cached
+// fingerprint together. One helper, because half-clearing is itself a defect:
+// hiding the text while leaving the button on screen offers to trust a router
+// that no longer needs it, and clearing the text without the cached value makes
+// the next confirm dialog ask about a fingerprint for a router whose key was
+// already accepted.
+function clearTrustHint() {
+  const el = document.getElementById('trust-hint');
+  if (el) {
+    el.textContent = '';
+    el.classList.add('hidden');
+  }
+  const btn = document.getElementById('trust-btn');
+  if (btn) btn.classList.add('hidden');
+  window._trustFingerprint = '';
+}
+
 // isHostKeyRefusal reports whether an error string is the router host-key
 // refusal rather than a scan/password failure. Both the refusal text and the
 // launcher's instruction name --trust-host-key; matching on that (or the
@@ -936,9 +953,24 @@ async function trustHostKey() {
       }
       return;
     }
-    // Trusted: re-identify (which clears the hint) and restart the pre-download
-    // that selection-time pre-staging had to skip while the key was untrusted.
+    // Trusted. Drop the refusal FIRST: it describes a state that is no longer
+    // true, and the follow-up identify can legitimately fail (auth, wrong
+    // password) — it must never be what decides whether the operator sees that
+    // the click worked. Reported 2026-10-02: a 200 {"trusted":true} left the
+    // "not trusted" banner and its button on screen, which reads as the Trust
+    // button doing nothing at all.
+    clearTrustHint();
     await refreshRouterName();
+    // Positive confirmation, but only when the identify did not just surface a
+    // NEW refusal (the router is presenting a different key now): that one must
+    // stand.
+    const hint = document.getElementById('trust-hint');
+    if (hint && !hint.textContent && data && data.store) {
+      hint.textContent = 'Router host key trusted and remembered in ' + data.store + '.';
+      hint.classList.remove('hidden');
+    }
+    // Restart the pre-download that selection-time pre-staging had to skip while
+    // the key was untrusted.
     schedulePreStage();
   } catch (e) {
     const hint = document.getElementById('trust-hint');
@@ -965,7 +997,18 @@ async function refreshRouterName() {
     const info = await resp.json();
     if (!info || info.error) return;
     const r = detectedRouters.find(x => x.ip === ip);
-    if (r) Object.assign(r, info);
+    if (r) {
+      Object.assign(r, info);
+      // The server omits ssh_refusal when this connect SUCCEEDED (sshConnect
+      // forgets the refusal at the start of every attempt), and Object.assign
+      // does NOT delete keys the response omits — so a stale refusal survived
+      // the very connect that disproved it and was re-rendered on every scan.
+      // The response is authoritative about the refusal: absent means none.
+      if (!info.ssh_refusal) {
+        delete r.ssh_refusal;
+        r.ssh_fingerprint = '';
+      }
+    }
     showTrustHint(r || info);
     const opt = Array.from(document.getElementById('router-select').options).find(o => o.value === ip);
     if (opt) {
