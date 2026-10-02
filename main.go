@@ -178,12 +178,22 @@ type Job struct {
 	// generatedPassword is set ONLY when the router had no root credential
 	// and none was supplied, so the deploy had to create one (see
 	// ensureRootCredential). It is served to the operator ONCE, on the first
-	// read of the COMPLETED job (see handleStatus), and is never written to
-	// disk and never written to the log. Guarded by mu.
+	// read of the job in a TERMINAL state (done OR failed — see handleStatus),
+	// and is never written to the log. The VALUE is not persisted; a copy of it
+	// is written to the recovery file named by credentialFile BEFORE it is
+	// applied to the router, so a missed one-shot read is never a lockout.
+	// Guarded by mu.
 	generatedPassword string
 	// generatedPasswordServed records that the one-shot credential above has
 	// already been handed out, so it can never be served twice. Guarded by mu.
 	generatedPasswordServed bool
+	// credentialFile is where the generated credential was written as a
+	// last-resort recovery record (persistRootCredential), or "" when nothing
+	// was written. This is a PATH, not a secret, so unlike the value above it is
+	// served on EVERY /api/status read: the UI can name it the moment the file
+	// exists, and it still names it after the one-shot value has been consumed.
+	// Guarded by mu.
+	credentialFile string
 	// stageCache holds pre-downloaded deploy assets keyed by the exact
 	// asset URL, populated by the PreStage phase (stageAssets) so the
 	// flash/install steps can consume staged bytes without live network.
@@ -263,7 +273,9 @@ func (j *Job) addLog(msg string) {
 // as a copyable callout on the SUCCESS view, and — because a deploy can fail
 // after this credential was already set on the router — on the FAILURE view too
 // (pinFailedGeneratedCredential). Otherwise the router would hold a credential
-// the operator never sees: a lockout.
+// the operator never sees: a lockout. A copy is also persisted to an owner-only
+// recovery file BEFORE the router is re-keyed (see persistRootCredential), so
+// the one-shot screen is no longer the only way to recover the value.
 //
 // The value is deliberately NOT written to the deploy log: job.Log is part of
 // EVERY /api/status response, so a "ROOT PASSWORD: …" line would re-serve the
@@ -276,7 +288,19 @@ func (j *Job) setGeneratedPassword(pw string) {
 	j.generatedPassword = pw
 	j.mu.Unlock()
 	j.addLog("Router had NO root password and none was supplied — generated a one-time credential.")
-	j.addLog("ROOT PASSWORD: generated — it is shown ONCE, on this deploy's final screen (success or failure). Store it in your password manager NOW; it cannot be recovered.")
+	j.addLog("ROOT PASSWORD: generated — it is shown ONCE, on this deploy's final screen (success or failure), and a copy is saved to the credential file named above. Store it in your password manager NOW.")
+}
+
+// setCredentialFile records where the generated credential was persisted, and
+// tells the operator in the log. The PATH is safe to log and to serve (it is
+// not the secret); naming it matters because the log is replayed by every
+// status poll, so it is the one piece of this information that survives a
+// missed one-shot read — the operator can still find the password afterwards.
+func (j *Job) setCredentialFile(path string) {
+	j.mu.Lock()
+	j.credentialFile = path
+	j.mu.Unlock()
+	j.addLog("A copy of the generated root credential was saved to " + path + " (mode 600) — recoverable if you close this page before copying it.")
 }
 
 func (j *Job) setStep(i int, status, detail string) {
@@ -1417,11 +1441,12 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		Log               []LogEntry `json:"log"`
 		Error             string     `json:"error,omitempty"`
 		GeneratedPassword string     `json:"generated_password,omitempty"`
+		CredentialFile    string     `json:"credential_file,omitempty"`
 		ProgressCurrent   int        `json:"progressCurrent"`
 		ProgressTotal     int        `json:"progressTotal"`
 		ProgressLabel     string     `json:"progressLabel,omitempty"`
 	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, generatedPassword,
-		job.progressCurrent, job.progressTotal, job.progressLabel}
+		job.credentialFile, job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")

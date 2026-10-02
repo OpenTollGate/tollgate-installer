@@ -217,6 +217,26 @@ The tollgate-wrt `.ipk`/`.apk` ships the captive portal
 nftables enforcement rules — the wizard only installs the package and points
 nodogsplash/uhttpd at it.
 
+### A generated root password is saved before it is set
+
+If the router has **no** root password and you did not type one, the wizard
+generates a 20-character credential and sets it (step 3 above). It is shown
+**once** on the final screen — and, because a missed one-shot screen would leave
+you locked out of a router whose only previous access was an empty root
+password, a copy is written to a recovery file **before** it is applied:
+
+```sh
+~/.tollgate-root-credentials     # mode 0600, appended — one line per deploy
+# <RFC3339 time> <tab> <router address> <tab> <password>
+```
+
+Override the location with `TOLLGATE_CREDENTIAL_FILE`. Its permissions are set
+to 0600 on creation and re-applied on every write, so a umask cannot publish a
+router's root password to other local users, and earlier entries are never
+rewritten. The deploy log names the path (never the password — the log is
+returned in full by every status poll), so the credential stays findable even
+after the one-shot screen has been missed.
+
 ### The router's device identity — one code, minted once
 
 Branding resolves **one** four-character code on the router and builds every
