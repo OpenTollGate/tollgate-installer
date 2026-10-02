@@ -7,3 +7,6 @@ DLEQ-FIX-PLAN.md
 node_modules
 test-results
 *.png
+# Playwright is borrowed from the test-automation repo for the UI test.
+/node_modules
+/dist

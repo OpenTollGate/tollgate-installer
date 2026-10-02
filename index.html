@@ -894,6 +894,22 @@ function clearTrustHint() {
   window._trustFingerprint = '';
 }
 
+// showError is the ONE way this page reports a failure to the operator.
+//
+// It has to exist: the page calls showError() on its failure paths — including
+// the deploy request failing — and the function was never defined anywhere. A
+// call to an undefined name is not a syntax error, so nothing caught it: the
+// page parsed, every string assertion passed, and at runtime it threw a
+// ReferenceError that left the operator looking at a button that did nothing.
+// (Found by the Playwright UI run, which asserted that cancelling the host-key
+// confirmation made the error view visible — it did not.)
+function showError(msg) {
+  const detail = document.getElementById('error-detail');
+  if (detail) detail.textContent = msg || 'Something went wrong.';
+  const view = document.getElementById('error-view');
+  if (view) view.classList.remove('hidden');
+}
+
 // ensureRouterHostKeyTrusted folds the host-key decision into whatever action
 // needs the router's password, so trusting is not a separate errand the operator
 // has to notice and perform. It returns false ONLY when the action must not
@@ -1319,8 +1335,7 @@ async function pollStatus(jobId) {
     pinFailedGeneratedCredential(job.generated_password);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
-      document.getElementById('error-detail').textContent = job.error || 'Unknown error. Check the log above.';
-      document.getElementById('error-view').classList.remove('hidden');
+      showError(job.error || 'Unknown error. Check the log above.');
     }, 1500);
   }
 }
