@@ -894,6 +894,71 @@ function clearTrustHint() {
   window._trustFingerprint = '';
 }
 
+// ensureRouterHostKeyTrusted folds the host-key decision into whatever action
+// needs the router's password, so trusting is not a separate errand the operator
+// has to notice and perform. It returns false ONLY when the action must not
+// continue: the operator declined the confirmation, or the trust itself failed.
+//
+// Nothing to confirm returns true, so a router already trusted — or one whose key
+// is in the store from an earlier run — goes straight through.
+//
+// It asks the SERVER for the current state instead of reading the page's cache.
+// A cached refusal outlives the condition it described (that is the whole reason
+// the banner had to be cleared explicitly), and the server omits ssh_refusal
+// exactly when a connect succeeded — so "absent" is the authoritative "nothing to
+// confirm". The fingerprint comes from the field the refusal already carries, so
+// no prose is ever parsed.
+async function ensureRouterHostKeyTrusted(ip, password) {
+  let info = null;
+  try {
+    const resp = await fetch('/api/identify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, password: password }),
+    });
+    info = await resp.json();
+  } catch (e) {
+    // Our own server could not be asked. Do NOT invent a confirmation from a
+    // stale cache; let the action run and report whatever it finds.
+    return true;
+  }
+  const refusal = (info && info.ssh_refusal) ? info.ssh_refusal : '';
+  const fingerprint = (info && info.ssh_fingerprint) ? info.ssh_fingerprint : '';
+  if (!refusal || !fingerprint) return true;
+
+  const ok = window.confirm(
+    "Trust this router's SSH host key, then continue?\n\n" +
+    fingerprint + "\n\n" +
+    "Verify this exact fingerprint on the router's console first, e.g.\n" +
+    "  ssh-keygen -lf /etc/dropbear/dropbear_ed25519_host_key.pub\n\n" +
+    "It is remembered, so you will not be asked again for this router.\n\n" +
+    "Trusting a key you have not verified would send your router password to " +
+    "an impostor on the LAN.");
+  if (!ok) {
+    showError("Cancelled: the router's SSH host key was not confirmed. Nothing was sent to the router.");
+    return false;
+  }
+
+  try {
+    const resp = await fetch('/api/trust-host-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, fingerprint: fingerprint }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data || data.trusted !== true) {
+      showError((data && data.error) ? data.error :
+        "Could not trust the router's host key. Nothing was sent to the router.");
+      return false;
+    }
+  } catch (e) {
+    showError("Could not reach the installer to record the trust decision. Nothing was sent to the router.");
+    return false;
+  }
+  clearTrustHint();
+  return true;
+}
+
 // isHostKeyRefusal reports whether an error string is the router host-key
 // refusal rather than a scan/password failure. Both the refusal text and the
 // launcher's instruction name --trust-host-key; matching on that (or the
@@ -1073,6 +1138,12 @@ async function startDeploy() {
   const lnurl = document.getElementById('lnurl').value.trim();
 
   if (!ip || !validLightning(lnurl)) return;
+
+  // The host-key decision belongs to the action that sends the password. Ask
+  // ONCE, here, naming the fingerprint — instead of letting the job fail later
+  // and making the operator find a separate Trust button, trust, and then press
+  // Deploy again. A router already trusted passes straight through.
+  if (!(await ensureRouterHostKeyTrusted(ip, password))) return;
 
   document.getElementById('select-view').classList.add('hidden');
   document.getElementById('deploy-view').classList.remove('hidden');
