@@ -1,6 +1,8 @@
 package main
 
 import (
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
@@ -266,5 +268,143 @@ func TestMissingAssetRefusalNamesTagAndArch(t *testing.T) {
 		if releaseTagFromURL(u) != feedReleaseTag {
 			t.Errorf("refusal list carries %q, not the requested tag %s", u, feedReleaseTag)
 		}
+	}
+}
+
+// TestStep6FallbackDecisionLogIsPreDownloadWording is the STATIC guard for the
+// e23633e follow-up (C2-I-02): deploy step 6's candidate-selection line runs
+// BEFORE any download has been attempted, so it may not publish the list-level
+// refusal wording — githubFallbackSelection's "requested release … is not
+// downloadable" — which is only knowable once every candidate has actually
+// failed. e23633e removed that wording from the pre-stage report; step 6 still
+// published it eagerly, so a healthy non-opted-in aarch64 deploy logged "is not
+// downloadable" while its feed asset downloaded and installed cleanly.
+//
+// The guard pins the shape that keeps the two apart: the selection line goes
+// through fallbackSelectionLogLine (pre-download wording), while the FAIL-loud
+// detail keeps the list-level refusal. Re-inlining `fallbackRefusal.Error()`
+// into the selection log would otherwise only show up in a healthy deploy's
+// operator log, where no test reads it.
+func TestStep6FallbackDecisionLogIsPreDownloadWording(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "deploy.go", deployGoSrc, 0)
+	if err != nil {
+		t.Fatalf("parsing deploy.go: %v", err)
+	}
+
+	run := funcBodyText(t, fset, f, "runDeployment")
+	if !strings.Contains(run, "fallbackSelectionLogLine(") {
+		t.Errorf("deploy step 6 no longer logs its fallback decision through fallbackSelectionLogLine " +
+			"— the selection-time line must be built from pre-download wording")
+	}
+	if strings.Contains(run, "fallbackRefusal.Error()") {
+		t.Errorf("deploy step 6 logs fallbackRefusal.Error() at candidate-selection time: that text " +
+			"asserts the requested release \"is not downloadable\" before anything has been " +
+			"downloaded — the defect this card fixes")
+	}
+
+	selection := funcBodyText(t, fset, f, "fallbackSelectionLogLine")
+	if !strings.Contains(selection, "fallbackSuppressedReason(") {
+		t.Errorf("fallbackSelectionLogLine no longer builds the selection-time line from " +
+			"fallbackSuppressedReason — the pre-download wording has lost its only source")
+	}
+	if strings.Contains(selection, "refusal.Error()") {
+		t.Errorf("fallbackSelectionLogLine publishes the list-level refusal text verbatim: that is " +
+			"the \"is not downloadable\" claim, only established after a download fails")
+	}
+
+	// The other half of the split: fail-loud time DOES publish the list-level
+	// refusal (tag, arch, older version, opt-in) in the step detail.
+	fail := funcBodyText(t, fset, f, "refuseMissingRequestedRelease")
+	if !strings.Contains(fail, "refusal.Error()") {
+		t.Errorf("refuseMissingRequestedRelease no longer publishes the refusal detail: the " +
+			"fail-loud path must keep naming the requested tag and why it refused")
+	}
+}
+
+// TestStep6SelectionLogKeepsThePreDownloadWording pins acceptance criterion 1 of
+// the C2-I-02 follow-up at the unit level: on the DEFAULT path (no
+// --allow-fallback, no TOLLGATE_ALLOW_GITHUB_FALLBACK=1) for an arch with a
+// pinned fallback, the line step 6 logs at candidate-selection time must not
+// assert that the requested release "is not downloadable". Nothing has been
+// downloaded when that line is emitted, and on this path the feed asset is
+// normally downloaded and installed cleanly immediately afterwards — which is
+// exactly how a healthy aarch64 deploy came to print that claim.
+//
+// The wording is asserted on BOTH strings, so the fix cannot be "delete the
+// sentence": the list-level refusal must keep it, because that is what the
+// FAIL-loud gate publishes once a download really has failed (criterion 2).
+func TestStep6SelectionLogKeepsThePreDownloadWording(t *testing.T) {
+	orig := feedReleaseTag
+	defer func() { feedReleaseTag = orig }()
+	t.Setenv(githubFallbackEnv, "") // the default: no opt-in
+
+	const arch = pkgFallbackTestArch // aarch64_cortex-a53, the arch with a pinned fallback
+	fbURL := githubFallbackURL(arch, ".ipk")
+	if fbURL == "" {
+		t.Fatalf("no GitHub fallback pinned for %s/.ipk — fixture is stale", arch)
+	}
+
+	candidates, refusal := pkgCandidateURLsWithFallback(arch, ".ipk", githubFallbackAllowed())
+	if refusal == nil || len(candidates) == 0 {
+		t.Fatalf("pkgCandidateURLsWithFallback(%s, .ipk, no opt-in) = (%v, %v), want the feed list plus a refusal",
+			arch, candidates, refusal)
+	}
+	// The premise the line is asserted on: this is the HEALTHY path — the
+	// requested release's own asset is the only candidate, and it is what the
+	// deploy goes on to download.
+	if len(candidates) != 1 || releaseTagFromURL(candidates[0]) != feedReleaseTag {
+		t.Fatalf("candidates = %v, want only the feed asset for the requested tag %s", candidates, feedReleaseTag)
+	}
+
+	line := fallbackSelectionLogLine(arch, ".ipk", candidates, refusal)
+	if line == "" {
+		t.Fatal("step 6 logs nothing about a withheld fallback: the operator cannot tell why the older asset was not tried")
+	}
+	if strings.Contains(line, "is not downloadable") {
+		t.Errorf("step 6's selection line claims the requested release is not downloadable before any download was attempted:\n%s", line)
+	}
+	for _, want := range []string{feedReleaseTag, arch, "0.5.0", "allow-fallback", fbURL} {
+		if !strings.Contains(line, want) {
+			t.Errorf("selection line does not name %q:\n%s", want, line)
+		}
+	}
+
+	// Criterion 2: the refusal the fail-loud gate publishes still carries the
+	// list-level wording and all four facts.
+	detail := refusal.Error()
+	for _, want := range []string{feedReleaseTag, arch, "0.5.0", "allow-fallback"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("refusal detail does not name %q:\n%s", want, detail)
+		}
+	}
+	if !strings.Contains(strings.ToLower(detail), "not downloadable") {
+		t.Errorf("the list-level refusal lost its \"not downloadable\" wording — it is the text the fail-loud path is reviewed for:\n%s", detail)
+	}
+
+	// Opted in: the line names the version that WILL be installed instead of
+	// the requested one, and still makes no availability claim.
+	opted, err := pkgCandidateURLsWithFallback(arch, ".ipk", true)
+	if err != nil || len(opted) < 2 {
+		t.Fatalf("opted-in candidates = %v, %v; want the feed asset plus the fallback", opted, err)
+	}
+	optLine := fallbackSelectionLogLine(arch, ".ipk", opted, nil)
+	for _, want := range []string{"0.5.0", fbURL, "opt-in"} {
+		if !strings.Contains(optLine, want) {
+			t.Errorf("opted-in selection line does not name %q:\n%s", want, optLine)
+		}
+	}
+	if strings.Contains(optLine, "is not downloadable") {
+		t.Errorf("opted-in selection line makes an availability claim:\n%s", optLine)
+	}
+
+	// An arch with no pinned fallback withholds nothing, so there is nothing to
+	// report — and no line may claim otherwise.
+	plain, plainRefusal := pkgCandidateURLsWithFallback("mipsel_24kc", ".ipk", false)
+	if plainRefusal != nil {
+		t.Fatalf("no-fallback arch produced a refusal: %v", plainRefusal)
+	}
+	if got := fallbackSelectionLogLine("mipsel_24kc", ".ipk", plain, plainRefusal); got != "" {
+		t.Errorf("step 6 logs %q for an arch with no pinned fallback, want no line at all", got)
 	}
 }
