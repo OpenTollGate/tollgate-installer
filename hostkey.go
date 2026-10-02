@@ -659,7 +659,7 @@ func trustHostKeyForHost(ip, fingerprint string) (ssh.PublicKey, error) {
 		//   "router SSH host key mismatch: … presents SHA256:rsKww… but
 		//    SHA256:CSPcG8Gu… was supplied and nothing was trusted."
 		// Every dial in this package shares ONE preference, as the
-		// sshHostKeyAlgorithms docstring already claims.
+		//    sshHostKeyAlgorithms docstring already claims.
 		HostKeyAlgorithms: sshHostKeyAlgorithms,
 		HostKeyCallback: func(hostname string, remote net.Addr, presented ssh.PublicKey) error {
 			got := ssh.FingerprintSHA256(presented)

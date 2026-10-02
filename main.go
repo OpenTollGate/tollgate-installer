@@ -85,6 +85,12 @@ var (
 	// download fails the deploy instead of substituting an older package.
 	allowFallback = flag.Bool("allow-fallback", false,
 		"allow the older GitHub release fallback when the requested feed release is unavailable")
+	// sshPort overrides the SSH port dialled on the router. Production always
+	// dials 22 (see sshDialPort); the end-to-end harness points the REAL binary
+	// at a fixture dropbear on an ephemeral port, so the whole
+	// scan -> refusal -> Trust -> remember path can be driven without hardware
+	// and without needing a privileged port 22 on the test host.
+	sshPort    = flag.String("ssh-port", "22", "SSH port to dial on the router (default 22; the E2E harness points this at a fixture)")
 	listenAddr string
 )
 
@@ -1658,6 +1664,7 @@ func allRadiosUp(statusJSON string) bool {
 
 func main() {
 	flag.Parse()
+	sshDialPort = *sshPort
 	listenAddr = listenAddress(*listenBind, *listenPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/scan", handleScan)
