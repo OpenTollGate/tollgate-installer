@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -13,6 +14,60 @@ import (
 // only so the router-trust tests can point the real sshConnect path at an
 // in-process SSH server; production always uses 22.
 var sshDialPort = "22"
+
+// sshConnectErrors records WHY the most recent connect attempt to an address
+// failed, and whether a password was offered on it.
+//
+// WHY (2026-10-02): sshConnect returns only a *ssh.Client, so the dial/auth error
+// was discarded and sshConnectFailureMessage could say nothing but its generic
+// fallback. The operator report is the cost of that —
+//
+//	XHR POST http://localhost:8099/api/wifi-scan  [HTTP/1.1 502 Bad Gateway]
+//	{"error":"cannot connect to router via SSH"}
+//
+// — which names neither the cause nor the action. A wrong password, a router
+// with a root password that was never typed (the Repeater tab scans
+// automatically), nothing listening on :22 and an unroutable address were ALL
+// that same sentence, so the operator had no way to tell a fixable problem from
+// a broken one.
+var (
+	sshConnectErrorsMu sync.Mutex
+	sshConnectErrors   = map[string]sshConnectError{}
+)
+
+// sshConnectError is one recorded failure. passwordSupplied is what separates
+// "you did not give a password" from "the password you gave was refused" — the
+// same dial error, two different operator actions.
+type sshConnectError struct {
+	err              error
+	passwordSupplied bool
+}
+
+// forgetSSHConnectError drops the recorded failure for ip. Called at the START of
+// every attempt, so a recorded cause can only ever describe the LATEST one — a
+// successful connect therefore clears it and a stale message cannot outlive the
+// condition it described.
+func forgetSSHConnectError(ip string) {
+	sshConnectErrorsMu.Lock()
+	delete(sshConnectErrors, ip)
+	sshConnectErrorsMu.Unlock()
+}
+
+func recordSSHConnectError(ip string, err error, passwordSupplied bool) {
+	sshConnectErrorsMu.Lock()
+	sshConnectErrors[ip] = sshConnectError{err: err, passwordSupplied: passwordSupplied}
+	sshConnectErrorsMu.Unlock()
+}
+
+func lastSSHConnectError(ip string) (error, bool) {
+	sshConnectErrorsMu.Lock()
+	defer sshConnectErrorsMu.Unlock()
+	e, ok := sshConnectErrors[ip]
+	if !ok {
+		return nil, false
+	}
+	return e.err, e.passwordSupplied
+}
 
 // sshHostKeyAlgorithms pins the ORDERED host-key preference for every SSH
 // dial in this package.
@@ -47,6 +102,7 @@ var sshHostKeyAlgorithms = []string{
 // below is never transmitted to a host the operator has not trusted.
 func sshConnect(ip, password string) *ssh.Client {
 	forgetHostKeyRefusal(ip)
+	forgetSSHConnectError(ip)
 	config := &ssh.ClientConfig{
 		User:              "root",
 		HostKeyCallback:   routerHostKeyCallback(ip),
@@ -69,6 +125,10 @@ func sshConnect(ip, password string) *ssh.Client {
 
 	client, err := ssh.Dial("tcp", net.JoinHostPort(ip, sshDialPort), config)
 	if err != nil {
+		// Keep WHY it failed: the caller renders this to the operator (see
+		// sshConnectFailureMessage). Discarding it here is what made every
+		// non-host-key failure the same unactionable sentence.
+		recordSSHConnectError(ip, err, password != "")
 		return nil
 	}
 	return client

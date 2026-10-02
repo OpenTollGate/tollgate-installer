@@ -415,7 +415,44 @@ func sshConnectFailureMessage(ip, fallback string) string {
 	if r := lastHostKeyRefusal(ip); r != "" {
 		return r
 	}
+	if cause := describeSSHConnectFailure(ip); cause != "" {
+		return fallback + " — " + cause
+	}
 	return fallback
+}
+
+// describeSSHConnectFailure turns the recorded dial/auth error into ONE
+// actionable sentence, or "" when nothing was recorded (a successful connect, or
+// a failure that was not a connect at all).
+//
+// The three classes are deliberately separate because the operator's next move
+// differs for each: supply/verify the root password, enable SSH or fix the
+// address, or fix reachability. Collapsing them is the defect this exists to
+// remove.
+func describeSSHConnectFailure(ip string) string {
+	err, passwordSupplied := lastSSHConnectError(ip)
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	target := net.JoinHostPort(ip, sshDialPort)
+	switch {
+	case strings.Contains(msg, "unable to authenticate"):
+		if !passwordSupplied {
+			return fmt.Sprintf("the router at %s refused the SSH login: no password was supplied and it does not accept an empty root password — enter the router's root password and retry", target)
+		}
+		return fmt.Sprintf("the router at %s refused the SSH login as root — check the root password", target)
+	case strings.Contains(msg, "connection refused"):
+		return fmt.Sprintf("nothing is accepting SSH at %s — check the router's address, and that SSH is enabled on it", target)
+	case strings.Contains(msg, "i/o timeout"):
+		return fmt.Sprintf("no SSH response from %s (timed out) — check the router's address and that this machine is on its LAN", target)
+	case strings.Contains(msg, "no route to host"), strings.Contains(msg, "network is unreachable"):
+		return fmt.Sprintf("%s is not reachable from this machine — check the router's address and the network connection", target)
+	default:
+		// An unrecognised failure is still more useful than nothing, and it keeps
+		// x/crypto's host-key alarms we do not map visible to the operator.
+		return msg
+	}
 }
 
 // storeDescription names the store in operator-facing text.
