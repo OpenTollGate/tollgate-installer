@@ -4,7 +4,14 @@
 Not a mock-up: it runs the tests itself, captures the actual stdout, and renders
 that output frame by frame. If the tests fail, the video shows the failure.
 
-Usage: python3 make-e2e-video.py <out.mp4>
+Usage:
+    python3 make-e2e-video.py <out.mp4>                    # run the tests, render them
+    python3 make-e2e-video.py <out.mp4> --from-log <file>  # render an existing run log
+
+The `--from-log` form exists because the renderer is its own process environment:
+a run that passes in the shell can behave differently under it (timeouts under
+load, a different PATH). Rendering the log of a run whose exit code you actually
+saw removes that ambiguity, and the log is kept beside the video as provenance.
 """
 import os
 import re
@@ -19,6 +26,15 @@ GO = "/usr/local/go/bin"
 TESTS = "TestWifiScanEndToEnd|TestPasswordFailureIsNamed|TestTrustButtonEndToEnd"
 COLS = 96
 LINES = 26
+
+
+def verdict_of(output):
+    """PASS only if the output claims it AND shows no failure line."""
+    failed = any(l.startswith("--- FAIL") or l.strip() == "FAIL"
+                 for l in output.splitlines())
+    ok = any(l.startswith("ok ") or l.startswith("PASS") or "--- PASS" in l
+             for l in output.splitlines())
+    return (not failed) and ok
 
 FONT_CANDIDATES = [
     "/usr/share/texmf/fonts/opentype/public/lm/lmmono10-regular.otf",
@@ -92,11 +108,26 @@ def render_card(text, font, outdir, name, color="#7ee787"):
 
 
 def main():
-    out = sys.argv[1]
+    argv = sys.argv[1:]
+    from_log = None
+    if "--from-log" in argv:
+        from_log = argv[argv.index("--from-log") + 1]
+        argv = [a for a in argv if a not in ("--from-log", from_log)]
+    out = argv[0]
     font = pick_font()
     print("font:", font)
-    print("running the real end-to-end tests ...")
-    output, rc = run_tests()
+    if from_log:
+        print("rendering the captured run log:", from_log)
+        with open(from_log) as fh:
+            output = fh.read()
+        rc = 0 if verdict_of(output) else 1
+    else:
+        print("running the real end-to-end tests ...")
+        output, rc = run_tests()
+        with open(out + ".log", "w") as fh:
+            fh.write(output)
+        print("run log:", out + ".log")
+        rc = 0 if (rc == 0 and verdict_of(output)) else 1
     verdict = "ALL TESTS PASSED" if rc == 0 else "TESTS FAILED"
     headline = ('INSTALLER E2E — real `go test -v` output\n'
                 'wifi-scan + trust, against a dropbear-like router fixture\n'
@@ -117,12 +148,12 @@ def main():
 
     listfile = os.path.join(work, "list.txt")
     with open(listfile, "w") as fh:
-        for _ in range(4):
-            fh.write("file '%s'\nduration 0.35\n" % title)
+        for _ in range(3):
+            fh.write("file '%s'\nduration 1.2\n" % title)
         for p in pngs:
-            fh.write("file '%s'\nduration 0.22\n" % p)
-        for _ in range(10):
-            fh.write("file '%s'\nduration 0.35\n" % end)
+            fh.write("file '%s'\nduration 0.85\n" % p)
+        for _ in range(6):
+            fh.write("file '%s'\nduration 0.6\n" % end)
         fh.write("file '%s'\n" % end)
 
     subprocess.run([
