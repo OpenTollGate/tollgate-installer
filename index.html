@@ -327,12 +327,14 @@
     </div>
     <!-- One-time root credential. Only rendered when the deploy had to create
          a root password because the router had none; the server serves the
-         value exactly once, on the first read of the completed job. -->
+         value exactly once, on the first read of the job in a terminal state.
+         A copy is persisted to an owner-only file whose PATH arrives as
+         credential_file on every poll (see showCredentialFile). -->
     <div class="credential hidden" id="generated-credential" role="alert">
       <h3>Save the router's new root password</h3>
       <p class="credential-warn">
-        Your router had no root password, so one was generated for it. It is shown ONCE and
-        cannot be recovered. Store it in your password manager
+        Your router had no root password, so one was generated for it. It is shown ONCE, and a copy is
+        also saved to a file on this machine (mode 600). Store it in your password manager
         now, before you close or reload this page — you will need it to reach the router's
         admin board.
       </p>
@@ -343,6 +345,7 @@
                 onclick="copyGeneratedPassword()">Copy</button>
       </div>
       <p class="hint" id="copy-generated-status" role="status"></p>
+      <p class="hint" id="generated-credential-file" role="status"></p>
     </div>
   </div>
 
@@ -361,13 +364,15 @@
          fix removed, on the other screen. The server surrenders the value on the
          first read of the FAILED job (handleStatus) and pollStatus pins it here
          before this view is revealed. Mirror of the success view's
-         #generated-credential block: written as text, shown once, never
-         persisted, never through the log. -->
+         #generated-credential block: the VALUE is written as text, shown once,
+         and never goes through the log. The credential FILE PATH (not the
+         secret) is persisted and served on every poll, so a missed one-shot
+         read is still recoverable. -->
     <div class="credential hidden" id="failed-generated-credential" role="alert">
       <h3>Save the router's new root password</h3>
       <p class="credential-warn">
         This deploy failed AFTER the router's root password had already been generated and set. It is
-        shown ONCE and cannot be recovered. Store it in your password manager
+        shown ONCE, and a copy is also saved to a file on this machine (mode 600). Store it in your password manager
         now, before you close or reload this page — you will need it to reach the router.
       </p>
       <div class="credential-row">
@@ -377,6 +382,7 @@
                 onclick="copyFailedGeneratedPassword()">Copy</button>
       </div>
       <p class="hint" id="copy-failed-generated-status" role="status"></p>
+      <p class="hint" id="failed-credential-file" role="status"></p>
     </div>
   </div>
 </div>
@@ -910,6 +916,19 @@ function showError(msg) {
   if (view) view.classList.remove('hidden');
 }
 
+// showCredentialFile names the recovery file the deploy wrote the generated root
+// password to BEFORE it set it on the router. Unlike the password itself, this
+// path is served on every /api/status read, so it is still on screen after the
+// one-shot value has been consumed — and it is what makes a missed one-shot
+// read (closed tab, reload, a poll that landed while the operator was away)
+// recoverable instead of a locked-out router.
+function showCredentialFile(path) {
+  for (const id of ['generated-credential-file', 'failed-credential-file']) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = path ? ('A copy is saved on this machine: ' + path) : '';
+  }
+}
+
 // ensureRouterHostKeyTrusted folds the host-key decision into whatever action
 // needs the router's password, so trusting is not a separate errand the operator
 // has to notice and perform. It returns false ONLY when the action must not
@@ -1321,6 +1340,7 @@ async function pollStatus(jobId) {
     // this first completed read and never again — pin it before the success
     // view is revealed so it is on screen the moment the operator sees it.
     pinGeneratedCredential(job.generated_password);
+    showCredentialFile(job.credential_file);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
       document.getElementById('success-view').classList.remove('hidden');
@@ -1333,6 +1353,7 @@ async function pollStatus(jobId) {
     // revealed — otherwise the router keeps a credential the operator never
     // sees.
     pinFailedGeneratedCredential(job.generated_password);
+    showCredentialFile(job.credential_file);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
       showError(job.error || 'Unknown error. Check the log above.');

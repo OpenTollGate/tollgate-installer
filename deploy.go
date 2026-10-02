@@ -233,6 +233,75 @@ func generateRootPassword() (string, error) {
 	return string(out), nil
 }
 
+const (
+	// credentialFileEnv overrides the recovery-log location. The tests use it to
+	// keep the operator's own log out of the way; an operator who keeps secrets
+	// elsewhere can point it at their password manager's drop directory.
+	credentialFileEnv = "TOLLGATE_CREDENTIAL_FILE"
+	// defaultCredentialFile is the recovery log, kept next to the operator's
+	// other SSH state (cf. defaultKnownHostsFile).
+	defaultCredentialFile = ".tollgate-root-credentials"
+)
+
+// credentialFilePath returns the recovery-log path, or "" when it cannot be
+// determined (no override and no home directory).
+func credentialFilePath() string {
+	if p := strings.TrimSpace(os.Getenv(credentialFileEnv)); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, defaultCredentialFile)
+}
+
+// persistRootCredential appends a generated root credential to the operator's
+// recovery log and returns the path it wrote to.
+//
+// It is called BEFORE the credential is applied to the router (see
+// ensureRootCredential), because the router must never end up holding a root
+// password that exists nowhere. The one-shot /api/status serve covers the case
+// where the operator is watching the wizard; this file covers every way that
+// serve is still missable — a closed tab, a poll that consumed the value while
+// they were away, a crash between the deploy and the final screen. Without it a
+// failed deploy leaves a router whose only remaining access (an empty root
+// password) has been replaced by a string nobody has: an unrecoverable lockout.
+//
+// The file is created 0600 and FORCED to 0600 when it already exists, so an
+// operator's umask cannot publish a router's root password to other local
+// users. Lines are appended, never rewritten: it is a recovery log, so an
+// earlier router's credential survives every later deploy.
+func persistRootCredential(ip, password string) (string, error) {
+	path := credentialFilePath()
+	if path == "" {
+		return "", fmt.Errorf("no credential file path available (no home directory and no $%s)", credentialFileEnv)
+	}
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", err
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	// O_CREATE's mode applies only to a NEW file, and an existing one may have
+	// been created wider (or by an older build), so tighten it every time.
+	if err := f.Chmod(0o600); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprintf(f, "%s	%s	%s\n", time.Now().Format(time.RFC3339), ip, password); err != nil {
+		return "", err
+	}
+	// The credential must outlive a crash the instant after it is applied.
+	if err := f.Sync(); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // ensureRootCredential makes sure the router is never left without a root
 // credential and returns the password later deploy steps must reconnect with.
 //
@@ -275,6 +344,20 @@ func ensureRootCredential(job *Job, run routerRun, prove routerAuthProof, suppli
 			jobFail(job, 4, "cannot generate a root credential",
 				"The router has NO root password and none was supplied, and a credential could not be generated: "+err.Error())
 			return "", false
+		}
+		// Persist BEFORE applying: whatever happens after this point — a crash,
+		// a Ctrl-C, a failed package download two steps later — the router's new
+		// credential is already recoverable from disk instead of existing only
+		// in this process's memory and one one-shot read.
+		if path, perr := persistRootCredential(job.IP, pw); perr != nil {
+			where := credentialFilePath()
+			if where == "" {
+				where = "(no path available)"
+			}
+			job.addLog("WARNING: could not save the generated root credential to " + where + " (" + perr.Error() + ").")
+			job.addLog("It is shown ONCE on this deploy's final screen — store it in your password manager before you close the page, because it is not recoverable from disk.")
+		} else {
+			job.setCredentialFile(path)
 		}
 		if !applyRootPassword(job, run, prove, pw, "generated") {
 			return "", false

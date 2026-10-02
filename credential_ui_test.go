@@ -139,9 +139,19 @@ func TestPollStatusPinsTheCredentialOnFailure(t *testing.T) {
 	if !strings.Contains(failBranch, "pinFailedGeneratedCredential(job.generated_password)") {
 		t.Errorf("the failed branch does not pin the credential the server surrenders on the failed read — an operator whose router got a new root password from a deploy that then failed is locked out\n--- failed branch ---\n%s", failBranch)
 	}
-	reveal := strings.Index(failBranch, "error-view")
+	// The failure view is revealed through the ONE error surface (showError),
+	// which every other failure path calls too. Assert the COMPOSITION rather
+	// than a literal `error-view` reference: the branch must call the surface,
+	// AND the surface must be what actually reveals the view — either half
+	// alone leaves the operator staring at a dead screen. (The literal check
+	// this replaces passed only while the branch inlined the reveal; it stayed
+	// green when showError was called on a page where showError did not exist.)
+	reveal := strings.Index(failBranch, "showError(")
 	if reveal < 0 {
-		t.Fatalf("the failed branch never reveals the failure view\n%s", failBranch)
+		t.Fatalf("the failed branch never reveals the failure view (no showError call)\n%s", failBranch)
+	}
+	if body := funcBody(t, html, "showError"); !strings.Contains(body, "getElementById('error-view')") {
+		t.Fatalf("showError does not reveal the failure view, so the failed branch's call leaves the operator on a dead screen:\n%s", body)
 	}
 	if pin := strings.Index(failBranch, "pinFailedGeneratedCredential("); pin < 0 || pin > reveal {
 		t.Errorf("pollStatus pins the credential after revealing the failure view; pin it first so the value is on screen when the view appears\n--- failed branch ---\n%s", failBranch)
