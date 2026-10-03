@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -2239,6 +2240,68 @@ func repairLanDNS(client *ssh.Client) string {
 	return ip
 }
 
+// defaultRoutePresent reports whether a route table has a default route.
+//
+// It greps the table itself because `ip route show default` is NOT filtered by
+// OpenWrt's busybox ip: it returns the whole table, so `[ -n "$(ip route show
+// default)" ]` — and the installer's old routeOK check — is true on any router
+// that has any route at all. The read-only diagnostic script hit the same trap
+// and reported a "gateway" literally named br-lan.
+func defaultRoutePresent(ipRouteOutput string) bool {
+	for _, line := range strings.Split(ipRouteOutput, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "default") {
+			return true
+		}
+	}
+	return false
+}
+
+var ipv4Re = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+
+// dnsAnswerOK reports whether an nslookup output is a real answer. A REFUSED /
+// NXDOMAIN / timed-out answer, an empty answer, or dnsmasq answering for itself
+// (127.0.0.1) is NOT resolution — the old check accepted any line containing
+// "Address", which is the one line every refusal also carries.
+func dnsAnswerOK(out string) bool {
+	s := strings.ToLower(out)
+	if strings.TrimSpace(s) == "" {
+		return false
+	}
+	for _, bad := range []string{"can't find", "cant find", "refused", "nxdomain", "timed out", "no servers could be reached"} {
+		if strings.Contains(s, bad) {
+			return false
+		}
+	}
+	for _, ip := range ipv4Re.FindAllString(s, -1) {
+		if !strings.HasPrefix(ip, "127.") && ip != "0.0.0.0" {
+			return true
+		}
+	}
+	return false
+}
+
+// upstreamVerdict names which side owns an upstream failure, so the operator
+// does not have to work it out from a wall of probe output. Pure, so the
+// classification is unit-tested against every real-world case seen in the field.
+func upstreamVerdict(pingOK, dnsOK, defaultRoute, publicDNSOK bool) string {
+	switch {
+	case !defaultRoute:
+		return "verdict: no default route — the router is not on an upstream. " +
+			"Fix the uplink (re-enter the wifi credentials, or attach a WAN cable), then retry."
+	case !pingOK:
+		return "verdict: a default route exists but the first hop does not answer — " +
+			"association/AP problem, not DNS. The router side (or the AP) is dropping traffic."
+	case dnsOK:
+		return "verdict: routing and name resolution both work — the upstream is usable."
+	case publicDNSOK:
+		return "verdict: the upstream handed out resolvers it does not serve (a public resolver answers) — " +
+			"fixable on the router: point dnsmasq at 1.1.1.1, or let the installer apply that fallback."
+	default:
+		return "verdict: the upstream network blocks DNS — nothing resolves, not even 1.1.1.1/9.9.9.9. " +
+			"Use a network whose DNS works; nothing to fix on the router."
+	}
+}
+
 // upstreamOnline reports whether the router can actually USE the internet
 // after the STA associates — a wwan interface can be "up" (layer-2 associated)
 // with no default route or no working DNS. It first repairs the dnsmasq
@@ -2248,26 +2311,54 @@ func repairLanDNS(client *ssh.Client) string {
 // registers its wallet (probing every mint) BEFORE it binds :2121, so no
 // internet means the API never comes up — this check turns a 2-minute
 // health-check timeout into an immediate, actionable message.
+//
+// When the upstream's own resolvers do not answer but a public resolver does
+// (a guest network that hands out resolvers it does not serve), the fix is one
+// uci command — so the installer applies it and re-tests, instead of failing an
+// install that can succeed. Nothing is applied when public DNS is blocked too.
 func upstreamOnline(client *ssh.Client) (bool, string) {
 	if lanIP := repairLanDNS(client); lanIP != "" {
 		sshRun(client, "logger -t tollgate-installer 'dns entries repaired for "+lanIP+"' 2>/dev/null; true")
 	}
 	sshRun(client, "/etc/init.d/dnsmasq restart 2>/dev/null; true")
-	var pingOK, dnsOK, routeOK bool
+	var pingOK, dnsOK, routeOK, publicOK bool
+	fallback := ""
 	for i := 0; i < 8; i++ {
 		pout := sshRun(client, "ping -c1 -W3 1.1.1.1 2>&1 | tail -2")
 		pingOK = strings.Contains(pout, "1 received") || strings.Contains(pout, "1 packets received")
-		routeOK = strings.TrimSpace(sshRun(client, "ip route show default 2>/dev/null | head -1")) != ""
-		dout := sshRun(client, "nslookup github.com 2>&1 | tail -2")
-		dnsOK = strings.Contains(dout, "Address") &&
-			!strings.Contains(dout, "can't") && !strings.Contains(dout, "timed out") && !strings.Contains(dout, "refused")
+		routeOK = defaultRoutePresent(sshRun(client, "ip route show 2>/dev/null"))
+		dout := sshRun(client, "nslookup github.com 2>&1 | tail -3")
+		dnsOK = dnsAnswerOK(dout)
 		if pingOK && dnsOK {
 			break
 		}
 		time.Sleep(2 * time.Second)
 	}
-	diag := strings.Join([]string{
-		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v default-route=%v", pingOK, dnsOK, routeOK),
+	// Resolvers handed out by the upstream are dead; is DNS blocked outright?
+	if pingOK && !dnsOK {
+		for _, pub := range []string{"1.1.1.1", "9.9.9.9"} {
+			if !dnsAnswerOK(sshRun(client, "nslookup github.com "+pub+" 2>&1 | tail -3")) {
+				continue
+			}
+			publicOK = true
+			sshRun(client, "uci -q del_list dhcp.@dnsmasq[0].server='"+pub+"' 2>/dev/null; "+
+				"uci -q add_list dhcp.@dnsmasq[0].server='"+pub+"' && uci commit dhcp && "+
+				"/etc/init.d/dnsmasq restart 2>/dev/null; sleep 3")
+			if dnsAnswerOK(sshRun(client, "nslookup github.com 2>&1 | tail -3")) {
+				dnsOK = true
+				fallback = "resolver-fallback: dnsmasq pointed at " + pub + " (the upstream's own resolvers do not answer)"
+			}
+			break
+		}
+	}
+	parts := []string{
+		upstreamVerdict(pingOK, dnsOK, routeOK, publicOK),
+		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v default-route=%v public-dns=%v", pingOK, dnsOK, routeOK, publicOK),
+	}
+	if fallback != "" {
+		parts = append(parts, fallback)
+	}
+	for _, p := range []string{
 		"route: " + truncate(sshRun(client, "ip route show 2>/dev/null | head -5 | tr '\\n' ' '"), 300),
 		"uplink: " + truncate(sshRun(client, "for i in wwan wan; do s=$(ubus call network.interface.$i status 2>/dev/null | grep -E '\"up\"|address' | head -3 | tr '\\n' ' '); [ -n \"$s\" ] && echo \"$i: $s\"; done"), 300),
 		"resolv: " + truncate(sshRun(client, "grep -v '^#' /etc/resolv.conf 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
@@ -2275,8 +2366,10 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 		"dnsmasq: " + truncate(sshRun(client, "pgrep -f '[d]nsmasq' >/dev/null && echo running || echo 'not running'"), 40),
 		"dnsmasq-log: " + truncate(sshRun(client, "logread 2>/dev/null | grep -i dnsmasq | tail -3 | tr '\\n' ' '"), 300),
 		"dnsmasq-address: " + truncate(sshRun(client, "grep -h '^address=' /var/etc/dnsmasq.conf.* 2>/dev/null | head -3 | tr '\\n' ' '"), 200),
-	}, "\n")
-	return pingOK && dnsOK, diag
+	} {
+		parts = append(parts, p)
+	}
+	return pingOK && dnsOK, strings.Join(parts, "\n")
 }
 
 // staSetupScript returns the shell script that configures the
