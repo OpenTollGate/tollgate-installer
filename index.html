@@ -38,6 +38,16 @@
   select option { background: #1a1f3a; }
   .field { margin-bottom: 1.2rem; }
   .hint { font-size: 0.72rem; color: #8892b0; margin-top: 0.35rem; }
+  /* The host-key refusal is a DECISION the wizard is waiting on, not a failure.
+     Rendered as one long grey paragraph it read as an error the wizard then went
+     on to ignore (operator report, 2026-10-03), so it gets its own state. */
+  .hint-action { font-size: 0.78rem; color: #e2e8f0; margin-top: 0.5rem;
+                 border-left: 3px solid #f6ad55; background: rgba(246,173,85,0.08);
+                 border-radius: 6px; padding: 0.6rem 0.75rem; }
+  .hint-action .hint-lead { font-weight: 600; color: #f6ad55; }
+  .hint-action .hint-fp { font-family: monospace; color: #63b3ed; word-break: break-all; margin: 0.25rem 0; }
+  .hint-action summary { cursor: pointer; font-size: 0.72rem; color: #8892b0; margin-top: 0.4rem; }
+  .hint-action .hint-raw { font-size: 0.7rem; color: #8892b0; white-space: pre-wrap; margin-top: 0.25rem; }
   .req { color: var(--tg-red); }
   .btn {
     width: 100%; padding: 14px; font-size: 1rem; font-weight: 700;
@@ -866,12 +876,51 @@ function selectedRouterInfo() {
 // "cannot be identified" and never learns the fingerprint or the exact trust
 // instruction (RISK item of the #41 review). Text only: the refusal carries
 // router-supplied strings, so it must never reach the HTML parser.
+//
+// WHY IT NO LONGER READS AS A FAILURE (operator report, 2026-10-03): the refusal
+// is not an error — it is the wizard asking for a decision it cannot make on the
+// operator's behalf, shown at the exact moment the install is waiting on it.
+// Rendered as one long grey paragraph of server prose ("...is not trusted...",
+// "no credentials were sent...", "would send your router password to an impostor
+// on the LAN") it read as a failure the wizard then appeared to ignore — the
+// operator's question was "how did you get to the next step despite the error?".
+// The panel now leads with the DECISION: what is being asked, the fingerprint to
+// check, and what pressing Deploy does. The server's full message is kept one
+// disclosure away, so nothing is hidden and no shell instruction is lost.
 function showTrustHint(r) {
   const el = document.getElementById('trust-hint');
   if (!el) return;
   const msg = (r && r.ssh_refusal) ? r.ssh_refusal : '';
-  el.textContent = msg;
+  el.textContent = '';
   el.classList.toggle('hidden', !msg);
+  el.classList.toggle('hint-action', !!msg);
+  if (msg) {
+    const fingerprint = (r && r.ssh_fingerprint) ? r.ssh_fingerprint : '';
+    const lead = document.createElement('div');
+    lead.className = 'hint-lead';
+    lead.textContent = "Waiting for you: this router's SSH key is not trusted yet, so nothing has been sent to it.";
+    el.appendChild(lead);
+    if (fingerprint) {
+      const fpLine = document.createElement('div');
+      fpLine.className = 'hint-fp';
+      fpLine.textContent = 'Fingerprint: ' + fingerprint;
+      el.appendChild(fpLine);
+    }
+    const next = document.createElement('div');
+    next.textContent = fingerprint
+      ? 'Check that fingerprint on the router\'s own console, then press Deploy: the wizard asks once, remembers the key, and only then sends your router password.'
+      : 'Verify the router on its own console, then press Deploy.';
+    el.appendChild(next);
+    const det = document.createElement('details');
+    const sum = document.createElement('summary');
+    sum.textContent = "Installer's full message";
+    const rawEl = document.createElement('div');
+    rawEl.className = 'hint-raw';
+    rawEl.textContent = msg; // textContent: router-supplied strings never reach the parser
+    det.appendChild(sum);
+    det.appendChild(rawEl);
+    el.appendChild(det);
+  }
 
   // The refusal carries the fingerprint the router presented (ssh_fingerprint),
   // so the operator can trust exactly that key here instead of killing the

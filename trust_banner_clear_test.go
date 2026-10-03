@@ -56,6 +56,35 @@ func TestSuccessfulTrustClearsTheRefusalBanner(t *testing.T) {
 	}
 }
 
+// F. The refusal is a DECISION WAITING ON THE OPERATOR, not a failure.
+//
+// Operator report, 2026-10-03, watching the recorded UI run: "I see the ssh key
+// error messages in the playwright videos of the installer you shared. How did
+// you get to the next step despite the error?" — it was not an error (the wizard
+// refuses to send the password until the key is trusted, and pressing Deploy IS
+// the trust step), but the panel rendered the server's full prose as one long
+// grey paragraph, so it read as a failure the wizard then appeared to ignore.
+func TestTrustHintReadsAsAPendingDecisionNotAFailure(t *testing.T) {
+	body := jsFuncBody(t, string(indexHTML), "function showTrustHint(")
+	for _, want := range []string{"hint-action", "hint-lead", "hint-fp", "hint-raw", "details"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("showTrustHint does not render %q: the refusal reads as a bare failure instead of a decision the wizard is waiting on", want)
+		}
+	}
+	if !strings.Contains(body, "ssh_refusal") {
+		t.Error("showTrustHint no longer renders the server's refusal: the operator would lose the fingerprint and the --trust-host-key instruction")
+	}
+	if !strings.Contains(body, "not trusted yet") {
+		t.Error("the panel must say the key is not trusted YET and that nothing has been sent — otherwise it reads as a failure")
+	}
+	if strings.Contains(body, "innerHTML") {
+		t.Error("showTrustHint must never use innerHTML: the refusal carries router-supplied strings")
+	}
+	if !strings.Contains(string(indexHTML), ".hint-action") {
+		t.Error("index.html has no .hint-action styling: the class is a no-op and the panel is indistinguishable from an error")
+	}
+}
+
 // E. One helper clears both the text and the button.
 func TestTrustHintClearingIsOneHelper(t *testing.T) {
 	src := string(indexHTML)
