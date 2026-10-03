@@ -1189,6 +1189,17 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(3, "done", versionLine)
 	time.Sleep(500 * time.Millisecond)
 
+	// 3b: free-space pre-flight, BEFORE step 4 touches the credential.
+	//
+	// WHY (live defect, 2026-10-02/03): on a 16MB-flash GL-AR300M16 the wizard
+	// rotated/generated the router's root credential and only then discovered the
+	// package does not fit ("Only have 8016kb available on filesystem /overlay,
+	// pkg tollgate-wrt needs 23850"). The operator can lose the credential and
+	// get nothing installed. Refuse FIRST, while the router is still untouched.
+	if !preflightOverlaySpace(job, client) {
+		return
+	}
+
 	// Step 4: root credential.
 	//
 	// A router left with an EMPTY root password hash is not "open by default",
@@ -1867,8 +1878,23 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	listening := false
 	var healthBody string
 	const healthAttempts = 40 // ~2 min
+	// A DEAD TRANSPORT IS NOT A SERVICE PROBLEM. Before blaming :2121, prove the
+	// session we are asking is still alive: on a real router this deploy lost the
+	// connection when the router was re-addressed mid-run, then spent 2 minutes
+	// reporting "service not listening" against a closed socket. See
+	// sshTransportAlive.
+	if err := sshTransportAlive(client); err != nil {
+		job.addLog("Lost the SSH transport to the router before the health check: " + err.Error())
+		failTransportLost(job, 11, req.IP, err)
+		return
+	}
 	for attempt := 1; attempt <= healthAttempts; attempt++ {
 		time.Sleep(3 * time.Second)
+		if err := sshTransportAlive(client); err != nil {
+			job.addLog(fmt.Sprintf("Health check attempt %d/%d: SSH TRANSPORT LOST — %v", attempt, healthAttempts, err))
+			failTransportLost(job, 11, req.IP, err)
+			return
+		}
 		listening, healthBody = tollgateHealthProbe(client)
 		if adLooksHealthy(healthBody) {
 			healthOK = true
@@ -2029,6 +2055,96 @@ func jobFail(job *Job, step int, stepDetail, jobErr string) {
 	job.mu.Unlock()
 }
 
+// requiredInstalledKiB is the installed footprint of the tollgate-wrt payload.
+// MEASURED, not guessed: opkg itself reported "pkg tollgate-wrt needs 23850"
+// when it refused the install on a 16MB-flash GL-AR300M16 (8,016 KiB free).
+// Deliberately a little generous — refusing a router that might just have fitted
+// costs one re-run, while installing on one that cannot fit costs the whole
+// deploy (and, before PR #71, the router's root credential).
+const requiredInstalledKiB = 25600
+
+// overlaySpaceVerdict decides, from the free KiB on /overlay, whether the payload
+// can be installed. free < 0 means "could not be read" — never refuse a router on
+// a measurement we do not have.
+func overlaySpaceVerdict(freeKiB int) (bool, string) {
+	if freeKiB < 0 {
+		return true, "free-space pre-flight skipped: /overlay size could not be read"
+	}
+	if freeKiB < requiredInstalledKiB {
+		return false, fmt.Sprintf("only %d KiB free on /overlay — tollgate-wrt needs about %d KiB installed", freeKiB, requiredInstalledKiB)
+	}
+	return true, fmt.Sprintf("%d KiB free on /overlay (needs ~%d KiB)", freeKiB, requiredInstalledKiB)
+}
+
+// parseAvailKiB reads the Available column out of `df -k` output, or -1 when it
+// cannot (no df, or an unexpected format).
+func parseAvailKiB(dfOut string) int {
+	for _, line := range strings.Split(dfOut, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 {
+			continue
+		}
+		if strings.EqualFold(f[0], "Filesystem") {
+			continue // header row
+		}
+		n, err := strconv.Atoi(f[3])
+		if err != nil {
+			continue // not a data row (an error line, a wrapped line)
+		}
+		return n
+	}
+	return -1
+}
+
+// preflightOverlaySpace refuses a deploy that cannot fit BEFORE step 4 touches
+// the router's credential. See the call site comment in runDeployment.
+func preflightOverlaySpace(job *Job, client *ssh.Client) bool {
+	free := parseAvailKiB(sshRun(client, "df -k /overlay / 2>/dev/null"))
+	ok, msg := overlaySpaceVerdict(free)
+	if ok {
+		job.addLog("Free-space pre-flight: " + msg)
+		return true
+	}
+	job.addLog("Free-space pre-flight FAILED: " + msg)
+	job.setStep(3, "failed", msg)
+	jobFail(job, 3, "not enough flash for tollgate-wrt",
+		"This router has "+msg+".\n\n"+
+			"Nothing was changed on the router: its root password was NOT touched and no package was\n"+
+			"installed.\n\n"+
+			"Use a router with more flash (a NAND-class device such as a GL-MT3000 has ~200 MB free), or\n"+
+			"install a compressed build if one is published for this architecture.")
+	return false
+}
+
+// failTransportLost fails a deploy whose SSH transport died, naming the cause and
+// leaving a step list CONSISTENT with the terminal step. A live run ended with the
+// job failed at step 11 while steps 6..11 still read pending/running, so the UI
+// showed a deploy that had "reached" steps it never ran.
+func failTransportLost(job *Job, step int, ip string, err error) {
+	if job == nil {
+		return
+	}
+	job.mu.Lock()
+	for i := range job.Steps {
+		if i == step {
+			continue
+		}
+		if job.Steps[i].Status == "pending" || job.Steps[i].Status == "running" {
+			job.Steps[i].Status = "skipped"
+			job.Steps[i].Detail = "not reached — the SSH connection to the router was lost"
+		}
+	}
+	job.mu.Unlock()
+	job.addLog("Deploy stopped: lost the SSH transport to " + ip + " (" + err.Error() + "). " +
+		"The router is no longer answering on " + ip + " — it was re-addressed, rebooted, or the cable moved to another port.")
+	jobFail(job, step, "lost the router — SSH transport died",
+		"Lost the SSH connection to "+ip+" ("+err.Error()+").\n\n"+
+			"The router stopped answering mid-deploy, so the remaining steps did not run and nothing could be\n"+
+			"verified. Nothing further was changed on it — in particular its root credential was NOT re-keyed.\n\n"+
+			"Likely causes: the deploy re-addressed the router's LAN, the router rebooted, or the cable is now in\n"+
+			"a different port. Try the router's OTHER ethernet port, or find it on its new LAN address, then retry.")
+}
+
 // tollgateHealthProbe checks the TollGate API from the ROUTER's own shell:
 // whether :2121 is listening, and the first bytes of GET /. It never fails —
 // a closed port yields listening=false and an empty body.
@@ -2052,18 +2168,48 @@ func adLooksHealthy(body string) bool {
 // the operator (and the UI) can tell a crash-loop from a degraded merchant.
 // Best-effort: every command is capped and individually harmless.
 func tollgateDiagnostics(client *ssh.Client, listening bool, body string) string {
+	// If the transport is dead, every command below would return "" and the
+	// block would read as nine empty labels — which is how a lost router was
+	// reported as a crash-looping service with NO evidence at all. Say what
+	// actually happened instead.
+	if err := sshTransportAlive(client); err != nil {
+		return transportLostDiagnostics(err)
+	}
 	parts := []string{
 		fmt.Sprintf("listening=%v ad=%q", listening, truncate(body, 120)),
-		"service: " + truncate(sshRun(client, "/etc/init.d/tollgate-wrt status 2>&1 | head -2"), 200),
-		"proc: " + truncate(sshRun(client, "pgrep -af tollgate-wrt 2>/dev/null | head -1"), 200),
-		"date: " + truncate(sshRun(client, "date -u 2>/dev/null"), 80),
-		"mints: " + truncate(sshRun(client, "jq -r '.accepted_mints[]?.url' /etc/tollgate/config.json 2>/dev/null | tr '\\n' ' '"), 200),
-		"internet: " + truncate(sshRun(client, "(wget -q -T4 -O /dev/null https://1.1.1.1 2>/dev/null && echo online) || echo 'no internet'"), 40),
-		"dns: " + truncate(sshRun(client, "nslookup github.com 2>&1 | tail -2"), 160),
-		"log: " + truncate(sshRun(client, "logread 2>/dev/null | grep -iE 'tollgate|merchant|mint|wallet' | tail -12"), 1500),
-		"debug: " + truncate(sshRun(client, "tail -15 /tmp/tollgate-debug.log 2>/dev/null"), 1500),
+		diagField("service", sshRun(client, "/etc/init.d/tollgate-wrt status 2>&1 | head -2"), 200),
+		diagField("proc", sshRun(client, "pgrep -af tollgate-wrt 2>/dev/null | head -1"), 200),
+		diagField("date", sshRun(client, "date -u 2>/dev/null"), 80),
+		diagField("mints", sshRun(client, "jq -r '.accepted_mints[]?.url' /etc/tollgate/config.json 2>/dev/null | tr '\\n' ' '"), 200),
+		diagField("internet", sshRun(client, "(wget -q -T4 -O /dev/null https://1.1.1.1 2>/dev/null && echo online) || echo 'no internet'"), 40),
+		diagField("dns", sshRun(client, "nslookup github.com 2>&1 | tail -2"), 160),
+		diagField("log", sshRun(client, "logread 2>/dev/null | grep -iE 'tollgate|merchant|mint|wallet' | tail -12"), 1500),
+		diagField("debug", sshRun(client, "tail -15 /tmp/tollgate-debug.log 2>/dev/null"), 1500),
 	}
 	return strings.Join(parts, "\n")
+}
+
+// diagField renders one diagnostics label. An empty command result is printed
+// as an explicit "unavailable" — never as a bare label, which reads as "the
+// router said nothing" when it actually means "we could not ask".
+func diagField(label, out string, limit int) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		out = "unavailable (the command returned nothing)"
+	}
+	return label + ": " + truncate(out, limit)
+}
+
+// transportLostDiagnostics is the diagnostics block for a DEAD SSH session. It
+// is pure (no router) so the "never an empty label" contract is unit-tested.
+func transportLostDiagnostics(err error) string {
+	return "transport: SSH session LOST — " + err.Error() + "\n" +
+		"The router stopped answering on the address this deploy dialled, so the\n" +
+		"service state above could not be observed AT ALL. This is a lost router,\n" +
+		"not necessarily a broken service: the deploy re-addressed its LAN, the\n" +
+		"router rebooted, or the cable/port it is plugged into changed.\n" +
+		"Next: find the router (try its OTHER ethernet port, or its new LAN\n" +
+		"address), then retry. The root credential was NOT changed by this deploy."
 }
 
 // repairLanDNS makes dnsmasq + /etc/hosts serve the router's LAN IP as
