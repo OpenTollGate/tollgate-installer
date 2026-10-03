@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"os"
 	"sync"
@@ -188,7 +189,7 @@ func proveRootPassword(ip, password string) bool {
 		return false
 	}
 	config := &ssh.ClientConfig{
-		User:            "root",
+		User:              "root",
 		HostKeyCallback:   routerHostKeyCallback(ip),
 		Timeout:           10 * time.Second,
 		HostKeyAlgorithms: sshHostKeyAlgorithms,
@@ -216,6 +217,37 @@ func proveRootPassword(ip, password string) bool {
 func closeSSHClient(client *ssh.Client) {
 	if client != nil {
 		client.Close()
+	}
+}
+
+// sshTransportAlive probes the SSH TRANSPORT itself (not the router's
+// services): it opens a session and runs `true`. A closed or half-dead
+// transport — the router was re-addressed, rebooted, or the cable moved to
+// another port — errors here, whereas sshRun would silently return "".
+//
+// WHY (live defect, 2026-10-03): on a real GL-MT3000 the deploy lost the router
+// around the network/upstream step. Every subsequent sshRun returned "" and the
+// wizard reported "tollgate-wrt service is NOT listening on :2121 (crash-looping
+// or still initializing)" for 40 attempts, with a diagnostics block that printed
+// every label EMPTY (service:/proc:/date:/mints:/internet:/dns:/log:/debug:).
+// The operator chased a service problem that did not exist; the real cause —
+// a dead SSH session to a router that had left the LAN — was invisible.
+func sshTransportAlive(client *ssh.Client) error {
+	if client == nil {
+		return errors.New("no SSH client — the router connection was lost (relocation, reboot, or a moved cable)")
+	}
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	done := make(chan error, 1)
+	go func() { done <- session.Run("true") }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(8 * time.Second):
+		return errors.New("SSH exec did not answer within 8s — the transport is dead")
 	}
 }
 
