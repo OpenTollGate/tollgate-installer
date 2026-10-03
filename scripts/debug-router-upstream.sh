@@ -189,7 +189,7 @@ WGET=$(get wget); DM=$(get dnsmasq); TG=$(get tollgate)
 echo
 echo "== VERDICT =="
 if [ "$TG" = installed ]; then echo "  tollgate-wrt is INSTALLED on this router."; fi
-if [ "$ST" = no ]; then
+if [ "$ST" = no ] && { [ "$DR" = no ] || [ "$PG" = FAIL ]; }; then
     echo "  NO STA UPLINK IS CONFIGURED — the installer's rollback removed it (that is its normal"
     echo "  failure path: it restores /etc/config/wireless from the pre-STA snapshot)."
     echo "  => nothing can reach the internet until an uplink exists again. Re-run the wizard and"
