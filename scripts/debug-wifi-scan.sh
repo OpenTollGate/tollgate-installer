@@ -109,7 +109,7 @@ say "wireless configuration (uci) — enabled radios, bands, existing STA"
 uci -q show wireless 2>/dev/null | grep -E "\.(disabled|mode|ssid|band|channel|htmode|ifname|network|device)="
 
 say "attempt [2] iwinfo <dev> scan"
-CELLS=0; GOOD=""; BAD=""; HID=0; SSIDS=""
+CELLS=0; GOOD=""; BAD=""; HID=0; ZEROESSID=""
 for d in $VAPS; do
     printf -- '--- iwinfo %s scan\n' "$d"
     OUT=$(iwinfo "$d" scan 2>&1)
@@ -129,8 +129,8 @@ for d in $VAPS; do
     r=$((e - h))
     echo "cells=$c readable-ESSID=$r hidden/undecodable=$h"
     printf '%s' "$OUT" | grep -i 'ESSID:' | sed -e 's/^[[:space:]]*//' | sort -u | head -25
-    CELLS=$((CELLS + c))
-    if [ "$r" -gt 0 ]; then GOOD="$GOOD $d"; else BAD="$BAD $d"; HID=$((HID + h)); fi
+    CELLS=$((CELLS + c)); HID=$((HID + h))
+    if [ "$r" -gt 0 ]; then GOOD="$GOOD $d"; else BAD="$BAD $d"; ZEROESSID="$ZEROESSID $d"; fi
     while IFS= read -r line; do
         s=$(printf '%s' "$line" | sed -e 's/.*ESSID:[[:space:]]*//' -e 's/^"//' -e 's/"$//')
         case "$s" in ""|unknown) ;; *) printf '@@ssid=%s\n' "$s";; esac
@@ -142,19 +142,25 @@ S cells "$CELLS"
 S iwinfo_ok "$(printf '%s' "$GOOD" | tr ' ' ',' | sed -e 's/^,//' -e 's/,$//')"
 S iwinfo_bad "$(printf '%s' "$BAD" | tr ' ' ',' | sed -e 's/^,//' -e 's/,$//')"
 S hidden "$HID"
+S zero_essid "$(printf '%s' "$ZEROESSID" | tr ' ' ',' | sed -e 's/^,//' -e 's/,$//')"
 
 say "attempt [3] iw dev <dev> scan"
 IWOK=""; IWERR=""
 for d in $VAPS; do
     printf -- '--- iw dev %s scan\n' "$d"
     OUT=$(iw dev "$d" scan 2>&1)
-    if printf '%s' "$OUT" | grep -qiE 'Resource busy|No such device|not supported|Operation not permitted'; then
-        echo "refused: $(printf '%s' "$OUT" | head -1)"
-        IWERR="$IWERR $d:$(printf '%s' "$OUT" | head -1 | tr ' ' '_')"
+    c=$(printf '%s' "$OUT" | grep -c '^BSS ')
+    err=$(printf '%s' "$OUT" | grep -oiE 'command failed: [^)]*\)' | head -1)
+    if [ "$c" -gt 0 ]; then
+        # iw can print BSS blocks AND then fail the last channel; cells count.
+        echo "cells=$c${err:+ (partial: $err)}"
+        IWOK="$IWOK $d"
+    elif [ -n "$err" ]; then
+        echo "refused: $err"
+        IWERR="$IWERR $d:$(printf '%s' "$err" | tr ' ' '_')"
     else
-        c=$(printf '%s' "$OUT" | grep -c '^BSS ')
-        echo "cells=$c (first line: $(printf '%s' "$OUT" | head -1))"
-        [ "$c" -gt 0 ] && IWOK="$IWOK $d"
+        echo "no output"
+        IWERR="$IWERR $d:no-output"
     fi
 done
 S iw_ok "$(printf '%s' "$IWOK" | tr ' ' ',' | sed -e 's/^,//' -e 's/,$//')"
@@ -165,6 +171,28 @@ printf -- '--- iwinfo scan (no device): '; iwinfo scan 2>&1 | head -1
 for w in wlan0 wlan1; do
     printf -- '--- iwinfo %s scan: ' "$w"; iwinfo "$w" scan 2>&1 | head -1
 done
+
+say "the STA uplink's own target (if one is configured)"
+STASECS=$(uci -q show wireless 2>/dev/null | awk -F. "/\\.mode=.sta./{print \$2}" | sed "s/=.*//" | sort -u)
+if [ -z "$STASECS" ]; then
+    echo "no STA (client) interface configured — nothing is trying to be an uplink"
+else
+    for s in $STASECS; do
+        sd=$(uci -q get wireless.$s.device 2>/dev/null)
+        ss=$(uci -q get wireless.$s.ssid 2>/dev/null)
+        sb=$(uci -q get wireless.$sd.band 2>/dev/null)
+        echo "$s: ssid='$ss' device=${sd:-?} band=${sb:-?}"
+        S sta_ssid "$ss"
+        S sta_dev "$sd"
+        S sta_band "$sb"
+    done
+fi
+
+say "wpa_supplicant's own scan failures (a contended radio refuses EVERYONE)"
+SCANFAIL=$(logread 2>/dev/null | grep -c 'SCAN-FAILED')
+printf 'SCAN-FAILED lines in logread: %s\n' "$SCANFAIL"
+logread 2>/dev/null | grep 'SCAN-FAILED' | tail -3
+S scanfail "$SCANFAIL"
 
 say "who is holding the radio (a busy radio refuses scans)"
 printf 'wpa_supplicant processes: '; ps w 2>/dev/null | grep -c "[w]pa_supplicant"
@@ -203,23 +231,20 @@ if [ "$rc" -ne 0 ]; then
     exit 0
 fi
 
-VAPS=$(get vaps); PHYS=$(get phys); NORADIO=$(get noradio)
+VAPS=$(get vaps); NORADIO=$(get noradio)
 CELLS=$(get cells); IWOK=$(get iwinfo_ok); IWERR2=$(get iw_err)
-HID=$(get hidden); WPA=$(get wpa)
+HID=$(get hidden); WPA=$(get wpa); ZEROESSID=$(get zero_essid)
+SSTA=$(get sta_ssid); SDEV=$(get sta_dev); SBAND=$(get sta_band); SF=$(get scanfail)
 
-echo "== SSIDs the router could actually see right now =="
-N=0
-while IFS= read -r s; do
-    [ -n "$s" ] || continue
-    N=$((N + 1)); printf '  %s\n' "$s"
-done <<EOF3
-$(getssids)
-EOF3
-[ "$N" -eq 0 ] && echo "  (none)"
+ALLSSIDS=$(getssids | sed '/^[[:space:]]*$/d' | sort -u)
+N=$(printf '%s\n' "$ALLSSIDS" | sed '/^[[:space:]]*$/d' | grep -c . )
+
+echo "== SSIDs the router could actually see right now (deduplicated) =="
+if [ "$N" -eq 0 ]; then echo "  (none)"; else printf '%s\n' "$ALLSSIDS" | sed 's/^/  /'; fi
 
 if [ -n "$FIND" ]; then
     echo
-    if printf '%s' "$(getssids)" | grep -qix -- "$FIND"; then
+    if printf '%s\n' "$ALLSSIDS" | grep -qix -- "$FIND"; then
         echo "  \"$FIND\" IS in the scan results."
     else
         echo "  \"$FIND\" is NOT in the scan results — it is not being heard by this radio at this moment."
@@ -228,6 +253,27 @@ fi
 
 echo
 echo "== VERDICT =="
+if [ -n "$SSTA" ] && ! printf '%s\n' "$ALLSSIDS" | grep -qix -- "$SSTA"; then
+    echo "  The configured uplink SSID \"$SSTA\" was NOT heard. Its STA interface is bound to"
+    echo "  device=$SDEV (band ${SBAND:-?}). A hotspot on the OTHER band can never be seen: a"
+    echo "  2.4 GHz-only hotspot is invisible to a STA bound to radio1 (5 GHz), and a 5 GHz-only"
+    echo "  hotspot is invisible to a STA bound to radio0 (2.4 GHz). Check the phone's hotspot band"
+    echo "  and either match it or move the uplink to the radio whose band the phone broadcasts on."
+fi
+case "${SF:-0}" in
+    ''|*[!0-9]*) ;;
+    0) ;;
+    *) echo "  wpa_supplicant logged $SF 'SCAN-FAILED' line(s) (ret=-16): its OWN scans are being"
+       echo "  refused because the radio is contended — every AP VAP on the same phy is beaconing. That"
+       echo "  is the same mechanism as the installer's intermittent refusal, and it is also why a STA"
+       echo "  can fail to find its uplink while the hotspot is on. It is a retry storm, not a bad key."
+       echo "  (Retrying usually wins; the permanent fix belongs in the driver/scan policy, not here.)";;
+esac
+if [ -n "$ZEROESSID" ]; then
+    echo "  Device(s) that returned cells but ZERO readable ESSIDs:$ZEROESSID"
+    echo "  => the installer's parser scores those as 0 networks even though cells arrived (hidden"
+    echo "     SSID, or a beacon this driver/iwinfo cannot decode)."
+fi
 if [ -z "$VAPS" ]; then
     echo "  The router lists NO wireless interface at all ('iw dev' is empty), so there is nothing"
     echo "  to scan: this is an interface/radio state problem, not a scan problem."
