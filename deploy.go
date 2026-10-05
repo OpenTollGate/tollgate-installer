@@ -2884,8 +2884,16 @@ func relocationIsSafe(srcIP, lanCIDR, leases string) bool {
 // DHCP pool) to newIP, commits it and applies it by ifup-ing ONLY that
 // interface. A full "/etc/init.d/network restart" has been observed to leave
 // network.lan without an address (br-lan up but no IPv4) — which drops the
-// operator's LAN access — and is otherwise unnecessarily disruptive, so the
-// restart is only the fallback for a router without ifup.
+// operator's LAN access — and is otherwise unnecessarily disruptive, so it is
+// NEVER part of a relocation: the fallback for a router without ifup is a
+// NON-DISRUPTIVE `ubus call network reload` (what /etc/init.d/network reload
+// runs), which re-reads /etc/config/network and applies the moved section
+// without tearing down the interfaces the move did not touch.
+//
+// It matters most for a NON-management bridge: on 2026-10-05 the restart
+// fallback fired while br-private was being moved and took br-lan's IPv4 down
+// with it, so the deploy lost the router on the management address too — see
+// moveLocalSubnet.
 //
 // It is a separate pure function because the SHAPE of this chain is the whole
 // point: every command is spliced into ONE `&&` chain, so a single command that
@@ -2922,7 +2930,13 @@ func moveLocalSubnetCommands(netSection, dhcpSection, newIP string) []string {
 	return append(cmds,
 		"uci commit network",
 		"uci -q commit dhcp",
-		"/sbin/ifup "+netSection+" 2>/dev/null || /etc/init.d/network restart 2>/dev/null",
+		// Apply by ifup-ing ONLY the moved section; if this router has no ifup,
+		// reload the config non-disruptively. NOT "/etc/init.d/network
+		// restart": that command is documented above to leave network.lan with
+		// no IPv4 at all, and it fires most readily when ifup exits non-zero —
+		// which is precisely the case for a bridge that is not the management
+		// path and never needed the management path touched.
+		"/sbin/ifup "+netSection+" 2>/dev/null || ubus call network reload 2>/dev/null",
 		"sleep 2")
 }
 
@@ -2932,15 +2946,74 @@ func moveLocalSubnetCommands(netSection, dhcpSection, newIP string) []string {
 // same test-seam pattern as sshDialPort). Production always uses reconnectSSH.
 var moveReconnect = reconnectSSH
 
+// relocationManagementAlive reports whether the deploy's SSH session — which
+// lives on the MANAGEMENT path (br-lan, the address the wizard dialled) — still
+// answers. It is used after a move of a bridge that is NOT the management path
+// (br-private): that move must leave the session alone, so the session is the
+// thing to verify, on the UNCHANGED management address.
+//
+// Production uses sshTransportAlive: a real exec on the EXISTING session,
+// bounded at 8s, which errors on a closed/half-dead transport instead of
+// silently returning "" (the 2026-10-03 GL-MT3000 defect). It is a variable so
+// the "the non-management move took the management path down anyway" branch is
+// drivable without a router — the same test-seam pattern as moveReconnect.
+var relocationManagementAlive = sshTransportAlive
+
+// managementBridgeIfname is the local bridge that CARRIES the deploy session.
+// fixSubnetCollisions marks exactly this one as management; moveLocalSubnet
+// names it in operator-facing messages, because losing it is the real problem
+// (a client on it cannot reach a relocated non-management subnet at all).
+const managementBridgeIfname = "br-lan"
+
+// reconnectWithProgress dials ip up to `attempts` times, logging every attempt
+// BEFORE it is made, and reports the give-up explicitly.
+//
+// WHY (2026-10-05 operator report): this retry used to be silent, and one
+// attempt can cost sshConnect's 10s dial timeout plus the delay — so a
+// relocation that could not reconnect looked EXACTLY like a hung step for up to
+// ~65s ("Configuring upstream connection" with no further output). A bounded
+// window that announces each attempt is indistinguishable from nothing else.
+func reconnectWithProgress(job *Job, ip, password string, attempts int, delay time.Duration) *ssh.Client {
+	for i := 1; i <= attempts; i++ {
+		job.addLog(fmt.Sprintf("Reconnecting to %s — attempt %d/%d", ip, i, attempts))
+		if c := moveReconnect(ip, password, 1, delay); c != nil {
+			return c
+		}
+	}
+	job.addLog(fmt.Sprintf("No answer from %s after %d attempts", ip, attempts))
+	return nil
+}
+
 // moveLocalSubnet relocates a local interface and its DHCP pool to a fresh
-// random 10.x.y.0/24, commits it, applies it by ifup-ing that interface, and
-// finds the router again.
+// random 10.x.y.0/24, commits it, applies it, and re-establishes the deploy
+// session.
+//
+// `management` says whether the interface being moved CARRIES THE DEPLOY
+// SESSION (br-lan). The two cases are NOT symmetric, and treating them as if
+// they were is the 2026-10-05 defect:
+//
+//   - management move (br-lan): the session lives on the address that is
+//     changing, so the client is closed and the router is dialled again — first
+//     on the new address, then on the pre-move one (which only answers if the
+//     move silently did not take effect);
+//   - non-management move (br-private): the session is NOT on that bridge and
+//     must not be touched or moved. The address br-private was just given is
+//     unroutable from this machine BY CONSTRUCTION — it exists only inside the
+//     router, and this machine's only path to the router is br-lan — so it must
+//     NEVER be dialled: that dial left via the default gateway, blackholed, and
+//     burned up to ~65s of silent retry (the operator's reported hang). The
+//     EXISTING session is verified instead, on the unchanged management
+//     address; only if it really stopped answering is that address dialled
+//     again.
 //
 // It returns the live client AND THE ADDRESS THAT ACTUALLY ANSWERED:
-//   - newIP, when the move took effect and the router answers on its new address;
+//   - newIP, when a management move took effect and the router answers on its
+//     new address;
 //   - the pre-move `ip`, when the reconnect fell back to it — which is exactly
 //     the "the move silently did not happen" signal (a staging `uci set` that
 //     never reached the commit), and whose log line used to claim newIP;
+//   - the UNCHANGED management `ip` for a non-management move that kept the
+//     session, which is reported as its own result and never as a session move;
 //   - (nil, "") when NOTHING answered, meaning there is no session left and the
 //     caller must stop (see adoptRelocatedClient).
 //
@@ -2949,17 +3022,63 @@ var moveReconnect = reconnectSSH
 // therefore must fall back to where the router is NOW, not to the original
 // address the first move already killed: fixSubnetCollisions threads that
 // through (its curIP).
-func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string) (*ssh.Client, string) {
+func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string, management bool) (*ssh.Client, string) {
 	newIP := randomPrivateLANIP()
 	job.addLog(fmt.Sprintf("%s — moving %s to %s/24", why, ifname, newIP))
+
+	if !management {
+		// PRE-FLIGHT: record whether the management path answers BEFORE the
+		// move, so a failure afterwards says which of the two it is instead of
+		// blaming the bridge that moved.
+		mgmtBefore := relocationManagementAlive(client)
+		if mgmtBefore != nil {
+			job.addLog("WARNING: the deploy session on the management address " + ip + " (" + managementBridgeIfname + ") is not answering before the " + ifname + " move (" + mgmtBefore.Error() + ") — a failure below is not necessarily this move's doing")
+		}
+
+		sshRun(client, strings.Join(moveLocalSubnetCommands(netSection, dhcpSection, newIP), " && "))
+
+		if err := relocationManagementAlive(client); err == nil {
+			// The session is exactly where it was. Report the bridge move as its
+			// own result: it is NOT a session move, and the address to verify is
+			// the unchanged management one.
+			job.addLog(fmt.Sprintf("Moved %s to %s/24 — the deploy session stays on the management path %s (%s, unchanged, still answering); no reconnect needed",
+				ifname, newIP, ip, managementBridgeIfname))
+			return client, ip
+		}
+
+		// The management path went down with (or during) the move. Never point
+		// the operator at the new private subnet: only the management address
+		// can be reached from this machine.
+		blame := " — it was answering before the move, so this move took the management bridge down with it"
+		if mgmtBefore != nil {
+			blame = " (it was already not answering before the move — see the WARNING above)"
+		}
+		job.addLog("ERROR: moving " + ifname + " to " + newIP + "/24 left the MANAGEMENT address " + ip + " (" + managementBridgeIfname + ") unreachable from this machine" + blame +
+			". " + newIP + "/24 exists only inside the router, so it is NOT a recovery address from here.")
+		job.setRelocationFailDetail(fmt.Sprintf(
+			"A colliding local subnet was moved, but the router could not be reached from this machine afterwards, so the deploy stopped instead of continuing against a dead connection. "+
+				"The bridge that moved was %s (now %s/24) — the deploy session lives on %s, not on %s, and %s did not answer afterwards%s. "+
+				"A full network restart during the move can leave %s without an IPv4 address; power-cycle the router to restore %s, then re-run the wizard.",
+			ifname, newIP, managementBridgeIfname, ifname, managementBridgeIfname, blame, managementBridgeIfname, managementBridgeIfname))
+		closeSSHClient(client)
+		nc := reconnectWithProgress(job, ip, password, 3, 5*time.Second)
+		if nc == nil {
+			return nil, ""
+		}
+		job.addLog("Reconnected to router on " + ip)
+		return nc, ip
+	}
+
+	// The moved interface carries the deploy session: the old client dies the
+	// moment the address changes, so close it and dial again.
 	sshRun(client, strings.Join(moveLocalSubnetCommands(netSection, dhcpSection, newIP), " && "))
 	closeSSHClient(client)
 
-	nc := moveReconnect(newIP, password, 5, 3*time.Second)
+	nc := reconnectWithProgress(job, newIP, password, 5, 3*time.Second)
 	answered := newIP
 	if nc == nil {
 		job.addLog("Could not reconnect on new " + ifname + " IP " + newIP + ", trying original IP " + ip + "...")
-		nc = moveReconnect(ip, password, 3, 5*time.Second)
+		nc = reconnectWithProgress(job, ip, password, 3, 5*time.Second)
 		answered = ip
 	}
 	if nc == nil {
@@ -2968,6 +3087,8 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 		// an actionable message instead.
 		job.addLog("ERROR: " + ifname + " moved to " + newIP + " but the router is unreachable from this machine — " +
 			"connect a client to the router's LAN (it will get an address on " + newIP + "/24) and re-run the wizard from there")
+		job.setRelocationFailDetail("A colliding local subnet was moved (" + ifname + " is now " + newIP + "/24), but the router could not be reached from this machine afterwards, so the deploy stopped instead of continuing against a dead connection. " +
+			"The bridge that moved (" + ifname + ") carries the deploy session: connect a client to the router's LAN (it now hands out addresses on the new subnet) and re-run the wizard from there.")
 		return nil, ""
 	}
 	// Report the address that ACTUALLY answered. Printing newIP unconditionally
@@ -2995,14 +3116,23 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 		job.addLog("ERROR: subnet collision check requested with no live SSH session — nothing to check")
 		return nil
 	}
+	// A previous attempt's failure detail must not be attributed to this run.
+	job.setRelocationFailDetail("")
 	upCIDR, gw := upstreamCIDR(client)
 	if upCIDR == "" {
 		job.addLog("WARNING: could not determine the upstream subnet — skipping collision detection")
 		return client
 	}
-	locals := []struct{ ifname, netSection, dhcpSection string }{
-		{"br-lan", "lan", "lan"},
-		{"br-private", "private", "private"},
+	// management is true for the bridge that CARRIES THE DEPLOY SSH SESSION
+	// (br-lan: the address the wizard dialled, and the only path back to this
+	// machine). A move of a bridge that is NOT the management path must never
+	// relocate the session: see moveLocalSubnet.
+	locals := []struct {
+		ifname, netSection, dhcpSection string
+		management                      bool
+	}{
+		{"br-lan", "lan", "lan", true},
+		{"br-private", "private", "private", false},
 	}
 	// curIP is where the router is NOW. Each successful move moves it, so the
 	// NEXT move's reconnect fallback dials an address that can actually answer
@@ -3028,7 +3158,7 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 				}
 			}
 			nc, answered := moveLocalSubnet(job, client, curIP, password, ln.ifname, ln.netSection, ln.dhcpSection,
-				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw))
+				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw), ln.management)
 			if nc == nil {
 				return nil
 			}
@@ -3064,9 +3194,16 @@ func adoptRelocatedClient(job *Job, client *ssh.Client, step int) (*ssh.Client, 
 	if client != nil {
 		return client, true
 	}
-	jobFail(job, step, "subnet relocation severed the connection — see log",
-		"A colliding local subnet was moved, but the router could not be reached from this machine afterwards, so the deploy stopped instead of continuing against a dead connection. "+
-			"Connect a client to the router's LAN (it now hands out addresses on the new subnet) and re-run the wizard from there.")
+	// moveLocalSubnet records the scenario-specific reason and recovery when it
+	// loses the router. Falling back to the generic text only happens when
+	// there was no session to begin with (a re-run of a step whose client is
+	// gone), where nothing is known about which bridge moved.
+	detail := job.relocationFailureDetail()
+	if detail == "" {
+		detail = "A colliding local subnet may have been moved, but there is no live SSH session to the router, so the deploy stopped instead of continuing against a dead connection. " +
+			"Check the log for which bridge moved; if " + managementBridgeIfname + " lost its address, power-cycle the router to restore it, then re-run the wizard from there."
+	}
+	jobFail(job, step, "subnet relocation severed the connection — see log", detail)
 	return nil, false
 }
 

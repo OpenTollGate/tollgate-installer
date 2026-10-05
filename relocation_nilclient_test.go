@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -334,19 +335,34 @@ func TestSemanticallyNilClientEntryFailsInsteadOfPanicking(t *testing.T) {
 	}
 }
 
-// TestSecondRelocationFallbackDialsTheAddressTheRouterActuallyAnsweredOn pins
-// BLOCK 2's third item: the reviewer's concrete cascade is TWO moves in one
-// deploy — br-lan moves to 10.x.y.1, then br-private's reconnect fails and its
-// fallback dials the pre-move address (dead) instead of 10.x.y.1. The
-// fallback must dial the address the router is on NOW.
-func TestSecondRelocationFallbackDialsTheAddressTheRouterActuallyAnsweredOn(t *testing.T) {
+// TestSecondMoveReconnectDialsWhereTheRouterIsNow pins BLOCK 2's third item
+// under the post-2026-10-05 contract: the reviewer's concrete cascade is TWO
+// moves in one deploy — br-lan moves to 10.x.y.1, then br-private's move has to
+// re-establish the session. That reconnect must dial the address the router is
+// on NOW (the new br-lan address), never the pre-deploy address the first move
+// killed — and never the relocated br-private address, which this machine
+// cannot route to at all.
+//
+// Note the ONE thing this test had to change after the 2026-10-05 operator
+// report: br-private is no longer dialled at its new address, so the reconnect
+// only happens when the management path actually stopped answering. That makes
+// the invariant stronger, not weaker: the dial still has to name where the
+// router is NOW.
+func TestSecondMoveReconnectDialsWhereTheRouterIsNow(t *testing.T) {
 	router := collisionRouter(t,
 		"192.168.1.1/24\n", // br-lan collides
-		"192.168.1.2/24\n", // br-private collides too (no guard: it is not the management path)
+		"192.168.1.2/24\n", // br-private collides too (it is not the management path)
 		"192.168.1.50",
 		"1700000000 aa:bb:cc:dd:ee:ff 192.168.1.50 laptop *\n")
+
+	// The private move takes the management path down with it, so a reconnect IS
+	// needed — on the management address only.
+	oldAlive := relocationManagementAlive
+	relocationManagementAlive = func(*ssh.Client) error { return errors.New("transport dead (simulated)") }
+	t.Cleanup(func() { relocationManagementAlive = oldAlive })
+
 	// First relocation answers on its new address; every later dial fails, so the
-	// second move's FALLBACK is observable.
+	// second move's reconnect target is observable.
 	dials := stubReconnect(t, func(attempt int, addr string) *ssh.Client {
 		if attempt == 1 {
 			return router.dial(t) // br-lan's move took: the router answers on its new address
@@ -360,19 +376,26 @@ func TestSecondRelocationFallbackDialsTheAddressTheRouterActuallyAnsweredOn(t *t
 		t.Fatal("fixSubnetCollisions panicked during a two-move relocation")
 	}
 	if nc != nil {
-		t.Fatalf("expected the second move to lose the router (nil client), got %v", nc)
+		t.Fatalf("expected the private move's failed reconnect to lose the router (nil client), got %v", nc)
 	}
-	if len(*dials) != 3 {
-		t.Fatalf("expected 3 dials (br-lan new address, br-private new address, br-private fallback), got %v", *dials)
+	if len(*dials) == 0 {
+		t.Fatal("nothing was dialled — the test did not exercise the reconnect path")
 	}
 	answeredOn := (*dials)[0] // br-lan's new address answered
 	if answeredOn == "192.168.1.1" {
 		t.Fatalf("the first move dialled the original address %q — the test cannot distinguish the fix", answeredOn)
 	}
-	if (*dials)[2] != answeredOn {
-		t.Errorf("br-private's fallback dialled %q, want the address the router actually answered on (%q). "+
-			"Dialling the pre-deploy address %q is dead: the first move killed it (BLOCK 2, item 3)",
-			(*dials)[2], answeredOn, "192.168.1.1")
+	newPrivateIP := relocationMovedAddress(t, job, "br-private")
+	if newPrivateIP == answeredOn {
+		t.Fatalf("the test cannot distinguish the two addresses (both %q)", answeredOn)
+	}
+	for _, d := range (*dials)[1:] {
+		if d != answeredOn {
+			t.Errorf("the private move's reconnect dialled %q, want the address the router actually answered on (%q). "+
+				"Dialling the pre-deploy address %q is dead (the first move killed it — BLOCK 2, item 3), and the "+
+				"relocated br-private address %q is unroutable from a machine on br-lan",
+				d, answeredOn, "192.168.1.1", newPrivateIP)
+		}
 	}
 	if logs := jobLogMatching(job, "Reconnected to router on "); len(logs) != 1 || !strings.HasSuffix(logs[0], answeredOn) {
 		t.Errorf("log lines reporting the reconnect = %q, want exactly one naming the address that answered (%q)", logs, answeredOn)
@@ -400,24 +423,33 @@ func TestReconnectFallbackReportsTheAddressThatAnswered(t *testing.T) {
 	router := collisionRouter(t, "192.168.1.1/24\n", "", "192.168.1.50",
 		"1700000000 aa:bb:cc:dd:ee:ff 192.168.1.50 laptop *\n")
 	dials := stubReconnect(t, func(attempt int, addr string) *ssh.Client {
-		if attempt == 1 { // the new address never answers…
+		// The new address never answers (nothing can route to it from here)…
+		if addr != "192.168.1.1" {
 			return nil
 		}
-		return router.dial(t) // …the pre-move address does
+		return router.dial(t) // …the pre-move address does: the move silently no-opped
 	})
 	client := router.dial(t)
 	defer closeSSHClient(client)
 
 	job := newJob("192.168.1.1")
-	nc, answered := moveLocalSubnet(job, client, "192.168.1.1", "pw", "br-lan", "lan", "lan", "test move")
+	nc, answered := moveLocalSubnet(job, client, "192.168.1.1", "pw", "br-lan", "lan", "lan", "test move", true)
 	if nc == nil {
 		t.Fatal("moveLocalSubnet returned no client although the fallback address answered")
 	}
 	defer closeSSHClient(nc)
-	if len(*dials) != 2 {
-		t.Fatalf("expected a dial on the new address then a fallback dial, got %v", *dials)
+	// The new address is tried (reconnectWithProgress dials it once per attempt)
+	// and then the pre-move address is dialled — the fallback that answers.
+	if len(*dials) < 2 || (*dials)[len(*dials)-2] == "192.168.1.1" {
+		t.Fatalf("expected dial attempts on the new address then a fallback on the original, got %v", *dials)
 	}
 	newIP := (*dials)[0]
+	if newIP == "192.168.1.1" {
+		t.Fatalf("the first dial was the original address %q — the test cannot distinguish the fallback", newIP)
+	}
+	if (*dials)[len(*dials)-1] != "192.168.1.1" {
+		t.Fatalf("the last dial was %q, want the fallback address 192.168.1.1", (*dials)[len(*dials)-1])
+	}
 	if answered != "192.168.1.1" {
 		t.Errorf("moveLocalSubnet reported %q as the address that answered, want the fallback address 192.168.1.1", answered)
 	}
