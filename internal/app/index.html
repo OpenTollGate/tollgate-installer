@@ -119,6 +119,17 @@
   }
   .credential-row .btn { width: auto; margin: 0; padding: 10px 16px; font-size: 0.85rem; }
   .error-msg { color: #f56565; text-align: center; padding: 1rem; }
+  /* The scan failure block: plain text, wrapped. It names the interfaces and
+     their state, the default gateway, every address that was probed and what to
+     do next - the one sentence it replaces named nothing. */
+  .scan-detail {
+    margin-top: 1rem; padding: 0.9rem; border-radius: 12px;
+    background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12);
+    color: #c8cee0; font-family: 'SF Mono', Menlo, monospace; font-size: 0.72rem;
+    line-height: 1.5; white-space: pre-wrap; word-break: break-word; text-align: left;
+  }
+  .scan-detail:empty { display: none; }
+  .scan-detail-head { color: var(--tg-red); font-weight: 700; margin-bottom: 0.35rem; }
   .hidden { display: none; }
   .tg-progress { width: 100%; height: 8px; border-radius: 6px; background: rgba(255,255,255,0.12); overflow: hidden; }
   .tg-progress-fill { height: 100%; width: 0%; border-radius: 6px; background: linear-gradient(90deg, var(--tg-red), var(--tg-red-dark)); transition: width 0.4s ease; }
@@ -215,7 +226,31 @@
   <div id="scan-view" class="card">
     <div class="scanning">
       <div class="spinner"></div>
-      <p>Scanning for routers on your network...</p>
+      <p id="scan-status">Scanning for routers on your network...</p>
+    </div>
+    <!-- The failure block. renderScanFailure() fills it from the server's
+         structured diagnostics: every interface and its state, the default
+         gateway, every address that was probed with what it answered, and what
+         to try next. Written as TEXT - a neighbouring device controls what
+         identification produced, and this page holds the router password. -->
+    <pre id="scan-detail" class="scan-detail" role="status"></pre>
+  </div>
+
+  <!-- Manual address. Part of the FIRST screen, not a rescue reserved for
+       failures: an empty, slow or wrong scan can never strand the operator,
+       because a typed address goes straight to identify + deploy with discovery
+       bypassed entirely. -->
+  <div id="manual-view" class="card hidden" style="margin-top:1rem;">
+    <div class="field" style="margin-bottom:0;">
+      <label for="manual-ip">Router address</label>
+      <div style="display:flex; gap:0.5rem; align-items:center;">
+        <input type="text" id="manual-ip" inputmode="decimal" placeholder="192.168.1.1" autocomplete="off"
+               onkeydown="if (event.key === 'Enter') useManualIP()">
+        <button type="button" class="btn btn-secondary" id="manual-btn"
+                style="width:auto; padding:14px 16px; margin-top:0; white-space:nowrap;"
+                onclick="useManualIP()">Use this address</button>
+      </div>
+      <div class="hint" id="manual-hint">Know the router's IP address? Type it - the wizard identifies it directly.</div>
     </div>
   </div>
 
@@ -861,25 +896,188 @@ function showMovedRouterHint(ip) {
   el.appendChild(box);
 }
 
+// How long the wizard waits for /api/scan before it stops waiting and hands the
+// operator the diagnostic block and the manual address. The server-side scan is
+// bounded (its probes are fanned out with a sub-second per-port LAN budget), but
+// a wedged installer, a sleeping laptop or a captive portal in the middle must
+// never leave "Scanning for routers on your network..." on screen forever: that
+// is exactly the hang the operator reported on 2026-10-05.
+const SCAN_TIMEOUT_MS = 20000;
+
 async function scan() {
   document.getElementById('scan-view').classList.remove('hidden');
   document.getElementById('select-view').classList.add('hidden');
+  // The manual address field is revealed with the FIRST screen, not held back
+  // for failures: a slow or empty scan must never block onboarding.
+  const manualView = document.getElementById('manual-view');
+  if (manualView) manualView.classList.remove('hidden');
+  clearScanFailure();
+  const status = document.getElementById('scan-status');
+  if (status) status.textContent = 'Scanning for routers on your network...';
 
+  // A client-side watchdog as well as the server-side fix: an aborted fetch is a
+  // state we can explain, an indefinite wait is not.
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, SCAN_TIMEOUT_MS);
   try {
-    const resp = await fetch('/api/scan');
+    const resp = await fetch('/api/scan', { signal: ctrl.signal });
     const data = await resp.json();
     detectedRouters = data.routers || [];
 
     if (detectedRouters.length === 0) {
-      document.querySelector('#scan-view .scanning p').textContent =
-        'No routers found. Make sure your router is powered on and connected.';
+      if (status) status.textContent = 'No routers answered. Here is what was tried.';
+      renderScanFailure(data.diagnostics);
       return;
     }
 
     showSelectView();
   } catch (e) {
-    document.querySelector('#scan-view .scanning p').textContent =
-      'Scan failed. Check that the wizard can reach your network.';
+    // A transport-level failure - the installer is gone, the answer was not
+    // JSON, or the watchdog fired - reaches the SAME diagnostic path instead of
+    // a bare sentence that names nothing.
+    const timedOut = !!(e && e.name === 'AbortError');
+    if (status) status.textContent = timedOut
+      ? 'The scan did not finish in time. Here is what was tried.'
+      : 'The scan could not be read. Here is what was tried.';
+    renderScanFailure(null, timedOut);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// clearScanFailure empties the failure block without the HTML parser.
+function clearScanFailure() {
+  const box = document.getElementById('scan-detail');
+  if (box) box.textContent = '';
+}
+
+// renderScanFailure renders the server's diagnostic block, or - when the answer
+// never arrived at all - a local block naming what was tried. Every value is
+// written as TEXT: interface names come from the host, but the identification
+// strings come from the neighbouring device, and this page is served from the
+// origin that holds the router's password.
+function renderScanFailure(diag, timedOut) {
+  const box = document.getElementById('scan-detail');
+  if (!box) return;
+  box.textContent = '';
+
+  const row = function (text) {
+    const el = document.createElement('div');
+    el.textContent = text;
+    box.appendChild(el);
+  };
+  const heading = function (text) {
+    const el = document.createElement('div');
+    el.className = 'scan-detail-head';
+    el.textContent = text;
+    box.appendChild(el);
+  };
+
+  if (!diag) {
+    heading('Why the scan could not report');
+    row(timedOut
+      ? 'The installer did not answer within 20 seconds, so nothing is known about your network from this page.'
+      : 'The installer\u2019s answer could not be read, so nothing is known about your network from this page.');
+    heading('What to try');
+    row('1. Type the router\u2019s IP address in the box below and press "Use this address" - the wizard identifies it directly, without discovery.');
+    row('2. Then check the cable: on the GL-MT3000 the 2.5 GbE port is WAN and the 1 GbE port is LAN - plug into LAN.');
+    row('3. Or run the headless installer: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> \'\' <you@wallet.app>');
+    return;
+  }
+
+  heading(diag.summary || 'The scan found nothing.');
+
+  const ifaces = diag.interfaces || [];
+  if (ifaces.length) {
+    heading('Interfaces');
+    ifaces.forEach(function (i) {
+      let text = '  ' + i.name + '  ' + i.state + '  carrier=' + i.carrier;
+      if (i.ipv4 && i.ipv4.length) text += '  ' + i.ipv4.join(' ');
+      if (i.virtual) text += '  [virtual: not scanned]';
+      if (i.problem) text += '  \u2014 ' + i.problem;
+      row(text);
+    });
+  }
+
+  const gws = diag.gateways || [];
+  heading('Default gateway(s) from the routing table');
+  if (!gws.length) row('  (none \u2014 this host has no default route at all)');
+  gws.forEach(function (g) { row('  ' + g); });
+
+  const probes = diag.probes || [];
+  heading('Addresses probed: ' + probes.length);
+  probes.forEach(function (p) {
+    let text = '  ' + p.ip + '  [' + p.source + ']';
+    if (p.detail) text += '  ' + p.detail;
+    text += '  ssh=' + (p.ssh ? 'yes' : 'no') + '  http=' + (p.httpPort ? p.httpPort : 'none');
+    if (p.demoted) text += '  (not on your local subnet)';
+    if (p.note) text += '  \u2014 ' + p.note;
+    row(text);
+  });
+
+  const sources = diag.sources || [];
+  if (sources.length) {
+    heading('Where the candidates came from');
+    sources.forEach(function (s) { row('  ' + s); });
+  }
+
+  const rem = diag.remediation || [];
+  if (rem.length) {
+    heading('What to try, in this order');
+    rem.forEach(function (s) { row('  ' + s); });
+  }
+
+  if (diag.manualHint) row(diag.manualHint);
+}
+
+// validIPv4 is a SHAPE check only: four decimal octets, each 0-255. No DNS and
+// no hostname resolution - a typo must not become a deploy against a different
+// device.
+function validIPv4(ip) {
+  const parts = String(ip || '').trim().split('.');
+  if (parts.length !== 4) return false;
+  return parts.every(function (p) {
+    return /^\d{1,3}$/.test(p) && Number(p) >= 0 && Number(p) <= 255;
+  });
+}
+
+// useManualIP takes the operator's typed address straight to identify and
+// selects it, so Deploy works even when discovery found nothing or found the
+// wrong devices. Discovery is bypassed entirely.
+async function useManualIP() {
+  const ip = (document.getElementById('manual-ip').value || '').trim();
+  const hint = document.getElementById('manual-hint');
+  if (!validIPv4(ip)) {
+    if (hint) hint.textContent = 'That is not an IPv4 address. Use four numbers separated by dots, e.g. 192.168.1.1.';
+    return;
+  }
+  if (hint) hint.textContent = 'Identifying ' + ip + '...';
+  try {
+    const resp = await fetch('/api/identify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, password: document.getElementById('password').value }),
+    });
+    const info = await resp.json();
+    if (!info || info.error) {
+      if (hint) hint.textContent = 'No answer from ' + ip + ' - check the cable, the port and the address.';
+      return;
+    }
+    const existing = detectedRouters.find(function (r) { return r.ip === ip; });
+    if (existing) {
+      Object.assign(existing, info);
+    } else {
+      detectedRouters.push(info);
+    }
+    showSelectView();
+    const sel = document.getElementById('router-select');
+    sel.value = ip;
+    showTrustHint(info);
+    if (hint) hint.textContent = ip + ' selected'
+      + ((info.note && !info.identified) ? ' - ' + info.note : '')
+      + '. Continue below.';
+  } catch (e) {
+    if (hint) hint.textContent = 'Could not reach the installer to identify ' + ip + '.';
   }
 }
 
@@ -912,7 +1110,12 @@ function formatRouterLabel(r) {
   if (!name) name = ((r.vendor || '') + ' ' + (r.model || '')).trim();
   if (!name || name === 'unknown unknown' || name === 'unknown') name = 'Router';
   const fw = (r.firmware && r.firmware !== 'unknown') ? ' \u2014 ' + r.firmware : '';
-  return name + fw + ' (' + r.ip + ')';
+  // The server classifies what answered: only a device that identified itself
+  // (OpenWrt / GL.iNet firmware) is offered as a router, and identified ones are
+  // sorted first. An unverified host keeps its warning in the label - the deploy
+  // path can flash the device, so it must never read as a router.
+  const note = (r.note && !r.identified) ? '  \u2014 ' + r.note : '';
+  return name + fw + note + ' (' + r.ip + ')';
 }
 
 // selectedRouterInfo returns the detected-router entry the dropdown points at.
@@ -1280,6 +1483,8 @@ async function startDeploy() {
   if (!(await ensureRouterHostKeyTrusted(ip, password))) return;
 
   document.getElementById('select-view').classList.add('hidden');
+  const manualView = document.getElementById('manual-view');
+  if (manualView) manualView.classList.add('hidden');
   document.getElementById('deploy-view').classList.remove('hidden');
 
   const body = {
