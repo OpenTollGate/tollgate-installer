@@ -214,6 +214,11 @@ type Job struct {
 	progressCurrent int
 	progressTotal   int
 	progressLabel   string
+	// lastActivity is the wall-clock time of the last OBSERVABLE progress: a log
+	// line, a step change, or a progress-counter move. The stall watchdog reads
+	// it to fail a job whose goroutine is parked somewhere unbounded, so every
+	// one of those three setters must touch it. Guarded by mu.
+	lastActivity time.Time
 	// relocationFailDetail is the scenario-specific reason + recovery for a
 	// subnet relocation that lost the router (set by moveLocalSubnet, rendered
 	// by adoptRelocatedClient). It exists so the failure names the bridge that
@@ -230,12 +235,13 @@ var (
 
 func newJob(ip string) *Job {
 	return &Job{
-		IP:         ip,
-		Status:     "running",
-		Step:       0,
-		Steps:      deploySteps(),
-		Log:        []LogEntry{},
-		stageCache: map[string][]byte{},
+		IP:           ip,
+		Status:       "running",
+		Step:         0,
+		Steps:        deploySteps(),
+		Log:          []LogEntry{},
+		stageCache:   map[string][]byte{},
+		lastActivity: time.Now(),
 	}
 }
 
@@ -265,18 +271,20 @@ func newJobID() (string, error) {
 // prestageSteps() list.
 func newPreStageJob(ip string) *Job {
 	return &Job{
-		IP:         ip,
-		Status:     "running",
-		Step:       0,
-		Steps:      prestageSteps(),
-		Log:        []LogEntry{},
-		stageCache: map[string][]byte{},
+		IP:           ip,
+		Status:       "running",
+		Step:         0,
+		Steps:        prestageSteps(),
+		Log:          []LogEntry{},
+		stageCache:   map[string][]byte{},
+		lastActivity: time.Now(),
 	}
 }
 
 func (j *Job) addLog(msg string) {
 	j.mu.Lock()
 	j.Log = append(j.Log, LogEntry{Time: float64(time.Now().Unix()), Msg: msg})
+	j.lastActivity = time.Now()
 	j.mu.Unlock()
 }
 
@@ -339,6 +347,7 @@ func (j *Job) setStep(i int, status, detail string) {
 	j.mu.Lock()
 	if i < len(j.Steps) {
 		j.Step = i
+		j.lastActivity = time.Now()
 		j.Steps[i].Status = status
 		if detail != "" {
 			j.Steps[i].Detail = detail
@@ -395,6 +404,7 @@ func (j *Job) setProgress(current, total int, label string) {
 	j.progressCurrent = current
 	j.progressTotal = total
 	j.progressLabel = label
+	j.lastActivity = time.Now()
 	j.mu.Unlock()
 }
 
@@ -1311,6 +1321,7 @@ func handlePreStage(w http.ResponseWriter, r *http.Request) {
 	jobs[jobID] = job
 	jobsMutex.Unlock()
 	go runPreStageJob(job, req)
+	startJobWatchdog(job, jobStallTimeout)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
 }
@@ -1467,6 +1478,9 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	// would kill the whole wizard process. runDeploymentGuarded contains one and
 	// fails the JOB instead (see guardDeploymentPanic).
 	go runDeploymentGuarded(job, req)
+	// The deploy runs in a goroutine that can block on anything; the watchdog is
+	// what turns "no progress for N" into a reported failure (rc17 spinner).
+	startJobWatchdog(job, jobStallTimeout)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
