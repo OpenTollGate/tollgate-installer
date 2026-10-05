@@ -59,9 +59,12 @@ func TestScanRendersServerDiagnostics(t *testing.T) {
 	}
 }
 
-// TestManualAddressEntryIsAlwaysAvailable pins deliverable 4: the operator can
-// type the router address and go straight to identify+deploy.
-func TestManualAddressEntryIsAlwaysAvailable(t *testing.T) {
+// TestManualAddressEntryIsNeverStranded pins deliverable 4 under the revised
+// design (2026-10-05): the typed-address card is opt-in. It lives behind a
+// sentinel option in the router dropdown, so it no longer competes with the
+// scan result on every screen — but it can NEVER be stranded, and the sentinel
+// is a control value, never an address.
+func TestManualAddressEntryIsNeverStranded(t *testing.T) {
 	html := string(indexHTML)
 
 	// A real text input plus a real button, in their own card.
@@ -73,25 +76,70 @@ func TestManualAddressEntryIsAlwaysAvailable(t *testing.T) {
 			t.Errorf("index.html is missing %s — the address can then only be supplied by re-running the script", want)
 		}
 	}
-	// The block must not start hidden by a *scan* result: scan() reveals it.
-	scanBody := funcBody(t, html, "scan")
-	if !strings.Contains(scanBody, "manual-view") {
-		t.Errorf("scan() must reveal #manual-view (the manual address card):\n%s", scanBody)
+
+	// "Is the card shown?" has exactly one implementation to reason about.
+	reveal := funcBody(t, html, "setManualAddressVisible")
+	if !strings.Contains(reveal, "manual-view") {
+		t.Errorf("setManualAddressVisible() must toggle #manual-view:\n%s", reveal)
 	}
 
-	body := funcBody(t, html, "useManualIP")
+	// It stays available while scanning ...
+	scanBody := funcBody(t, html, "scan")
+	if !strings.Contains(scanBody, "setManualAddressVisible(true)") {
+		t.Errorf("scan() must keep the manual address card available while it scans:\n%s", scanBody)
+	}
+
+	// ... and a fruitless scan leaves it OPEN. This is the rule that makes the
+	// opt-in design safe: the dropdown is populated FROM scan results, so
+	// gating the card behind an option in an EMPTY dropdown would leave the
+	// operator with no way forward at all (the 2026-10-05 case: a live router
+	// on 10.153.97.1, a subnet the scan could not guess).
+	show := funcBody(t, html, "showSelectView")
+	if !strings.Contains(show, "detectedRouters.length === 0") {
+		t.Errorf("showSelectView() must leave the manual address card open when detection found nothing:\n%s", show)
+	}
+
+	// It is reachable from a NON-empty dropdown too, via a sentinel option ...
+	if !strings.Contains(show, "CUSTOM_ADDRESS") {
+		t.Errorf("showSelectView() must append the custom-address sentinel to the dropdown:\n%s", show)
+	}
+	// ... and the sentinel is never an address: it must be filtered by the one
+	// accessor every consumer uses, so it cannot be identified, pre-staged or
+	// deployed to as if it were a host.
+	acc := funcBody(t, html, "selectedRouterIP")
+	if !strings.Contains(acc, "CUSTOM_ADDRESS") {
+		t.Errorf("selectedRouterIP() must never return the sentinel as an address:\n%s", acc)
+	}
+	for _, fn := range []string{
+		"startDeploy", "startPreStage", "refreshRouterName", "checkReady",
+		"wifiScan", "testUpstreamWifi", "trustHostKey", "selectedRouterInfo",
+	} {
+		if body := funcBody(t, html, fn); !strings.Contains(body, "selectedRouterIP()") {
+			t.Errorf("%s() must read the chosen address through selectedRouterIP(), never the raw dropdown — the sentinel would otherwise reach the installer as an ip:\n%s", fn, body)
+		}
+	}
+	// The only raw reads of the dropdown left are the two sentinel-aware
+	// helpers: the accessor itself and the change handler that compares against
+	// the sentinel. A third one is a leak.
+	const rawRead = "getElementById('router-select').value"
+	if got, allowed := strings.Count(html, rawRead),
+		strings.Count(acc, rawRead)+strings.Count(funcBody(t, html, "onRouterChange"), rawRead); got != allowed {
+		t.Errorf("%d raw read(s) of the router dropdown sit outside the sentinel-aware helpers (allowed %d: selectedRouterIP, onRouterChange)", got-allowed, allowed)
+	}
+
+	manualBody := funcBody(t, html, "useManualIP")
 	// It POSTs the typed address to the identify endpoint …
-	if !strings.Contains(body, "/api/identify") {
-		t.Errorf("useManualIP() must POST /api/identify:\n%s", body)
+	if !strings.Contains(manualBody, "/api/identify") {
+		t.Errorf("useManualIP() must POST /api/identify:\n%s", manualBody)
 	}
 	// … and selects it, so Deploy works without discovery ever finding it.
-	if !strings.Contains(body, "sel.value = ip") && !strings.Contains(body, "select.value = ip") {
-		t.Errorf("useManualIP() must select the typed address:\n%s", body)
+	if !strings.Contains(manualBody, "sel.value = ip") && !strings.Contains(manualBody, "select.value = ip") {
+		t.Errorf("useManualIP() must select the typed address:\n%s", manualBody)
 	}
 	// A malformed address must be refused locally (a typo must not become a
 	// silent deploy against a wrong host).
-	if !strings.Contains(body, "validIPv4") {
-		t.Errorf("useManualIP() must validate the address before using it:\n%s", body)
+	if !strings.Contains(manualBody, "validIPv4") {
+		t.Errorf("useManualIP() must validate the address before using it:\n%s", manualBody)
 	}
 
 	// The validator itself: shape check only, no hostname/DNS.

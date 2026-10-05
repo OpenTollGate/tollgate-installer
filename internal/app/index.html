@@ -550,6 +550,16 @@ function onPasswordChange() {
 }
 
 function onRouterChange() {
+  // The sentinel reveals the typed-address card; a real router hides it again.
+  // Nothing below treats the sentinel as a host: refreshRouterName,
+  // schedulePreStage and checkReady all read selectedRouterIP(), which returns
+  // '' while the custom option is selected.
+  const custom = document.getElementById('router-select').value === CUSTOM_ADDRESS;
+  setManualAddressVisible(custom);
+  if (custom) {
+    const manualInput = document.getElementById('manual-ip');
+    if (manualInput) manualInput.focus();
+  }
   // Reset WiFi scan when router changes
   if (upstreamMode === 'sta') {
     wifiScanned = false;
@@ -573,7 +583,7 @@ function schedulePreStage() {
 }
 
 async function startPreStage() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   if (!ip) { setPrestageStatus('idle', ''); return; }
   prestageJobId = '';
   setPrestageStatus('running', 'Pre-downloading packages...', 0, 0);
@@ -668,7 +678,7 @@ function selectedSSIDBand() {
 }
 
 async function testUpstreamWifi() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   const ssid = document.getElementById('ssid').value;
   if (!ip || !ssid) return;
   const wifiPass = document.getElementById('wifi-pass').value;
@@ -719,7 +729,7 @@ function setWifiTestStatus(state, msg) {
 }
 
 async function wifiScan() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   const password = document.getElementById('password').value;
   const ssidSelect = document.getElementById('ssid');
   const ssidHint = document.getElementById('ssid-hint');
@@ -902,15 +912,40 @@ function showMovedRouterHint(ip) {
 // a wedged installer, a sleeping laptop or a captive portal in the middle must
 // never leave "Scanning for routers on your network..." on screen forever: that
 // is exactly the hang the operator reported on 2026-10-05.
+
+// ── The dropdown's custom-address sentinel ─────────────────────────────────
+// #router-select carries the discovered routers plus ONE extra option that
+// reveals the typed-address card. That option is a control value, never an
+// address: every consumer reads selectedRouterIP(), so the sentinel can never
+// be identified, pre-staged or deployed to as if it were a host.
+const CUSTOM_ADDRESS = '__custom__';
+
+// selectedRouterIP is the single source of truth for "which router is chosen".
+function selectedRouterIP() {
+  const sel = document.getElementById('router-select');
+  const v = (sel && sel.value) || '';
+  return v === CUSTOM_ADDRESS ? '' : v;
+}
+
+// setManualAddressVisible reveals the typed-address card. It is opt-in once
+// discovery found candidates (the dropdown is then the happy path) and always
+// on when it found none — hiding it behind an option in an EMPTY dropdown
+// would strand the operator with no way forward (the 10.153.97.1 case: a live
+// router on a subnet the scan could not guess).
+function setManualAddressVisible(on) {
+  const mv = document.getElementById('manual-view');
+  if (mv) mv.classList.toggle('hidden', !on);
+}
+
 const SCAN_TIMEOUT_MS = 20000;
 
 async function scan() {
   document.getElementById('scan-view').classList.remove('hidden');
   document.getElementById('select-view').classList.add('hidden');
-  // The manual address field is revealed with the FIRST screen, not held back
-  // for failures: a slow or empty scan must never block onboarding.
-  const manualView = document.getElementById('manual-view');
-  if (manualView) manualView.classList.remove('hidden');
+  // While scanning, the typed-address field stays available. showSelectView()
+  // then collapses it when discovery found candidates (the dropdown is the
+  // happy path) and leaves it open when nothing answered.
+  setManualAddressVisible(true);
   clearScanFailure();
   const status = document.getElementById('scan-status');
   if (status) status.textContent = 'Scanning for routers on your network...';
@@ -1072,6 +1107,8 @@ async function useManualIP() {
     showSelectView();
     const sel = document.getElementById('router-select');
     sel.value = ip;
+    // The address is a real dropdown entry now; collapse the manual card.
+    setManualAddressVisible(false);
     showTrustHint(info);
     if (hint) hint.textContent = ip + ' selected'
       + ((info.note && !info.identified) ? ' - ' + info.note : '')
@@ -1096,6 +1133,15 @@ function showSelectView() {
     if (meta) opt.title = meta;
     select.appendChild(opt);
   });
+  // The escape hatch lives IN the dropdown, last, so it never competes with the
+  // scan result. When no candidates were found it is the only option and the
+  // card is already open (below), so the operator is never stranded.
+  const customOpt = document.createElement('option');
+  customOpt.value = CUSTOM_ADDRESS;
+  customOpt.textContent = 'Enter a different address…';
+  customOpt.title = 'Type the router’s address when the scan missed it — for example the router is on a different subnet';
+  select.appendChild(customOpt);
+  setManualAddressVisible(detectedRouters.length === 0);
   // If the password was already typed (e.g. scan re-run), identify now.
   showTrustHint(selectedRouterInfo());
   if (document.getElementById('password').value) refreshRouterName();
@@ -1120,7 +1166,7 @@ function formatRouterLabel(r) {
 
 // selectedRouterInfo returns the detected-router entry the dropdown points at.
 function selectedRouterInfo() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   return detectedRouters.find(x => x.ip === ip) || null;
 }
 
@@ -1311,7 +1357,7 @@ function isHostKeyRefusal(msg) {
 // out-of-band step made concrete: it names the full fingerprint so a hurried
 // click cannot bless a key the operator never read.
 async function trustHostKey() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   const fingerprint = window._trustFingerprint || '';
   if (!ip || !fingerprint) return;
 
@@ -1387,7 +1433,7 @@ async function trustHostKey() {
 // shows as "Router" until this runs. Read-only and best-effort: failures are
 // ignored (the existing label stays).
 async function refreshRouterName() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   if (!ip) return;
   const password = document.getElementById('password').value;
   try {
@@ -1436,7 +1482,7 @@ function validLightning(ln) {
 }
 
 function checkReady() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   const ln = document.getElementById('lnurl').value;
   let ready = !!(ip && validLightning(ln));
   let hint = '';
@@ -1470,7 +1516,7 @@ function checkReady() {
 }
 
 async function startDeploy() {
-  const ip = document.getElementById('router-select').value;
+  const ip = selectedRouterIP();
   const password = document.getElementById('password').value;
   const lnurl = document.getElementById('lnurl').value.trim();
 
