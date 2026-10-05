@@ -214,6 +214,13 @@ type Job struct {
 	progressCurrent int
 	progressTotal   int
 	progressLabel   string
+	// relocationFailDetail is the scenario-specific reason + recovery for a
+	// subnet relocation that lost the router (set by moveLocalSubnet, rendered
+	// by adoptRelocatedClient). It exists so the failure names the bridge that
+	// ACTUALLY moved: a br-private move never moves the deploy session, and the
+	// generic "connect to the new subnet" advice points at an address no client
+	// on br-lan can reach. Guarded by mu.
+	relocationFailDetail string
 }
 
 var (
@@ -338,6 +345,23 @@ func (j *Job) setStep(i int, status, detail string) {
 		}
 	}
 	j.mu.Unlock()
+}
+
+// setRelocationFailDetail records why a subnet relocation lost the router, for
+// adoptRelocatedClient to render. An empty detail clears it, so a failure can
+// never be attributed to the wrong bridge or to an older attempt.
+func (j *Job) setRelocationFailDetail(detail string) {
+	j.mu.Lock()
+	j.relocationFailDetail = detail
+	j.mu.Unlock()
+}
+
+// relocationFailureDetail returns the detail recorded by the last failed
+// subnet relocation, or "" when there is none.
+func (j *Job) relocationFailureDetail() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.relocationFailDetail
 }
 
 // stageAsset stores pre-downloaded asset bytes in the Job's stage cache,

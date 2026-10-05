@@ -238,3 +238,79 @@ func TestRelocationChainSurvivesAnAbsentGatewayOption(t *testing.T) {
 		t.Errorf("the stale lan gateway survived the move (state: %q) — the old subnet's gateway would be left as a default route to nowhere", string(state))
 	}
 }
+
+// ─── the apply must never be a full network restart ──────────────────────────
+//
+// The ONE-chain's apply segment ends
+//
+//	/sbin/ifup <section> 2>/dev/null || /etc/init.d/network restart 2>/dev/null
+//
+// and the function's own comment (deploy.go) records that a full network restart
+// "has been observed to leave network.lan without an address (br-lan up but no
+// IPv4) — which drops the operator LAN access". On 2026-10-05 that fallback was
+// the one that fired for a NON-management bridge (br-private), whose move never
+// needed to touch the management path at all: br-lan lost its IPv4, and every
+// reconnect attempt — new private address AND management address — was doomed.
+//
+// A PATH stub cannot intercept /sbin/ifup or /etc/init.d/network (absolute
+// paths), so the fallback that ACTUALLY runs is observed with the shell's own
+// xtrace: `set -x` traces only the commands that are executed, so the RHS of the
+// `||` appears exactly when ifup failed — which is the condition under test.
+
+// relocationChainTrace runs the chain the way it reaches the router (segments
+// joined with " && ") with the stub uci first on PATH and xtrace on, returning
+// the shell's combined trace.
+func relocationChainTrace(t *testing.T, dir, logPath, statePath string, cmds []string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "set -x\n"+strings.Join(cmds, " && "))
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"UCI_STUB_LOG="+logPath,
+		"UCI_STUB_STATE="+statePath,
+	)
+	out, _ := cmd.CombinedOutput()
+	return string(out)
+}
+
+// TestRelocationApplyNeverRunsAFullNetworkRestart reproduces the 2026-10-05
+// failure mode for BOTH bridges: ifup fails (the router-side reality this
+// fallback exists for), and the command the chain then runs must be a
+// non-disruptive reload — never the full restart documented to drop br-lan's
+// IPv4. The control runs the pre-fix segment and proves the harness would see
+// the restart if it were still there.
+func TestRelocationApplyNeverRunsAFullNetworkRestart(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no POSIX shell on PATH — the shape test in relocation_test.go still pins the chain")
+	}
+	dir, logPath, statePath := stubUCI(t)
+
+	// ── non-vacuity control: the apply as it shipped before this fix ──
+	preFix := []string{
+		"uci set network.private.ipaddr='10.44.9.1'",
+		"/sbin/ifup private 2>/dev/null || /etc/init.d/network restart 2>/dev/null",
+	}
+	trace := relocationChainTrace(t, dir, logPath, statePath, preFix)
+	if !strings.Contains(trace, "network restart") {
+		t.Fatalf("control: the harness did not observe the pre-fix full network restart — a green result below would prove nothing:\n%s", trace)
+	}
+
+	for _, tc := range []struct{ name, netSection, dhcpSection string }{
+		{"br-lan (the management path)", "lan", "lan"},
+		{"br-private (NOT the management path)", "private", "private"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetStubLog(t, logPath)
+			cmds := moveLocalSubnetCommands(tc.netSection, tc.dhcpSection, "10.44.9.1")
+			trace = relocationChainTrace(t, dir, logPath, statePath, cmds)
+			if strings.Contains(trace, "network restart") {
+				t.Errorf("the relocation chain still falls back to a full network restart. That command is the reported cause of br-lan losing its IPv4 address (and therefore of the operator's deploy failing on BOTH the new private address and the management address):\n%s", trace)
+			}
+			if !strings.Contains(trace, "/sbin/ifup "+tc.netSection) {
+				t.Errorf("the chain no longer ifups the moved section %q:\n%s", tc.netSection, trace)
+			}
+			if !strings.Contains(trace, "network reload") {
+				t.Errorf("ifup failed and the chain did not fall back to a non-disruptive reload — a router without ifup would leave the move unapplied:\n%s", trace)
+			}
+		})
+	}
+}

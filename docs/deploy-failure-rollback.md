@@ -78,6 +78,26 @@ both:
 | the installed package / `uci-defaults` the package ran (steps 6+ failures) | no — the failure is *about* that state, and the operator needs it to diagnose; the wireless side is what blocks recovery |
 | nothing (WAN mode, or a failure before step 5) | nothing to restore — no snapshot exists and `/tmp/wireless.pre-tollgate` may hold a **stale** snapshot from an earlier run, so the restore is not attempted and the log claims nothing (see "Open gaps", item 4) |
 
+### Which bridge a relocation may move — the management-path invariant
+
+`fixSubnetCollisions` can relocate two local bridges, and they are NOT symmetric:
+
+- **`br-lan` is the management path.** It is the address the wizard dialled and the
+  only route back to the operator's machine, so relocating it *does* move the
+  session: the client is closed and the router is dialled again on the new address
+  (then on the pre-move one, which only answers if the move silently no-opped).
+- **`br-private` is not the management path.** The address it is moved to
+  (`10.x.y.1/24`) exists only inside the router, so a client sitting on `br-lan`
+  cannot route to it. A `br-private` move therefore keeps the existing SSH session
+  and is verified *on the unchanged management address*; the relocated address is
+  never dialled. Reconnecting to it — what the wizard used to do — burned up to
+  ~65s of silent retry and, on 2026-10-05, ended in a failed deploy.
+
+Neither move falls back to `/etc/init.d/network restart`: it has been observed to
+leave `network.lan` with no IPv4 at all (br-lan up, no address), which is how that
+deploy lost the router on the management address too. A router without `ifup` gets
+the non-disruptive `ubus call network reload` instead.
+
 ## What runs where
 
 `deploy.go`:
