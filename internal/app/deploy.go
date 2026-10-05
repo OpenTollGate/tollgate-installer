@@ -1842,7 +1842,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 			"tollgate-wrt not installed", "tollgate-wrt init script missing — package install failed")
 		return
 	}
-	svcOut := sshRun(client, strings.Join([]string{
+	svcOut, svcErr := sshRunE(client, strings.Join([]string{
 		"/etc/init.d/rpcd restart 2>&1",
 		// Use stop||true;start instead of restart — on OpenWrt 25, restart
 		// calls "ubus call service delete" which fails if the service was
@@ -1854,8 +1854,28 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		"sleep 3",
 		"echo 'services restarted'",
 	}, "; "))
-	job.addLog("Services restarted: " + truncate(svcOut, 60))
+	if svcErr != nil {
+		// A transport error ending this command is EXPECTED, not evidence the
+		// router failed: this step reloads networking on the router we are
+		// driving over (tollgate-wrt's uci-defaults derive network.private from
+		// network.lan). See transport_reacquire.go.
+		job.addLog("Service restart command ended with a transport error: " + svcErr.Error())
+	} else {
+		job.addLog("Services restarted: " + truncate(svcOut, 60))
+	}
 	job.setStep(10, "done", "tollgate-wrt+nodogsplash+uhttpd")
+
+	// The restart above reloads networking on the router we are driving over, so
+	// it can kill this very session. Prove the session survived, and re-acquire
+	// it within a bounded window if it did not — BEFORE the collision re-check
+	// and the health gate run. Without this the deploy blamed the router for a
+	// failure it caused itself, then told the operator to go find it by hand.
+	if nc, err := ensureTransportAfterRestart(job, client, req.IP, req.Password); err != nil {
+		failTransportLost(job, 10, req.IP, err)
+		return
+	} else {
+		client = nc
+	}
 	time.Sleep(500 * time.Millisecond)
 
 	// Step 10.5: Re-check subnet collisions now that the tollgate-wrt package
