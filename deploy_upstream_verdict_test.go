@@ -51,8 +51,36 @@ func TestDNSAnswerOKRejectsRefusalsAndEmptiness(t *testing.T) {
 	}
 }
 
-// The message must name which side owns the failure: router, the network it
-// joined, or a fixable resolver misconfiguration.
+// upstreamUsable decides whether the router has a working internet path. A
+// reachable first hop (pingOK) is required; either the upstream's own
+// resolvers or a public resolver must resolve github.com. This captures the
+// real MT3000 bench failure: the AP handed out a DNS resolver it did not
+// actually serve, so dns(github.com)=false, but 1.1.1.1/9.9.9.9 both answered —
+// in that shape the deploy must NOT abort at step 5.
+func TestUpstreamUsableAcceptsAnyWorkingResolverPath(t *testing.T) {
+	cases := []struct {
+		name                   string
+		pingOK, dnsOK, publicOK bool
+		want                   bool
+	}{
+		{"healthy", true, true, false, true},
+		{"healthy with public fallback also available", true, true, true, true},
+		{"bench: upstream resolver dead, public fallback works", true, false, true, true},
+		{"all DNS blocked", true, false, false, false},
+		{"first hop dead", false, true, true, false},
+		{"no uplink at all", false, false, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := upstreamUsable(c.pingOK, c.dnsOK, c.publicOK); got != c.want {
+				t.Errorf("upstreamUsable(%v, %v, %v) = %v, want %v", c.pingOK, c.dnsOK, c.publicOK, got, c.want)
+			}
+		})
+	}
+}
+
+// The message must name which side owns an upstream failure: router, the
+// network it joined, or a fixable resolver misconfiguration.
 func TestUpstreamVerdictNamesTheOwner(t *testing.T) {
 	cases := []struct {
 		name                                  string
