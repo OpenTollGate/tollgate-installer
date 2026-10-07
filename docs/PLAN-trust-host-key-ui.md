@@ -103,7 +103,7 @@ trust decision is written into the store so it is auditable.
   it (a later pin-less `sshConnect` succeeds); refuses a mismatched fingerprint;
   rejects malformed input; and offers **no** credential to the fixture router on
   any path. Preserve the no-`InsecureIgnoreHostKey` guard.
-- Shell (`scripts/test-trust-host-key-ui.sh`): a RED/GREEN source-pin that the
+- Shell (`tests/shell/test-trust-host-key-ui.sh`): a RED/GREEN source-pin that the
   shipped `index.html` has the trust control and the misattribution guard is
   present.
 
@@ -124,8 +124,8 @@ documented degraded shape while the mint is unreachable. Re-run
 ```
 go build ./...
 go test ./...
-scripts/test-trust-host-key-ui.sh
-scripts/test-installer-version-not-conflated-with-feed.sh
+tests/shell/test-trust-host-key-ui.sh
+tests/shell/test-installer-version-not-conflated-with-feed.sh
 ```
 
 RED control: the new tests fail on the pre-change base (35db30d) and pass on the

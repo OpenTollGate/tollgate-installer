@@ -53,7 +53,7 @@ usage() {
 
 Options:
   --tag <tag>       Release tag / version stamped into the binaries
-                    (-X main.version). Required with --publish.
+                    (-X .../internal/app.version). Required with --publish.
   --publish         Create or update the GitHub release for --tag and upload
                     the assets (needs gh, authenticated, with write access).
   --repo <owner/name>
@@ -130,7 +130,8 @@ fi
 COMMIT="$(git -C "${ROOT}" rev-parse --short=7 HEAD 2>/dev/null || echo unknown)"
 
 GO_VERSION="$(go version)"
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
+VERSION_PKG="github.com/OpenTollGate/tollgate-installer/internal/app"
+LDFLAGS="-s -w -X ${VERSION_PKG}.version=${VERSION} -X ${VERSION_PKG}.commit=${COMMIT}"
 GOFLAGS_BUILD="-trimpath -buildvcs=false"
 
 echo "Repo:      ${ROOT}"

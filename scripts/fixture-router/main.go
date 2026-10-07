@@ -1,5 +1,5 @@
 // fixture-router: a minimal SSH server that stands in for an OpenWrt router in
-// the process-level test `scripts/test-missing-asset-fails-loudly.sh` (C2-I-02).
+// the process-level test `tests/shell/test-missing-asset-fails-loudly.sh` (C2-I-02).
 //
 // It answers every "exec" request by running the command through /bin/sh
 // (busybox, inside the alpine container), so the commands the real installer
