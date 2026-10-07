@@ -1,5 +1,26 @@
 # AGENTS.md — TollGate Architecture for LLM Sessions
 
+
+## Layout — where the wizard lives
+
+The module root holds only the build surface: `go.mod`, `Makefile`, `install-and-test.sh`
+(the operator's one-liner) and `main.go` — a 4-line shim so `go build -o tollgate-installer .`
+still produces the binary at the root.
+
+The wizard itself is `internal/app`:
+
+- `internal/app/*.go` — servers, handlers, SSH/trust, deploy, feed resolution;
+- `internal/app/*_test.go` — the Go tests, **beside the code they test** (Go requires this:
+  a `_test.go` file cannot live in a different directory from its package, which is why the
+  tests are not in a `tests/` directory);
+- `internal/app/index.html` + `embed.go` — the embedded UI.
+
+`tests/shell/` — shell pins run against a tree (`bash tests/shell/test-*.sh <tree>`);
+`tests/ui/` — the UI harness; `scripts/` — operator tools, not tests; `e2e/` — Playwright.
+
+Version stamping follows the package: `-X github.com/OpenTollGate/tollgate-installer/internal/app.version`
+(see `scripts/release-binaries.sh`).
+
 ## Architectural Principle
 
 **TollGate repos are thin UI wrappers.** All business logic resides in

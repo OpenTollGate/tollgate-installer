@@ -385,7 +385,7 @@ describe the feed it was cut alongside in the release notes. The script refuses
 a tag containing pre followed by digits; setting ALLOW_FEED_PRENUMBER_TAG to 1
 is the deliberate override. A bare "pre" with no digits is fine:
 v0.6.0-alpha2-pre-rc1 is a real historical tag. Pinned by
-scripts/test-installer-tag-scheme.sh.
+tests/shell/test-installer-tag-scheme.sh.
 
 (Values here are deliberately not backticked: this README carries a
 pre-existing table row naming a password, which arms the fleet pre-commit

@@ -502,7 +502,7 @@ echo "Polling status..."
 # operator terminal (2026-09-28, pre20): "is it using pre19 or pre20?".
 # So the installer line is LABELLED, and short enough not to wrap. Keep both
 # printf branches identical —
-# scripts/test-installer-version-not-conflated-with-feed.sh pins that.
+# tests/shell/test-installer-version-not-conflated-with-feed.sh pins that.
 # Print the deploy state + step summary, and echo provenance lines (package
 # source + installed build) exactly once as they appear in the job log.
 #
