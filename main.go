@@ -465,7 +465,12 @@ func handleIdentify(w http.ResponseWriter, r *http.Request) {
 
 // wifiScanRequest is the JSON body for /api/wifi-scan.
 type wifiScanRequest struct {
-	IP       string `json:"ip"`
+	IP string `json:"ip"`
+	// MAC is the hardware address of the router the operator selected, taken from
+	// the discovery list the UI already holds. It is what lets a refused dial be
+	// answered with the address the router moved to (same MAC = same router)
+	// instead of a guess at whatever else answers on this LAN.
+	MAC      string `json:"mac"`
 	Password string `json:"password"`
 }
 
@@ -1233,7 +1238,7 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	if client == nil {
 		// Prefer the host-key refusal: it names the fingerprint and the exact
 		// way to trust it, which a generic message would hide.
-		writeError(w, 502, sshConnectFailureMessage(req.IP, "cannot connect to router via SSH"))
+		writeRouterDialFailure(w, req.IP, req.MAC, "cannot connect to router via SSH")
 		return
 	}
 	defer client.Close()
@@ -1557,6 +1562,21 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// writeErrorExtra is writeError with fields the UI can act on, for a failure that
+// carries a recovery. `error` stays the primary channel: every existing caller and
+// an older index.html read it, and it is what the operator sees if the extra field
+// is ignored.
+func writeErrorExtra(w http.ResponseWriter, code int, msg string, extra map[string]string) {
+	payload := make(map[string]string, len(extra)+1)
+	payload["error"] = msg
+	for k, v := range extra {
+		payload[k] = v
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(payload)
 }
 
 // wifiEnableCmd is the UCI step that makes a scan possible: enable every

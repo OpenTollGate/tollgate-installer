@@ -716,7 +716,9 @@ async function wifiScan() {
     const resp = await fetch('/api/wifi-scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip: ip, password: password }),
+      // mac identifies the router across a renumber, so a refused dial can be
+      // answered with the address the router moved to instead of a guess.
+      body: JSON.stringify({ ip: ip, password: password, mac: ((selectedRouterInfo() || {}).mac) || '' }),
     });
     const data = await resp.json();
 
@@ -736,6 +738,14 @@ async function wifiScan() {
         // control next to the router, which is the only thing that can fix it.
         ssidHint.textContent = data.error;
         showTrustHint(selectedRouterInfo());
+      } else if (data.suggestedIp) {
+        // The router is not at the address this wizard holds — the install moved
+        // its management address (a deploy renumbers the router and the wizard
+        // keeps the old one). Blaming the password here is what sent the operator
+        // hunting for a router that was answering all along, so offer the address
+        // that DID answer instead.
+        ssidHint.textContent = data.error;
+        showMovedRouterHint(data.suggestedIp);
       } else {
         ssidHint.textContent = evidence
           ? data.error
@@ -809,6 +819,46 @@ async function wifiScan() {
     wifiScanInFlight = false;
     rescanBtn.disabled = false;
   }
+}
+
+// showMovedRouterHint renders the recovery for a scan whose router answered at a
+// different address than the one selected. It does not switch the target by
+// itself: it re-lists the routers (the answer the wizard trusts), selects the
+// suggested address when the scan actually lists it, and leaves the choice —
+// including its absence — visible to the operator.
+function showMovedRouterHint(ip) {
+  const el = document.getElementById('ssid-hint');
+  if (!el) return;
+  const box = document.createElement('div');
+  box.className = 'hint-action';
+
+  const line = document.createElement('div');
+  line.textContent = 'A router answers at ' + ip + '. Rescan to select it, then run the scan again.';
+  box.appendChild(line);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'use-suggested-router';
+  btn.className = 'btn btn-secondary';
+  btn.textContent = 'Rescan for routers';
+  btn.addEventListener('click', async function () {
+    btn.disabled = true;
+    try {
+      await scan();
+      const sel = document.getElementById('router-select');
+      if (sel) {
+        const matching = Array.prototype.find.call(sel.options, function (o) { return o.value === ip; });
+        if (matching) {
+          sel.value = ip;
+          sel.dispatchEvent(new Event('change'));
+        }
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  box.appendChild(btn);
+  el.appendChild(box);
 }
 
 async function scan() {
