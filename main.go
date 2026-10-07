@@ -465,7 +465,7 @@ func handleIdentify(w http.ResponseWriter, r *http.Request) {
 
 // wifiScanRequest is the JSON body for /api/wifi-scan.
 type wifiScanRequest struct {
-	IP       string `json:"ip"`
+	IP string `json:"ip"`
 	// MAC is the hardware address of the router the operator selected, taken from
 	// the discovery list the UI already holds. It is what lets a refused dial be
 	// answered with the address the router moved to (same MAC = same router)
