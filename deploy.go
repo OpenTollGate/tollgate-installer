@@ -2280,6 +2280,35 @@ func dnsAnswerOK(out string) bool {
 	return false
 }
 
+// dnsResultLabel returns a compact description of a resolver probe outcome.
+// When the probe did not resolve, it extracts the reason word the operator
+// needs (REFUSED, NXDOMAIN, timed out, ...) so the diagnostic answers
+// "how each failed".
+func dnsResultLabel(out string) string {
+	if dnsAnswerOK(out) {
+		return "ok"
+	}
+	s := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(out, "\n", " ")))
+	for _, reason := range []string{"refused", "nxdomain", "no servers could be reached", "timed out", "can't find"} {
+		if strings.Contains(s, reason) {
+			return reason
+		}
+	}
+	if s == "" {
+		return "empty"
+	}
+	return "fail"
+}
+
+// upstreamUsable reports whether the router has a usable internet path: a
+// reachable first hop (pingOK) AND at least one working resolver path. The
+// resolver path can be the upstream's own resolvers (dnsOK) or a public fallback
+// (publicOK). This prevents a deploy-blocking false negative when the AP hands
+// out a DNS resolver it does not actually serve, but 1.1.1.1/9.9.9.9 answer.
+func upstreamUsable(pingOK, dnsOK, publicOK bool) bool {
+	return pingOK && (dnsOK || publicOK)
+}
+
 // upstreamVerdict names which side owns an upstream failure, so the operator
 // does not have to work it out from a wall of probe output. Pure, so the
 // classification is unit-tested against every real-world case seen in the field.
@@ -2323,6 +2352,7 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 	sshRun(client, "/etc/init.d/dnsmasq restart 2>/dev/null; true")
 	var pingOK, dnsOK, routeOK, publicOK bool
 	fallback := ""
+	resolverResults := []string{"upstream-resolver: probing via nslookup github.com"}
 	for i := 0; i < 8; i++ {
 		pout := sshRun(client, "ping -c1 -W3 1.1.1.1 2>&1 | tail -2")
 		pingOK = strings.Contains(pout, "1 received") || strings.Contains(pout, "1 packets received")
@@ -2334,10 +2364,14 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+	resolverResults[0] = "upstream-resolver: " + dnsResultLabel(sshRun(client, "nslookup github.com 2>&1 | tail -3"))
 	// Resolvers handed out by the upstream are dead; is DNS blocked outright?
 	if pingOK && !dnsOK {
 		for _, pub := range []string{"1.1.1.1", "9.9.9.9"} {
-			if !dnsAnswerOK(sshRun(client, "nslookup github.com "+pub+" 2>&1 | tail -3")) {
+			pout := sshRun(client, "nslookup github.com "+pub+" 2>&1 | tail -3")
+			ok := dnsAnswerOK(pout)
+			resolverResults = append(resolverResults, fmt.Sprintf("public %s: %s", pub, dnsResultLabel(pout)))
+			if !ok {
 				continue
 			}
 			publicOK = true
@@ -2354,6 +2388,7 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 	parts := []string{
 		upstreamVerdict(pingOK, dnsOK, routeOK, publicOK),
 		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v default-route=%v public-dns=%v", pingOK, dnsOK, routeOK, publicOK),
+		"resolvers:\n  " + strings.Join(resolverResults, "\n  "),
 	}
 	if fallback != "" {
 		parts = append(parts, fallback)
@@ -2369,7 +2404,7 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 	} {
 		parts = append(parts, p)
 	}
-	return pingOK && dnsOK, strings.Join(parts, "\n")
+	return upstreamUsable(pingOK, dnsOK, publicOK), strings.Join(parts, "\n")
 }
 
 // staSetupScript returns the shell script that configures the
