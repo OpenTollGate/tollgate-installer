@@ -96,6 +96,23 @@ Makefile keeps — `PKG_SOURCE_VERSION` (hyphen, tags the release) and
 | Assets | 7 arches × {`.ipk`, `.apk`} = 14: `aarch64_cortex-a53`, `aarch64_cortex-a72`, `arm_cortex-a7`, `mips64_octeonplus`, `mipsel_24kc`, `mips_24kc`, `x86_64` |
 | Naming | `tollgate-wrt_0.6.0_alpha2_pre_<arch>.<ext>` |
 
+> **Club-only from here.** The pin above (`v0.6.0-alpha2-pre3`) predates the
+> 2026-10-08 club-scope decision and still carries all 7 arches. From that
+> change onward the feed publishes **only the club set** — `aarch64_cortex-a53`
+> (GL-MT3000, GL-MT6000) and `mips_24kc` (GL.iNet AR300M family), each in
+> `.apk` + `.ipk` = 4 assets. The other five arch rows are parked as comment
+> lines in the feed's `release-assets.py` (`RELEASES`) and restorable by
+> uncommenting; see `FreedomTechFeed/packages` PR #55 and its
+> `docs/per-arch-release-assets.md`.
+>
+> **Consequence for this repo:** nothing here needs an arch list — `feedAssetURL`
+> derives the URL from the detected tuple, so a parked lane needs no installer
+> edit. But when `feedReleaseTagDefault` is bumped to a club-only tag, the
+> offline 14-name pin in `TestFeedAssetURL` must shrink to those 4 names (the
+> live `TestFeedReleasePublishesEachDerivedAssetName` follows the release
+> automatically). A non-club router then fails loudly at download time, which is
+> the intended outcome — it never installs a wrong-arch binary.
+
 There is exactly **one** version literal in the code —
 `feedReleaseTagDefault = "v0.6.0-alpha2-pre3"` — and one conversion rule,
 `feedPkgVersionForTag` (strip the leading `v`, `-` → `_`). `feedAssetURL` builds

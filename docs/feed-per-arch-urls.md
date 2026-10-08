@@ -65,8 +65,13 @@ substitutes `aarch64_cortex-a53`.
 The feed is the canonical source of per-arch tollgate-wrt packages (Phase 2).
 Pointing the wizard at it means:
 
-- Every known arch resolves to a real, published binary — no more
-  `ok=false` for `mipsel_24kc` / `mips_24kc` / `x86_64`.
+- Every published arch resolves to a real binary. Since the 2026-10-08
+  club-scope decision the feed publishes **`aarch64_cortex-a53`** (GL-MT3000,
+  GL-MT6000) and **`mips_24kc`** (GL.iNet AR300M family); `mipsel_24kc` and
+  `x86_64` rows are parked in the feed and will 404 until restored. Nothing
+  here lists them: `feedAssetURL` derives every URL from the detected tuple, so
+  parking is a feed-side edit only and a non-club router fails loudly at
+  download rather than installing a wrong-arch build.
 - The bench GL-MT6000 (`aarch64_cortex-a53`) downloads from the feed, proving
   "test the feed via the installer" end-to-end.
 - The GitHub release remains as a safety net, so a feed outage or a
