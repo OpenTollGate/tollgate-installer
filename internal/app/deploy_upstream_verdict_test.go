@@ -59,9 +59,9 @@ func TestDNSAnswerOKRejectsRefusalsAndEmptiness(t *testing.T) {
 // in that shape the deploy must NOT abort at step 5.
 func TestUpstreamUsableAcceptsAnyWorkingResolverPath(t *testing.T) {
 	cases := []struct {
-		name                   string
+		name                    string
 		pingOK, dnsOK, publicOK bool
-		want                   bool
+		want                    bool
 	}{
 		{"healthy", true, true, false, true},
 		{"healthy with public fallback also available", true, true, true, true},

@@ -2221,14 +2221,20 @@ func transportLostDiagnostics(err error) string {
 // breaking all name resolution while ping still worked. Returns the bare LAN
 // IP used, or "" when it could not be determined.
 func repairLanDNS(client *ssh.Client) string {
-	ip := sanitizeIPv4(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null"))
+	return repairLanDNSWith(func(cmd string) string { return sshRun(client, cmd) })
+}
+
+// repairLanDNSWith is repairLanDNS with the SSH runner injected, so the
+// upstream bootstrapping can be unit-tested without a router.
+func repairLanDNSWith(run routerRun) string {
+	ip := sanitizeIPv4(run("uci -q get network.lan.ipaddr 2>/dev/null"))
 	if ip == "" {
-		ip = sanitizeIPv4(sshRun(client, "ip -4 -o addr show dev br-lan 2>/dev/null | awk '{print $4}' | head -1"))
+		ip = sanitizeIPv4(run("ip -4 -o addr show dev br-lan 2>/dev/null | awk '{print $4}' | head -1"))
 	}
 	if ip == "" {
 		return ""
 	}
-	sshRun(client, strings.Join([]string{
+	run(strings.Join([]string{
 		"for a in $(uci -q get dhcp.@dnsmasq[0].address); do case \"$a\" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address=\"$a\";; esac; done",
 		"uci -q add_list dhcp.@dnsmasq[0].address='/tollgate.lan/" + ip + "'",
 		"for a in $(uci -q get dhcp.lan.dhcp_option); do case \"$a\" in 6,*) uci -q del_list dhcp.lan.dhcp_option=\"$a\";; esac; done",
@@ -2331,56 +2337,202 @@ func upstreamVerdict(pingOK, dnsOK, defaultRoute, publicDNSOK bool) string {
 	}
 }
 
+// ─── Cold-start uplink precondition ────────────────────────────────
+
+// resolvNameserverPresent reports whether a resolver config lists at least one
+// NON-LOOPBACK nameserver. Loopback (127.x / ::1) is dnsmasq itself answering,
+// and 0.0.0.0 is the "no resolver" placeholder the DHCP client may write —
+// neither means the upstream handed us a resolver, which is the precondition
+// this guards.
+func resolvNameserverPresent(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nameserver" {
+			continue
+		}
+		switch ns := fields[1]; {
+		case strings.HasPrefix(ns, "127."), ns == "0.0.0.0", ns == "::1", ns == "localhost":
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// uplinkPreconditionMet reports whether it is meaningful to believe a DNS
+// failure at all: a non-loopback nameserver is present (in resolv.conf.auto,
+// or /etc/resolv.conf) AND the router's own dnsmasq actually resolves a name.
+// While either half is missing a failing probe is evidence about the DHCP
+// hand-off, not about the upstream — which is the false negative the
+// cold-start wait exists to remove.
+func uplinkPreconditionMet(resolvAuto, resolv, nslookupOut string) bool {
+	return (resolvNameserverPresent(resolvAuto) || resolvNameserverPresent(resolv)) &&
+		dnsAnswerOK(nslookupOut)
+}
+
+// waitForUplinkResolvers polls the cold-start precondition, at most `attempts`
+// times with `interval` between polls, and returns (met, lastObservation). It
+// is bounded on purpose: a gate that waits forever is a gate that hangs the
+// wizard, and one that never waits is the bug this fixes. The observation is
+// returned for the failure detail so the operator can see WHICH half never
+// arrived.
+func waitForUplinkResolvers(run routerRun, attempts int, interval time.Duration) (bool, string) {
+	var last string
+	for i := 1; i <= attempts; i++ {
+		ra := run(uplinkResolvAutoCmd)
+		rc := run(uplinkResolvCmd)
+		ns := run(uplinkDNSCmd)
+		last = fmt.Sprintf("nameserver-in-resolv.auto=%v nameserver-in-resolv.conf=%v dnsmasq-dns=%s (poll %d/%d)",
+			resolvNameserverPresent(ra), resolvNameserverPresent(rc), dnsResultLabel(ns), i, attempts)
+		if uplinkPreconditionMet(ra, rc, ns) {
+			return true, last
+		}
+		if i < attempts {
+			time.Sleep(interval)
+		}
+	}
+	return false, last
+}
+
+// reloadDnsmasqOnce makes dnsmasq follow the current uplink exactly once, so
+// the gate's behaviour does not depend on netifd's hotplug event having landed
+// before the first DNS probe. A reload re-reads the resolver files without
+// dropping the LAN's DNS service; a restart is the fallback.
+func reloadDnsmasqOnce(run routerRun) string {
+	return run("/etc/init.d/dnsmasq reload 2>/dev/null || /etc/init.d/dnsmasq restart 2>/dev/null; true")
+}
+
+// uplinkResolverFallbackCommand is the router-side repair the project's own
+// diagnostic names by hand ("point dnsmasq at 1.1.1.1"): drop any stale copy of
+// the server first so the list stays de-duplicated across repeated runs, add
+// it, commit, and restart dnsmasq so it takes effect. The caller logs the exact
+// command it ran.
+func uplinkResolverFallbackCommand(pub string) string {
+	return "uci -q del_list dhcp.@dnsmasq[0].server='" + pub + "' 2>/dev/null; " +
+		"uci -q add_list dhcp.@dnsmasq[0].server='" + pub + "' && uci commit dhcp && " +
+		"/etc/init.d/dnsmasq restart 2>/dev/null; sleep 2"
+}
+
+// upstreamPingOK reports whether the first hop answers.
+func upstreamPingOK(run routerRun) bool {
+	out := run(uplinkPingCmd)
+	return strings.Contains(out, "1 received") || strings.Contains(out, "1 packets received")
+}
+
 // upstreamOnline reports whether the router can actually USE the internet
 // after the STA associates — a wwan interface can be "up" (layer-2 associated)
 // with no default route or no working DNS. It first repairs the dnsmasq
 // entries (see repairLanDNS) so corruption from an earlier installer run does
-// not mask a healthy upstream, then restarts dnsmasq once. Returns a
-// multi-line diagnostic block for logging/failure detail. The payment backend
-// registers its wallet (probing every mint) BEFORE it binds :2121, so no
-// internet means the API never comes up — this check turns a 2-minute
-// health-check timeout into an immediate, actionable message.
+// not mask a healthy upstream, makes dnsmasq follow the CURRENT uplink once,
+// and then WAITS on the cold-start precondition before it trusts any DNS
+// verdict. Returns a multi-line diagnostic block for logging/failure detail.
+// The payment backend registers its wallet (probing every mint) BEFORE it
+// binds :2121, so no internet means the API never comes up — this check turns a
+// 2-minute health-check timeout into an immediate, actionable message.
+//
+// COLD-START RACE (the "first install fails, second succeeds" report). dnsmasq
+// starts at boot with no upstream; it only learns the DHCP lease's resolvers
+// when netifd's hotplug fires (or something restarts it). On a COLD run
+// (scan + WPA + DHCP) the first DNS probe raced that hand-off, so the gate
+// failed an upstream that was healthy, rolled the STA config back, and the
+// SECOND run — now warm, association fast, resolv.conf.auto populated sooner —
+// passed with no configuration change. STEP 11's health check already retries
+// 40×3s for exactly this class ("DNS/time are still settling after the upstream
+// connects"); the uplink gate had no equivalent. It now does.
 //
 // When the upstream's own resolvers do not answer but a public resolver does
 // (a guest network that hands out resolvers it does not serve), the fix is one
-// uci command — so the installer applies it and re-tests, instead of failing an
-// install that can succeed. Nothing is applied when public DNS is blocked too.
+// uci change — so the installer applies it, LOGS THE EXACT CHANGE, and retries
+// the gate once, instead of failing an install that can succeed. Nothing is
+// applied when public DNS is blocked too.
 func upstreamOnline(client *ssh.Client) (bool, string) {
-	if lanIP := repairLanDNS(client); lanIP != "" {
-		sshRun(client, "logger -t tollgate-installer 'dns entries repaired for "+lanIP+"' 2>/dev/null; true")
+	return upstreamOnlineWith(func(cmd string) string { return sshRun(client, cmd) },
+		uplinkResolverWaitAttempts, uplinkResolverWaitInterval)
+}
+
+const (
+	// uplinkResolverWaitAttempts × uplinkResolverWaitInterval bound the
+	// cold-start wait for the upstream's resolvers to land: 30 × 3s = 90s.
+	// Polling the precondition — not a fixed sleep — is the point: the
+	// resolvers arrive when the DHCP lease does, which is not a fixed delay.
+	uplinkResolverWaitAttempts = 30
+	uplinkResolverWaitInterval = 3 * time.Second
+
+	// The three probes the cold-start wait polls. uplinkDNSCmd asks the
+	// router's OWN dnsmasq (no server argument) — the resolver path a LAN
+	// client would actually use.
+	uplinkResolvAutoCmd = "grep -v '^#' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null | head -6"
+	uplinkResolvCmd     = "grep -v '^#' /etc/resolv.conf 2>/dev/null | head -6"
+	uplinkDNSCmd        = "nslookup github.com 2>&1 | tail -3"
+	uplinkPingCmd       = "ping -c1 -W3 1.1.1.1 2>&1 | tail -2"
+	uplinkRouteCmd      = "ip route show 2>/dev/null"
+)
+
+// upstreamOnlineWith is upstreamOnline with the SSH runner and the wait budget
+// injected, so the cold-start ordering is unit-testable without a router.
+func upstreamOnlineWith(run routerRun, waitAttempts int, waitInterval time.Duration) (bool, string) {
+	if lanIP := repairLanDNSWith(run); lanIP != "" {
+		run("logger -t tollgate-installer 'dns entries repaired for " + lanIP + "' 2>/dev/null; true")
 	}
-	sshRun(client, "/etc/init.d/dnsmasq restart 2>/dev/null; true")
-	var pingOK, dnsOK, routeOK, publicOK bool
+	// Make dnsmasq follow the CURRENT uplink once, before anything is probed.
+	// A reload re-reads the resolver files without dropping the LAN's DNS
+	// service; a restart is the fallback. The old code restarted dnsmasq
+	// unconditionally HERE — i.e. once, immediately, whether or not there was
+	// an uplink for it to read — which is what made the first cold probe
+	// racing the DHCP lease the deciding probe.
+	reloadDnsmasqOnce(run)
+
+	// Confirm the uplink BEFORE waiting on resolvers: with no default route or
+	// a dead first hop there is nothing to wait for, and the routing verdict
+	// below is the honest answer.
+	routeOK := defaultRoutePresent(run(uplinkRouteCmd))
+	pingOK := upstreamPingOK(run)
+	precondOK := false
+	precondDiag := "skipped — the uplink is not up yet (default-route/ping failed)"
+	if routeOK && pingOK {
+		precondOK, precondDiag = waitForUplinkResolvers(run, waitAttempts, waitInterval)
+	}
+
+	var dnsOK, publicOK bool
 	fallback := ""
 	resolverResults := []string{"upstream-resolver: probing via nslookup github.com"}
 	for i := 0; i < 8; i++ {
-		pout := sshRun(client, "ping -c1 -W3 1.1.1.1 2>&1 | tail -2")
-		pingOK = strings.Contains(pout, "1 received") || strings.Contains(pout, "1 packets received")
-		routeOK = defaultRoutePresent(sshRun(client, "ip route show 2>/dev/null"))
-		dout := sshRun(client, "nslookup github.com 2>&1 | tail -3")
-		dnsOK = dnsAnswerOK(dout)
+		pingOK = upstreamPingOK(run)
+		routeOK = defaultRoutePresent(run(uplinkRouteCmd))
+		dnsOK = dnsAnswerOK(run(uplinkDNSCmd))
 		if pingOK && dnsOK {
 			break
 		}
-		time.Sleep(2 * time.Second)
+		if i < 7 {
+			time.Sleep(waitInterval)
+		}
 	}
-	resolverResults[0] = "upstream-resolver: " + dnsResultLabel(sshRun(client, "nslookup github.com 2>&1 | tail -3"))
+	resolverResults[0] = "upstream-resolver: " + dnsResultLabel(run(uplinkDNSCmd))
 	// Resolvers handed out by the upstream are dead; is DNS blocked outright?
-	if pingOK && !dnsOK {
+	// Only meaningful once ROUTING works: pointing dnsmasq at a public resolver
+	// cannot fix a missing route or an unreachable first hop.
+	if routeOK && pingOK && !dnsOK {
 		for _, pub := range []string{"1.1.1.1", "9.9.9.9"} {
-			pout := sshRun(client, "nslookup github.com "+pub+" 2>&1 | tail -3")
+			pout := run("nslookup github.com " + pub + " 2>&1 | tail -3")
 			ok := dnsAnswerOK(pout)
 			resolverResults = append(resolverResults, fmt.Sprintf("public %s: %s", pub, dnsResultLabel(pout)))
 			if !ok {
 				continue
 			}
 			publicOK = true
-			sshRun(client, "uci -q del_list dhcp.@dnsmasq[0].server='"+pub+"' 2>/dev/null; "+
-				"uci -q add_list dhcp.@dnsmasq[0].server='"+pub+"' && uci commit dhcp && "+
-				"/etc/init.d/dnsmasq restart 2>/dev/null; sleep 3")
-			if dnsAnswerOK(sshRun(client, "nslookup github.com 2>&1 | tail -3")) {
+			// Apply the repair the project's own diagnostic names by hand,
+			// LOG THE EXACT CHANGE (on the router AND in the returned block —
+			// never silent), then retry the gate ONCE.
+			repair := uplinkResolverFallbackCommand(pub)
+			run("logger -t tollgate-installer 'resolver-fallback: applied uci dhcp.@dnsmasq[0].server=" + pub + " (uci commit dhcp + dnsmasq restart)' 2>/dev/null; true")
+			run(repair)
+			fallback = "resolver-fallback: applied `" + repair + "` (the upstream's own resolvers do not answer; " + pub + " does) — retried the gate once"
+			if dnsAnswerOK(run(uplinkDNSCmd)) {
 				dnsOK = true
-				fallback = "resolver-fallback: dnsmasq pointed at " + pub + " (the upstream's own resolvers do not answer)"
 			}
 			break
 		}
@@ -2389,18 +2541,19 @@ func upstreamOnline(client *ssh.Client) (bool, string) {
 		upstreamVerdict(pingOK, dnsOK, routeOK, publicOK),
 		fmt.Sprintf("ping(1.1.1.1)=%v dns(github.com)=%v default-route=%v public-dns=%v", pingOK, dnsOK, routeOK, publicOK),
 		"resolvers:\n  " + strings.Join(resolverResults, "\n  "),
+		fmt.Sprintf("cold-start-wait: met=%v — %s", precondOK, precondDiag),
 	}
 	if fallback != "" {
 		parts = append(parts, fallback)
 	}
 	for _, p := range []string{
-		"route: " + truncate(sshRun(client, "ip route show 2>/dev/null | head -5 | tr '\\n' ' '"), 300),
-		"uplink: " + truncate(sshRun(client, "for i in wwan wan; do s=$(ubus call network.interface.$i status 2>/dev/null | grep -E '\"up\"|address' | head -3 | tr '\\n' ' '); [ -n \"$s\" ] && echo \"$i: $s\"; done"), 300),
-		"resolv: " + truncate(sshRun(client, "grep -v '^#' /etc/resolv.conf 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
-		"resolv.auto: " + truncate(sshRun(client, "grep -v '^#' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
-		"dnsmasq: " + truncate(sshRun(client, "pgrep -f '[d]nsmasq' >/dev/null && echo running || echo 'not running'"), 40),
-		"dnsmasq-log: " + truncate(sshRun(client, "logread 2>/dev/null | grep -i dnsmasq | tail -3 | tr '\\n' ' '"), 300),
-		"dnsmasq-address: " + truncate(sshRun(client, "grep -h '^address=' /var/etc/dnsmasq.conf.* 2>/dev/null | head -3 | tr '\\n' ' '"), 200),
+		"route: " + truncate(run("ip route show 2>/dev/null | head -5 | tr '\\n' ' '"), 300),
+		"uplink: " + truncate(run("for i in wwan wan; do s=$(ubus call network.interface.$i status 2>/dev/null | grep -E '\"up\"|address' | head -3 | tr '\\n' ' '); [ -n \"$s\" ] && echo \"$i: $s\"; done"), 300),
+		"resolv: " + truncate(run("grep -v '^#' /etc/resolv.conf 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
+		"resolv.auto: " + truncate(run("grep -v '^#' /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null | head -4 | tr '\\n' ' '"), 200),
+		"dnsmasq: " + truncate(run("pgrep -f '[d]nsmasq' >/dev/null && echo running || echo 'not running'"), 40),
+		"dnsmasq-log: " + truncate(run("logread 2>/dev/null | grep -i dnsmasq | tail -3 | tr '\\n' ' '"), 300),
+		"dnsmasq-address: " + truncate(run("grep -h '^address=' /var/etc/dnsmasq.conf.* 2>/dev/null | head -3 | tr '\\n' ' '"), 200),
 	} {
 		parts = append(parts, p)
 	}
@@ -3350,6 +3503,11 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 	// bind :2121 until its wallet registers against the mints over the
 	// internet. Fail early with an actionable message rather than a 2-minute
 	// health-check timeout.
+	//
+	// upstreamOnline itself now waits (bounded, 90s) for the DHCP lease's
+	// resolvers to land and for dnsmasq to answer through them before it
+	// trusts a DNS verdict — the cold-start ordering that used to make the
+	// FIRST install fail this gate and the second pass with no config change.
 	if online, odiag := upstreamOnline(client); !online {
 		job.addLog("Router associated to \"" + ssid + "\" but the internet looks unavailable:\n" + odiag)
 		job.addLog("Retrying after a network + dnsmasq reload...")

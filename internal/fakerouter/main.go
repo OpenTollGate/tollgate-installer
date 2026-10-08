@@ -17,8 +17,8 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/rsa"
 	"flag"
 	"fmt"
