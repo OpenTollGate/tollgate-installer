@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -251,17 +252,89 @@ func sshTransportAlive(client *ssh.Client) error {
 	}
 }
 
-// sshRun executes a command and returns combined output. client MUST be live:
-// it is dereferenced here, so callers that may hold a nil client (a relocation
-// that lost the router) must check first — see adoptRelocatedClient.
-func sshRun(client *ssh.Client, cmd string) string {
+// sshCommandTimeout bounds ONE remote command run over an established SSH
+// session.
+//
+// WHY (live defect 2026-10-05, rc17): ssh.ClientConfig.Timeout (the two dial
+// sites above) bounds only the TCP dial and the handshake. The COMMAND itself
+// was unbounded — sshRun called session.CombinedOutput and returned only when
+// the remote command exited or the transport errored. A router that accepts
+// TCP, answers the first probe (the firmware read) and then goes silent — a
+// subnet move, a reboot, a half-dead transport — parked the deploy goroutine
+// there FOREVER: the operator watched "Deploying TollGate..." with step 1 still
+// pending, progressTotal 0, and /api/status still reporting "running". Nothing
+// ever surfaced it, because a job whose goroutine is blocked inside a syscall
+// emits no log line for a watchdog to see.
+//
+// 30s is ~4x the 8s transport probe above and comfortably longer than the
+// slowest legitimate single command on this path, so it never fires on a merely
+// slow router while a wedged one fails in 30s instead of never.
+var sshCommandTimeout = 30 * time.Second
+
+// sshCommandTimeoutError is the operator-facing reason a bounded command was
+// abandoned. It names the recovery, because a router that stops answering
+// mid-deploy is nearly always wedged, not slow.
+func sshCommandTimeoutError(cmd string, d time.Duration) error {
+	return fmt.Errorf("router stopped answering: `%s` produced no answer within %s — the SSH transport is dead (power-cycle the router and re-run)", truncate(cmd, 60), d)
+}
+
+// runBounded runs fn and returns its result — or, when fn has not returned
+// within d, an error naming the abandoned command. fn runs in its own goroutine
+// so a blocking syscall can never park the caller; the channel is buffered so
+// that goroutine can always finish and be collected even after we gave up on it.
+func runBounded(d time.Duration, cmd string, fn func() ([]byte, error)) ([]byte, error) {
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := fn()
+		done <- result{out, err}
+	}()
+	select {
+	case r := <-done:
+		return r.out, r.err
+	case <-time.After(d):
+		return nil, sshCommandTimeoutError(cmd, d)
+	}
+}
+
+// sshRunE executes a command and returns its combined output, or an error.
+// Every command is bounded by sshCommandTimeout, so a silent router yields a
+// reason the deploy can turn into a job failure instead of an infinite spinner.
+// It also refuses a nil client, which the old sshRun dereferenced — panicking
+// the whole installer.
+func sshRunE(client *ssh.Client, cmd string) (string, error) {
+	if client == nil {
+		return "", errors.New("no SSH client — the router connection was lost (relocation, reboot, or a moved cable)")
+	}
 	session, err := client.NewSession()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	defer session.Close()
-	output, err := session.CombinedOutput(cmd)
-	return string(output)
+	// Close OFF the critical path: on a half-dead transport Close can block on
+	// the same dead socket, and that is precisely the state this function exists
+	// to survive.
+	defer func() { go session.Close() }()
+	out, err := runBounded(sshCommandTimeout, cmd, func() ([]byte, error) {
+		return session.CombinedOutput(cmd)
+	})
+	return string(out), err
+}
+
+// sshRun executes a command and returns combined output. It is bounded by
+// sshCommandTimeout and nil-safe, so it can no longer park the deploy forever
+// or panic on a client that a relocation left nil. A timeout returns "" (so the
+// existing live-fetch → router-wget → feed fallbacks still apply) and is
+// reported on the wizard's terminal, naming the command that stopped answering.
+// Callers that must FAIL FAST on a dead transport use sshRunE instead.
+func sshRun(client *ssh.Client, cmd string) string {
+	out, err := sshRunE(client, cmd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tollgate-installer: ssh %s: %v\n", truncate(cmd, 60), err)
+	}
+	return out
 }
 
 // sshUploadPipe writes binary data to the router via SSH stdin.

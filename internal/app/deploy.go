@@ -1037,7 +1037,18 @@ func runDeployment(job *Job, req deployRequest) {
 		// only), yet a forced reflash (req.ForceFlash) still needs it to pick
 		// the image. board_name is "glinet,gl-mt6000"; glModelMap keys are the
 		// bare lowercase model ("gl-mt6000").
-		glModel = glModelFromBoard(sshRun(client, "cat /tmp/sysinfo/board_name 2>/dev/null"))
+		// The next statement is another REMOTE COMMAND, and it is exactly where
+		// rc17's infinite spinner was measured (2026-10-05): the router answered
+		// the firmware read above and then went silent, and the unbounded sshRun
+		// parked the deploy goroutine here FOREVER — step 0 done, step 1 still
+		// pending, progressTotal 0, /api/status still "running". Use the bounded
+		// form and fail the job with the reason instead of spinning.
+		board, boardErr := sshRunE(client, "cat /tmp/sysinfo/board_name 2>/dev/null")
+		if boardErr != nil {
+			failTransportLost(job, 0, req.IP, boardErr)
+			return
+		}
+		glModel = glModelFromBoard(board)
 	}
 	time.Sleep(500 * time.Millisecond)
 
@@ -1831,7 +1842,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 			"tollgate-wrt not installed", "tollgate-wrt init script missing — package install failed")
 		return
 	}
-	svcOut := sshRun(client, strings.Join([]string{
+	svcOut, svcErr := sshRunE(client, strings.Join([]string{
 		"/etc/init.d/rpcd restart 2>&1",
 		// Use stop||true;start instead of restart — on OpenWrt 25, restart
 		// calls "ubus call service delete" which fails if the service was
@@ -1843,8 +1854,28 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		"sleep 3",
 		"echo 'services restarted'",
 	}, "; "))
-	job.addLog("Services restarted: " + truncate(svcOut, 60))
+	if svcErr != nil {
+		// A transport error ending this command is EXPECTED, not evidence the
+		// router failed: this step reloads networking on the router we are
+		// driving over (tollgate-wrt's uci-defaults derive network.private from
+		// network.lan). See transport_reacquire.go.
+		job.addLog("Service restart command ended with a transport error: " + svcErr.Error())
+	} else {
+		job.addLog("Services restarted: " + truncate(svcOut, 60))
+	}
 	job.setStep(10, "done", "tollgate-wrt+nodogsplash+uhttpd")
+
+	// The restart above reloads networking on the router we are driving over, so
+	// it can kill this very session. Prove the session survived, and re-acquire
+	// it within a bounded window if it did not — BEFORE the collision re-check
+	// and the health gate run. Without this the deploy blamed the router for a
+	// failure it caused itself, then told the operator to go find it by hand.
+	if nc, err := ensureTransportAfterRestart(job, client, req.IP, req.Password); err != nil {
+		failTransportLost(job, 10, req.IP, err)
+		return
+	} else {
+		client = nc
+	}
 	time.Sleep(500 * time.Millisecond)
 
 	// Step 10.5: Re-check subnet collisions now that the tollgate-wrt package
@@ -2054,6 +2085,92 @@ func jobFail(job *Job, step int, stepDetail, jobErr string) {
 	job.Status = "failed"
 	job.Error = jobErr
 	job.mu.Unlock()
+}
+
+// jobStallTimeout is how long a RUNNING job may make no observable progress
+// (no log line, no step change, no progress-counter move) before the watchdog
+// fails it.
+//
+// It is the backstop for the whole class of defect that produced rc17's
+// infinite "Deploying TollGate..." spinner: a goroutine parked in an unbounded
+// blocking call — an SSH command on a half-dead transport, a TCP read, a lock.
+// sshRun is individually bounded now, but only a watchdog covers the call site
+// nobody thought about, and the operator must never be left staring at a
+// progress bar that will never move.
+//
+// 3 minutes is comfortably longer than the slowest legitimate gap: a 10 MiB
+// package download on a slow uplink emits its "Downloading ..." line first, and
+// the post-flash reboot wait logs while it polls.
+var jobStallTimeout = 3 * time.Minute
+
+// failIfStalled fails job when it is still running and has made no observable
+// progress for limit, and reports whether it did so. The whole decision happens
+// under ONE lock: the watchdog reads the job and then acts, so a deploy that
+// finished (or already failed) in between must not be overwritten by a stale
+// stall verdict — that would report a good deploy as a failure.
+func failIfStalled(job *Job, limit time.Duration) bool {
+	if job == nil {
+		return false
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if job.Status != "running" {
+		return false
+	}
+	if time.Since(job.lastActivity) < limit {
+		return false
+	}
+	step := job.Step
+	where := ""
+	if step >= 0 && step < len(job.Steps) {
+		where = job.Steps[step].Desc
+		job.Steps[step].Status = "failed"
+		job.Steps[step].Detail = "no progress for " + limit.String()
+	}
+	// Same consistency rule as failTransportLost: a job that never reached a
+	// step must not render as pending/running once the job is terminal.
+	for i := range job.Steps {
+		if i == step {
+			continue
+		}
+		if job.Steps[i].Status == "pending" || job.Steps[i].Status == "running" {
+			job.Steps[i].Status = "skipped"
+			job.Steps[i].Detail = "not reached — the installer stalled"
+		}
+	}
+	job.Status = "failed"
+	job.Error = fmt.Sprintf("the installer stopped making progress: no answer for %s at step %d (%s).\n\n"+
+		"The router stopped answering mid-deploy, so the remaining steps did not run and nothing could be\n"+
+		"verified. Power-cycle the router and re-run. If it stalls at the same step again, capture the\n"+
+		"wizard's terminal output (and a `pkill -QUIT -f tollgate-installer` goroutine dump) and report it.",
+		limit, step, where)
+	return true
+}
+
+// startJobWatchdog fails job if it makes no observable progress for limit. It
+// returns immediately; the watcher exits on its own once the job is terminal.
+func startJobWatchdog(job *Job, limit time.Duration) {
+	if job == nil || limit <= 0 {
+		return
+	}
+	tick := limit / 10
+	if tick < 250*time.Millisecond {
+		tick = 250 * time.Millisecond
+	}
+	go func() {
+		for {
+			time.Sleep(tick)
+			if failIfStalled(job, limit) {
+				return
+			}
+			job.mu.Lock()
+			done := job.Status != "running"
+			job.mu.Unlock()
+			if done {
+				return
+			}
+		}
+	}()
 }
 
 // requiredInstalledKiB is the installed footprint of the tollgate-wrt payload.

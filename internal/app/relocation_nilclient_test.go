@@ -229,12 +229,24 @@ func panicked(fn func()) (yes bool) {
 }
 
 // TestNilClientPanicsABareDereference is the positive control for every test
-// below: the nil client #52 can produce really does panic sshRun (and therefore
-// repairLanDNS/upstreamOnline, which is the reviewer's verified cascade), so a
-// green result below cannot be an artifact of nil being harmless here.
+// below: a bare nil *ssh.Client really is fatal when dereferenced, so a green
+// result below cannot be an artifact of nil being harmless here.
+//
+// The VEHICLE changed on 2026-10-05 (rc17). This control used to drive sshRun,
+// because sshRun dereferenced the client itself ("client MUST be live: it is
+// dereferenced here"). sshRun is now bounded AND nil-safe (see sshCommandTimeout
+// / sshRunE), so a nil client that reaches it degrades to an error instead of the
+// process-killing panic of BLOCK 2: that hazard is fixed at its root rather than
+// guarded around by each caller. The nil is still fatal to a BARE dereference,
+// which is what keeps this control honest — and the second assertion pins the new
+// contract, so a future edit cannot quietly restore the panic.
 func TestNilClientPanicsABareDereference(t *testing.T) {
-	if !panicked(func() { sshRun(nil, "echo hi") }) {
-		t.Fatal("sshRun(nil, …) did not panic — the nil-client hazard of BLOCK 2 is not being reproduced, so the guards below prove nothing")
+	var c *ssh.Client
+	if !panicked(func() { _, _ = c.NewSession() }) {
+		t.Fatal("a bare nil *ssh.Client dereference did not panic — the nil-client hazard of BLOCK 2 is not being reproduced, so the guards below prove nothing")
+	}
+	if _, err := sshRunE(nil, "echo hi"); err == nil {
+		t.Error("sshRunE(nil, …) must return an error — a nil client must never kill the whole wizard process")
 	}
 }
 

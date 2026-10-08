@@ -214,6 +214,11 @@ type Job struct {
 	progressCurrent int
 	progressTotal   int
 	progressLabel   string
+	// lastActivity is the wall-clock time of the last OBSERVABLE progress: a log
+	// line, a step change, or a progress-counter move. The stall watchdog reads
+	// it to fail a job whose goroutine is parked somewhere unbounded, so every
+	// one of those three setters must touch it. Guarded by mu.
+	lastActivity time.Time
 	// relocationFailDetail is the scenario-specific reason + recovery for a
 	// subnet relocation that lost the router (set by moveLocalSubnet, rendered
 	// by adoptRelocatedClient). It exists so the failure names the bridge that
@@ -230,12 +235,13 @@ var (
 
 func newJob(ip string) *Job {
 	return &Job{
-		IP:         ip,
-		Status:     "running",
-		Step:       0,
-		Steps:      deploySteps(),
-		Log:        []LogEntry{},
-		stageCache: map[string][]byte{},
+		IP:           ip,
+		Status:       "running",
+		Step:         0,
+		Steps:        deploySteps(),
+		Log:          []LogEntry{},
+		stageCache:   map[string][]byte{},
+		lastActivity: time.Now(),
 	}
 }
 
@@ -265,18 +271,20 @@ func newJobID() (string, error) {
 // prestageSteps() list.
 func newPreStageJob(ip string) *Job {
 	return &Job{
-		IP:         ip,
-		Status:     "running",
-		Step:       0,
-		Steps:      prestageSteps(),
-		Log:        []LogEntry{},
-		stageCache: map[string][]byte{},
+		IP:           ip,
+		Status:       "running",
+		Step:         0,
+		Steps:        prestageSteps(),
+		Log:          []LogEntry{},
+		stageCache:   map[string][]byte{},
+		lastActivity: time.Now(),
 	}
 }
 
 func (j *Job) addLog(msg string) {
 	j.mu.Lock()
 	j.Log = append(j.Log, LogEntry{Time: float64(time.Now().Unix()), Msg: msg})
+	j.lastActivity = time.Now()
 	j.mu.Unlock()
 }
 
@@ -339,6 +347,7 @@ func (j *Job) setStep(i int, status, detail string) {
 	j.mu.Lock()
 	if i < len(j.Steps) {
 		j.Step = i
+		j.lastActivity = time.Now()
 		j.Steps[i].Status = status
 		if detail != "" {
 			j.Steps[i].Detail = detail
@@ -395,6 +404,7 @@ func (j *Job) setProgress(current, total int, label string) {
 	j.progressCurrent = current
 	j.progressTotal = total
 	j.progressLabel = label
+	j.lastActivity = time.Now()
 	j.mu.Unlock()
 }
 
@@ -421,10 +431,22 @@ func adoptStageCache(dst, src *Job) int {
 
 // ─── API handlers ─────────────────────────────────────────────
 
+// handleScan answers /api/scan.
+//
+// When discovery finds nothing, the response carries the diagnostic block (and
+// its rendered text) alongside the empty router list: which interfaces exist and
+// in what state, the default gateway(s), every address that was probed with what
+// it answered, and the remediation steps in order. The wizard renders that
+// instead of the one sentence that named nothing (see formatScanFailure).
 func handleScan(w http.ResponseWriter, r *http.Request) {
-	routers := discoverRouters()
+	res := scanNetworkFn()
+	body := map[string]any{"routers": res.Routers}
+	if res.Diagnostics != nil {
+		body["diagnostics"] = res.Diagnostics
+		body["failure"] = res.Diagnostics.Text
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"routers": routers})
+	json.NewEncoder(w).Encode(body)
 }
 
 // identifyRequest is the JSON body for /api/identify.
@@ -436,8 +458,14 @@ type identifyRequest struct {
 // handleIdentify re-identifies a router (vendor/model/firmware/name) using the
 // supplied root password. The LAN scan only tries passwordless SSH, so a
 // password-protected router shows as "Router" until the operator types the
-// password; this endpoint lets the UI refresh the label then. Read-only: it
-// probes ports and runs one SSH identification, never changes the router.
+// password; this endpoint lets the UI refresh the label then. It is ALSO the
+// path a manually typed address takes: the wizard's "Router address" box posts
+// here and can deploy straight from the answer, with discovery bypassed
+// entirely.
+//
+// Read-only: it probes ports and runs one SSH identification, never changes the
+// router. The answer is classified honestly (see classifyProbed) so an
+// unidentified host is never labelled a router.
 func handleIdentify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, 405, "method not allowed")
@@ -452,12 +480,14 @@ func handleIdentify(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "IP required")
 		return
 	}
-	info := probeRouterWithPassword(req.IP, req.Password)
+	info := probeRouterWithPasswordFn(req.IP, req.Password)
 	for _, a := range readARPTable() {
 		if a.IP == req.IP && info.MAC == "" {
 			info.MAC = a.MAC
 		}
 	}
+	info.Source = sourceManual
+	info.Identified, info.Note = classifyProbed(info)
 	info.Name = friendlyRouterName(info)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
@@ -1291,6 +1321,7 @@ func handlePreStage(w http.ResponseWriter, r *http.Request) {
 	jobs[jobID] = job
 	jobsMutex.Unlock()
 	go runPreStageJob(job, req)
+	startJobWatchdog(job, jobStallTimeout)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
 }
@@ -1447,6 +1478,9 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	// would kill the whole wizard process. runDeploymentGuarded contains one and
 	// fails the JOB instead (see guardDeploymentPanic).
 	go runDeploymentGuarded(job, req)
+	// The deploy runs in a goroutine that can block on anything; the watchdog is
+	// what turns "no progress for N" into a reported failure (rc17 spinner).
+	startJobWatchdog(job, jobStallTimeout)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
