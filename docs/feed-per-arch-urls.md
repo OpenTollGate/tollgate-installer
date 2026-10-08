@@ -77,6 +77,27 @@ Pointing the wizard at it means:
 - The GitHub release remains as a safety net, so a feed outage or a
   not-yet-published arch still has a fallback path.
 
+## Decision: no club allowlist in the installer
+
+Recorded 2026-10-08 (operator call, after the club-scope change in the feed).
+A reviewer's first instinct on a non-club router failing to download is to add
+a hardcoded "supported arches" list here so the error is friendlier. **Don't.**
+
+- The club set is a *release-scope* decision and it is enforced where the
+  assets are produced (the feed's `release-assets.py` `RELEASES`). A second
+  copy in the installer is an unenforced duplicate that silently rots: the
+  feed could restore an arch and the installer would keep refusing it, or
+  vice versa.
+- Arch detection is already derived from the device (`pkgCandidateURLs`), never
+  from a table, so there is no row to park — parking here would mean
+  *inventing* a list that does not exist.
+- A raw 404 on the derived URL is the honest failure: it names the exact
+  arch/format that was not published, it cannot install a wrong-arch binary,
+  and it self-heals the moment the feed publishes the asset again.
+
+If the error text ever needs to be friendlier, enrich the *message* — keep the
+URL derived.
+
 ## Verification
 
 - `go test ./...` full suite green, zero failures, coverage ≥80%.
