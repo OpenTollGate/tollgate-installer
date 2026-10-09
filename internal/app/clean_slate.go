@@ -228,8 +228,13 @@ func runCleanSlate(job *Job, req cleanSlateRequest) {
 		return
 	}
 	upgradeOut := sshRun(client, cleanSlateFlashCommand)
-	if strings.Contains(strings.ToLower(upgradeOut), "failed") || strings.Contains(strings.ToLower(upgradeOut), "error") {
-		jobFail(job, 2, "sysupgrade failed", upgradeOut)
+	// A successful `sysupgrade -n` kills the SSH session mid-command, after
+	// which ubus prints "Command failed: ubus call system sysupgrade". Matching
+	// bare "failed"/"error" substrings therefore reports a GOOD upgrade as a
+	// failure — exactly what the deploy path did until it was fixed for a real
+	// MT6000. Use the same shared predicate here.
+	if sysupgradeFatal(upgradeOut) {
+		jobFail(job, 2, "sysupgrade failed", parseSysupgradeError(upgradeOut))
 		return
 	}
 	job.addLog("Router rebooting; waiting for vanilla OpenWrt to return")
