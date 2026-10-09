@@ -16,6 +16,16 @@ func TestGLModelFromBoard(t *testing.T) {
 		"glinet,":            "",
 		"mediatek,mt7621":    "",
 		"dlink,covr-x1860":   "",
+		// Stock GL.iNet firmware reports the model with an UNDERSCORE
+		// (/tmp/sysinfo/board_name = "glinet_gl-mt6000"), which carries no comma.
+		// Clean-slating a router that is still on stock firmware is the whole
+		// point of the button, so this spelling must resolve.
+		"glinet_gl-mt6000": "gl-mt6000",
+		"glinet_gl-mt3000": "gl-mt3000",
+		"GLiNet_GL-MT6000": "gl-mt6000",
+		"glinet_gl-ar300m-lite": "gl-ar300m-lite",
+		"foo_bar":          "",
+		"glinet_":          "",
 	}
 	for in, want := range cases {
 		if got := glModelFromBoard(in); got != want {

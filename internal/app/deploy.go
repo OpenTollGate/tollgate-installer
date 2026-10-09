@@ -2859,6 +2859,17 @@ func glModelFromBoard(board string) string {
 	if i := strings.LastIndex(board, ","); i >= 0 {
 		board = strings.TrimSpace(board[i+1:])
 	}
+	// Stock GL.iNet firmware reports the same identity with an UNDERSCORE
+	// (glinet_gl-mt6000): no comma, and the whole string does not start with
+	// "gl-". Flashing vanilla OpenWrt onto a ROUTER STILL ON STOCK FIRMWARE is
+	// a first-class use case (the clean-slate button), so accept that spelling
+	// too — but only when the segment after the last "_" really is a gl- model,
+	// so a foreign board name can never be mistaken for one.
+	if i := strings.LastIndex(board, "_"); i >= 0 {
+		if model := strings.TrimSpace(board[i+1:]); strings.HasPrefix(model, "gl-") {
+			board = model
+		}
+	}
 	if !strings.HasPrefix(board, "gl-") {
 		return ""
 	}
