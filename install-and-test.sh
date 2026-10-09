@@ -289,17 +289,30 @@ resolve_feed_tag() {
 detect_platform() {
     local os arch
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    case "$os" in
+        mingw64_nt-*|msys_nt-*|cygwin_nt-*) os="windows" ;;
+    esac
     arch="$(uname -m)"
     case "$arch" in
         x86_64|amd64)  arch="amd64" ;;
         aarch64|arm64) arch="arm64" ;;
     esac
     PLATFORM="${os}-${arch}"
+    BIN_ASSET="${BIN_NAME}-${PLATFORM}"
+    if [ "${os}" = "windows" ]; then
+        BIN_ASSET="${BIN_ASSET}.exe"
+    fi
 }
 
 detect_platform
 
 echo "Detected platform: ${PLATFORM}"
+
+# Used only by the hermetic shell regression test; never set by the operator.
+if [ "${TOLLGATE_TEST_PLATFORM_ONLY:-0}" = 1 ]; then
+    echo "Asset URL: https://github.com/${FORK_REPO}/releases/latest/download/${BIN_ASSET}"
+    exit 0
+fi
 
 preflight
 
@@ -335,11 +348,11 @@ fi
 # --- 2. find + download binary -----------------------------------------------
 download() {
     local repo="$1" url tries
-    url="https://github.com/${repo}/releases/latest/download/${BIN_NAME}-${PLATFORM}"
-    echo "Downloading ${BIN_NAME}-${PLATFORM} from ${repo} ..."
-    if curl -fsSL --retry 3 -o "${BIN_NAME}" "${url}"; then
-        chmod +x "${BIN_NAME}"
-        echo "OK: ./${BIN_NAME} ($(du -h ${BIN_NAME} | cut -f1))"
+    url="https://github.com/${repo}/releases/latest/download/${BIN_ASSET}"
+    echo "Downloading ${BIN_ASSET} from ${repo} ..."
+    if curl -fsSL --retry 3 -o "${BIN_ASSET}" "${url}"; then
+        chmod +x "${BIN_ASSET}"
+        echo "OK: ./${BIN_ASSET} ($(du -h "${BIN_ASSET}" | cut -f1))"
         return 0
     fi
     return 1
@@ -349,7 +362,7 @@ download() {
 # PR #2 head). Once the PR merges, this same URL pattern works on the org repo.
 # --bin skips the download entirely: locally built binary, air-gapped host, or
 # a Mac smoke-testing a release candidate.
-RUN_BIN="./${BIN_NAME}"
+RUN_BIN="./${BIN_ASSET}"
 if [ -n "${BIN_PATH}" ]; then
     if [ ! -x "${BIN_PATH}" ]; then
         echo "ERROR: --bin ${BIN_PATH} is not an executable file." >&2
@@ -360,7 +373,7 @@ if [ -n "${BIN_PATH}" ]; then
 elif ! download "${FORK_REPO}"; then
     echo "Fork download failed; trying OpenTollGate org release..." >&2
     if ! download "${GH_REPO}"; then
-        echo "ERROR: could not download ${BIN_NAME}-${PLATFORM} from either repo." >&2
+        echo "ERROR: could not download ${BIN_ASSET} from either repo." >&2
         exit 1
     fi
 fi
