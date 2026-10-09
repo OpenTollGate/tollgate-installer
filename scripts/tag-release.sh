@@ -4,11 +4,13 @@
 set -euo pipefail
 
 REPO=""
-SOURCE_REPO="${SOURCE_REPO:-}"
+SOURCE_REPO="${SOURCE_REPO:-OpenTollGate/tollgate-installer}"
 TAG=""
 NOTES=""
 CHECK_ONLY=0
 PRERELEASE=0
+TAG_CREATED=0
+RELEASE_CREATED=0
 REF=""
 CACHE_ROOT="${HOME}/.cache/tollgate-release"
 EXPECTED=(
