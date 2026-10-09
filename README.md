@@ -47,14 +47,31 @@ routers on your LAN and deploys the tollgate-wrt backend over SSH.
    ```
 
 3. **Download the wizard** from the
-   [latest release](https://github.com/OpenTollGate/tollgate-installer/releases/latest):
+   [latest release](https://github.com/felixfelix-bot/tollgate-installer/releases/latest)
+   (the published cross-platform binaries currently live in this release source):
 
    | OS | File |
    |---|---|
    | macOS (Intel) | `tollgate-installer-darwin-amd64` |
    | macOS (Apple Silicon) | `tollgate-installer-darwin-arm64` |
    | Linux (x86_64) | `tollgate-installer-linux-amd64` |
+   | Linux (ARM64) | `tollgate-installer-linux-arm64` |
    | Windows | `tollgate-installer-windows-amd64.exe` |
+
+   Verify the download against the release's `SHA256SUMS` before running it. On
+   macOS:
+   ```sh
+   shasum -a 256 -c SHA256SUMS
+   ```
+   On Linux:
+   ```sh
+   sha256sum -c SHA256SUMS
+   ```
+   In Windows PowerShell:
+   ```powershell
+   Get-FileHash .\tollgate-installer-windows-amd64.exe -Algorithm SHA256
+   ```
+   Compare the displayed hash with the matching line in `SHA256SUMS`.
 
 4. **Run it:**
    ```sh
@@ -192,10 +209,10 @@ troubleshooting table.
 | `/api/status/<id>` | GET | Poll deploy progress |
 | `/api/wifi-scan` | GET | Scan SSIDs (STA/repeater mode) |
 
-> **Note:** `felixfelix-bot`-owned clones may serve a pre-release build. The
-> canonical source is `OpenTollGate/tollgate-installer`. If the raw URL above
-> 404s, the PR with `install-and-test.sh` hasn't merged yet — use option 3
-> (clone + build) until it does.
+> **Note:** `install-and-test.sh` tries the `felixfelix-bot` release source first
+> because that is where the current published installer binaries live, then
+> falls back to the `OpenTollGate` release source. If the raw URL above 404s,
+> use option 3 (clone + build) until the launcher is published there.
 
 ## What the wizard does
 
@@ -257,10 +274,10 @@ feed's package build:
 
 | | |
 |---|---|
-| Selected release tag | `v0.6.0-alpha2-pre3` (the main-tip pre-release) |
-| Package version | `0.6.0_alpha2_pre3` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre3-r1` |
+| Selected release tag | `v0.6.0-alpha2-pre9` (the pinned pre-release default) |
+| Package version | `0.6.0_alpha2_pre9` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre9-r1` |
 | Source commit | `373770a` of `tollgate-module-basic-go` |
-| Asset name | `tollgate-wrt_0.6.0_alpha2_pre3_<arch>.{ipk,apk}` for 7 arches |
+| Asset name | `tollgate-wrt_0.6.0_alpha2_pre9_<arch>.{ipk,apk}` for 7 arches |
 
 The installed binary reports `v0.6.0-alpha2-g373770a` — the version string plus
 the **source commit**. That string is not the package version, on purpose: the
@@ -365,7 +382,8 @@ scripts/release-binaries.sh --tag v0.7.0 --publish   # create/update the release
 ```
 
 It builds linux/darwin × amd64/arm64 plus windows/amd64 with `CGO_ENABLED=0`,
-`-trimpath` and `-buildvcs=false`, stamps `-X main.version` / `-X main.commit`,
+`-trimpath` and `-buildvcs=false`, stamps `-X internal/app.version` /
+`-X internal/app.commit`,
 and writes `SHA256SUMS` (verify with `shasum -a 256 -c SHA256SUMS` on macOS or
 `sha256sum -c SHA256SUMS` on Linux) and `REPRODUCE.txt` (the exact toolchain and
 flags, so anyone can repeat the build). `--publish` needs `gh` with write access
@@ -395,7 +413,8 @@ is then reported as a password-like value. See the repo's own combined
 "password-like value in markdown table" block.)
 
 Asset names are `tollgate-installer-<os>-<arch>[.exe]` — exactly what
-`install-and-test.sh` fetches from `releases/latest/download/`. For a one-off
+`install-and-test.sh` fetches from the selected fork or upstream
+`releases/latest/download/` source. For a one-off
 single binary, `GOOS=darwin GOARCH=arm64 go build -o dist/tollgate-installer-darwin-arm64 .`
 still works.
 
