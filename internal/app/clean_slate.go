@@ -20,9 +20,13 @@ func cleanSlateImage(model, version string) (openWrtImage, error) {
 	if version != "25.12.5" && version != "24.10.8" {
 		return openWrtImage{}, fmt.Errorf("unsupported OpenWrt release %q", version)
 	}
+	reported := strings.TrimSpace(model) // the caller's spelling, for the message
 	model = glModelFromBoard(model)
 	if model == "" {
-		return openWrtImage{}, fmt.Errorf("Unknown GL.iNet model: %s", model)
+		// Name what the router actually reported: the old message interpolated
+		// the variable AFTER it had been emptied by the mapping, so every
+		// operator saw "Unknown GL.iNet model: " with no model in it.
+		return openWrtImage{}, fmt.Errorf("Unknown GL.iNet model: %s. Please update the model table in images.go or flash manually.", reported)
 	}
 	base, ok := glModelMap[model]
 	if !ok {
@@ -61,10 +65,17 @@ func cleanSlateSHA256(sumData []byte, filename string) (string, error) {
 	return "", fmt.Errorf("sha256sums has no entry for %s", filename)
 }
 
-func cleanSlateDetectedBoard(client *ssh.Client) (string, openWrtImage, error) {
+// cleanSlateDetectedBoard reads the router's OpenWrt board name and resolves it
+// to the sysupgrade image for the REQUESTED OpenWrt release.
+//
+// It returns the OpenWrt board string — the identity the operator must type to
+// confirm — and the resolved image. Callers MUST use the returned image and
+// must NOT feed the board string back into cleanSlateImage: that string is an
+// OpenWrt identity ("glinet_gl-mt3000"), not a glModelMap key ("gl-mt3000"), so
+// re-parsing it as a model key failed the whole inspect step for EVERY router.
+func cleanSlateDetectedBoard(client *ssh.Client, version string) (string, openWrtImage, error) {
 	raw := strings.TrimSpace(sshRun(client, "cat /tmp/sysinfo/board_name 2>/dev/null"))
-	model := glModelFromBoard(raw)
-	img, err := cleanSlateImage(model, openWrtVersion)
+	img, err := cleanSlateImage(raw, version)
 	if err != nil {
 		return "", openWrtImage{}, err
 	}
@@ -91,12 +102,7 @@ func cleanSlateInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
-	board, _, err := cleanSlateDetectedBoard(client)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	img, err := cleanSlateImage(board, req.Version)
+	board, img, err := cleanSlateDetectedBoard(client, req.Version)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -151,7 +157,7 @@ func cleanSlateFlash(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "could not connect to router")
 		return
 	}
-	board, _, err := cleanSlateDetectedBoard(client)
+	board, _, err := cleanSlateDetectedBoard(client, req.Version)
 	client.Close()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -184,18 +190,13 @@ func runCleanSlate(job *Job, req cleanSlateRequest) {
 	}
 	defer client.Close()
 	job.setStep(0, "running", "resolving board")
-	board, img, err := cleanSlateDetectedBoard(client)
+	board, img, err := cleanSlateDetectedBoard(client, req.Version)
 	if err != nil {
 		jobFail(job, 0, "identity refused", err.Error())
 		return
 	}
 	if err := validateCleanSlateConfirmation(board, req.Confirmation); err != nil {
 		jobFail(job, 0, "confirmation refused", err.Error())
-		return
-	}
-	img, err = cleanSlateImage(board, req.Version)
-	if err != nil {
-		jobFail(job, 0, "image unavailable", err.Error())
 		return
 	}
 	job.setStep(0, "done", board)
