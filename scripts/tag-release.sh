@@ -4,10 +4,11 @@
 set -euo pipefail
 
 REPO=""
-SOURCE_REPO="${SOURCE_REPO:-OpenTollGate/tollgate-installer}"
+SOURCE_REPO="${SOURCE_REPO:-}"
 TAG=""
 NOTES=""
 CHECK_ONLY=0
+PRERELEASE=0
 REF=""
 CACHE_ROOT="${HOME}/.cache/tollgate-release"
 EXPECTED=(
@@ -23,7 +24,7 @@ EXPECTED=(
 usage() {
   cat <<'USAGE'
 Usage: tag-release.sh [--tag TAG] [--repo OWNER/NAME] [--ref REF]
-                      [--notes TEXT] [--check-only]
+                      --notes TEXT] [--check-only] [--prerelease]
 
 Cuts a release from a clean cached clone, using release-binaries.sh for the
 build and upload, then verifies the remote release and tag commit.
@@ -38,6 +39,7 @@ while (($#)); do
     --ref) [[ $# -ge 2 ]] || die "--ref needs a value"; REF=$2; shift 2 ;;
     --notes) [[ $# -ge 2 ]] || die "--notes needs a value"; NOTES=$2; shift 2 ;;
     --check-only) CHECK_ONLY=1; shift ;;
+    --prerelease) PRERELEASE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -50,6 +52,7 @@ gh auth status >/dev/null 2>&1 || die "gh auth status is not valid"
 ACCOUNT=$(gh api user --jq .login) || die "could not determine authenticated GitHub account"
 [[ -n "$REPO" ]] || REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 [[ "$REPO" =~ ^[^/]+/[^/]+$ ]] || die "repo must be OWNER/NAME, got '$REPO'"
+[[ -n "$SOURCE_REPO" ]] || SOURCE_REPO="$REPO"
 PERM=$(gh api "repos/${REPO}" --jq '.permissions.push') || die "cannot inspect write permission for ${REPO} as ${ACCOUNT}"
 if [[ "$PERM" != true ]]; then
   die "GitHub account '${ACCOUNT}' cannot push to '${REPO}' (permissions.push=${PERM})"
@@ -107,6 +110,9 @@ BUILD_ARGS=(--tag "$TAG" --publish --repo "$REPO")
 if [[ -n "$NOTES" ]]; then BUILD_ARGS+=(--notes "$NOTES"); fi
 BUILD_ARGS+=(--repro-check)
 (cd "$SRC" && bash scripts/release-binaries.sh "${BUILD_ARGS[@]}")
+if ((PRERELEASE)); then
+  gh release edit "$TAG" --repo "$REPO" --prerelease --latest=false
+fi
 
 REMOTE_COMMIT=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.sha') || die "remote tag ${TAG} is missing"
 REMOTE_TYPE=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.type')
