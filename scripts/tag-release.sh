@@ -124,8 +124,6 @@ fi
 [[ "$REMOTE_COMMIT" == "$COMMIT" ]] || die "tag commit mismatch: built ${COMMIT}, remote tag ${REMOTE_COMMIT}"
 printf 'Verified tag commit: %s\n' "$REMOTE_COMMIT"
 
-printf 'OS | File | Download URL\n'
-printf '%s\n' '---|---|---'
 ASSET_LINES=$(gh release view "$TAG" --repo "$REPO" --json tagName,isDraft,isPrerelease,assets --jq '.assets[] | "\(.name)\t\(.size)\t\(.url)"') || die "cannot read remote release ${TAG}"
 for expected in "${EXPECTED[@]}"; do
   line=$(printf '%s\n' "$ASSET_LINES" | awk -F '\t' -v n="$expected" '$1 == n {print; exit}')
@@ -134,6 +132,8 @@ for expected in "${EXPECTED[@]}"; do
   [[ "$size" =~ ^[1-9][0-9]*$ ]] || die "remote asset ${expected} has invalid size ${size}"
   printf 'asset: %s (%s bytes)\n' "$expected" "$size"
 done
+printf 'OS | File | Download URL\n'
+printf '%s\n' '---|---|---'
 printf '%s\n' "$ASSET_LINES" | while IFS=$'\t' read -r name size url; do
   case "$name" in
     tollgate-installer-darwin-amd64) os='macOS (Intel)' ;;
@@ -148,4 +148,4 @@ done
 RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG}"
 printf 'Summary: tag=%s commit=%s repo=%s\n' "$TAG" "$COMMIT" "$REPO"
 printf 'Release: %s\n' "$RELEASE_URL"
-printf 'Launcher: bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/scripts/tag-release.sh) --tag %s --repo %s\n' "${REPO%/*}" "${REPO#*/}" "$TAG" "$REPO"
+printf 'Launcher: bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/scripts/tag-release.sh) --tag %s --repo %s\n' "$SOURCE_REPO" "$REF" "$TAG" "$REPO"

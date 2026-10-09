@@ -47,8 +47,7 @@ routers on your LAN and deploys the tollgate-wrt backend over SSH.
    ```
 
 3. **Download the wizard** from the
-   [latest release](https://github.com/felixfelix-bot/tollgate-installer/releases/latest)
-   (the published cross-platform binaries currently live in this release source):
+   [latest release](https://github.com/OpenTollGate/tollgate-installer/releases/latest):
 
    | OS | File |
    |---|---|
@@ -209,10 +208,9 @@ troubleshooting table.
 | `/api/status/<id>` | GET | Poll deploy progress |
 | `/api/wifi-scan` | GET | Scan SSIDs (STA/repeater mode) |
 
-> **Note:** `install-and-test.sh` tries the `felixfelix-bot` release source first
-> because that is where the current published installer binaries live, then
-> falls back to the `OpenTollGate` release source. If the raw URL above 404s,
-> use option 3 (clone + build) until the launcher is published there.
+> **Note:** `install-and-test.sh` tries the `OpenTollGate` release source
+> first, and falls back to the `felixfelix-bot` fork only if the org release
+> has no asset for this platform yet.
 
 ## What the wizard does
 
@@ -415,8 +413,8 @@ is then reported as a password-like value. See the repo's own combined
 "password-like value in markdown table" block.)
 
 Asset names are `tollgate-installer-<os>-<arch>[.exe]` — exactly what
-`install-and-test.sh` fetches from the selected fork or upstream
-`releases/latest/download/` source. For a one-off
+`install-and-test.sh` fetches from upstream
+releases/latest/download/, falling back to the fork. For a one-off
 single binary, `GOOS=darwin GOARCH=arm64 go build -o dist/tollgate-installer-darwin-arm64 .`
 still works.
 

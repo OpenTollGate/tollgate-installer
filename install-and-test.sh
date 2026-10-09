@@ -310,7 +310,7 @@ echo "Detected platform: ${PLATFORM}"
 
 # Used only by the hermetic shell regression test; never set by the operator.
 if [ "${TOLLGATE_TEST_PLATFORM_ONLY:-0}" = 1 ]; then
-    echo "Asset URL: https://github.com/${FORK_REPO}/releases/latest/download/${BIN_ASSET}"
+    echo "Asset URL: https://github.com/${GH_REPO}/releases/latest/download/${BIN_ASSET}"
     exit 0
 fi
 
@@ -370,9 +370,9 @@ if [ -n "${BIN_PATH}" ]; then
     fi
     RUN_BIN="${BIN_PATH}"
     echo "Using installer binary: ${BIN_PATH}"
-elif ! download "${FORK_REPO}"; then
-    echo "Fork download failed; trying OpenTollGate org release..." >&2
-    if ! download "${GH_REPO}"; then
+elif ! download "${GH_REPO}"; then
+    echo "OpenTollGate release download failed; trying the felixfelix-bot fork..." >&2
+    if ! download "${FORK_REPO}"; then
         echo "ERROR: could not download ${BIN_ASSET} from either repo." >&2
         exit 1
     fi
