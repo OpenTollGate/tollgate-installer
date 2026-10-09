@@ -144,11 +144,17 @@ echo
 build_into() {
     # build_into <dir> <goos> <goarch> <asset-name>
     local dir="$1" goos="$2" goarch="$3" name="$4"
-    mkdir -p "${dir}"
+    # Make the output dir absolute: we build from the repo root, not the
+    # caller's cwd, so a relative -o would silently relocate.
+    dir="$(mkdir -p "${dir}" && cd "${dir}" && pwd)"
+    # Run go build from the repo root: `go build` resolves go.mod from the
+    # process working directory, so invoking this script from anywhere else
+    # (e.g. `bash <(curl ...)` or /tmp) fails with "go.mod file not found"
+    # for every target.
     # shellcheck disable=SC2086  # word splitting of GOFLAGS_BUILD is intended
-    if ! GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
+    if ! ( cd "${ROOT}" && GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 \
         go build ${GOFLAGS_BUILD} -ldflags "${LDFLAGS}" \
-        -o "${dir}/${name}" "${ROOT}"; then
+        -o "${dir}/${name}" . ); then
         return 1
     fi
     return 0
