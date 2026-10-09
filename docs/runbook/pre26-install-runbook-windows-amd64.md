@@ -1,82 +1,32 @@
-# TollGate v0.6.0-rc1-pre26 — Install Run Book (Review Club)
+# TollGate pre26 install run book - Windows x86_64 edition
 
-**Release under test:** `v0.6.0-rc1-pre26` (published 2026-10-09T00:51:41Z)
-**Devices in scope:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53` / `mediatek-filogic`), GL-AR300M (`mips_24kc` / `ath79-generic`)
+## Host-side mechanics
 
-> **Why this run book exists.** Every review so far went through the installer wizard. If the wizard ever fails, or a user refuses to run a binary, the package must still install by hand on stock OpenWrt. That is the fallback of record, so it gets tested every release — not just the wizard.
->
-> ⚠️ **The old `TESTING-MANUAL.md` is stale v0.5.0 material.** It says `/etc/init.d/tollgate` and port `2060`. The current backend is **`/etc/init.d/tollgate-wrt`** on **port `:2121`**. Do not mix the two — a service that "isn't running" under the old name is a false failure.
+In PowerShell:
+```powershell
+$Url = "https://github.com/felixfelix-bot/tollgate-installer/releases/download/v0.6.0-alpha2-rc17/tollgate-installer-windows-amd64.exe"
+Invoke-WebRequest -Uri $Url -OutFile .\tollgate-installer-windows-amd64.exe
+Get-FileHash .\tollgate-installer-windows-amd64.exe -Algorithm SHA256
+# expect d8d27d6b6a46fc985220ddf01c20b1a8d57dfedd7784bbc26fe076b830d66cf4
+```
+Windows uses `Get-FileHash`, not `sha256sum`; no chmod is needed.
 
----
-
-## 0. The two paths at a glance
-
-| | Path A — installer wizard | Path B — manual install |
-|---|---|---|
-| **Entry point** | `install-and-test.sh`, UI on `:8099` | shell on the workstation + router |
-| **Who it is for** | first-time users, review sessions | fallback, WAN-less sites, anyone avoiding a binary |
-| **Proven?** | **yes** — pre26 deployed this way | **no — this is what the session must prove** |
-| **Internet needed on router?** | no | no for the offline bundle; yes for the single-file variants |
-
-Both paths must end in the same observable state. **§4 is the shared acceptance check** — run it after whichever path you used. A path only "passes" if §4 passes.
-
----
-
-## 1. Prerequisites
-
-### Hardware
-| Device | Arch / target | Notes |
-|---|---|---|
-| GL.iNet MT3000 (Beryl AX) | `aarch64_cortex-a53` / `mediatek-filogic` | primary target |
-| GL.iNet MT6000 (Flint 2) | `aarch64_cortex-a53` / `mediatek-filogic` | same arch pair as MT3000 |
-| GL.iNet AR300M | `mips_24kc` / `ath79-generic` | **flash-constrained — read §3.4** |
-
-> MT3000 and MT6000 share one arch pair, so a packaging pass on one implies the other. Keep both in the matrix anyway: **they differ in flash layout**, and the MT3000 publishes no `factory` image while the MT6000 does.
-
-### Router state
-- **Vanilla OpenWrt** — 25.12.x for the `.apk` lane, 24.10.x for the `.ipk` lane.
-- SSH reachable, root password known (a freshly reset OpenWrt ships with an **empty** root password).
-- **Either** an uplink, or a workstation with internet (the offline bundle needs internet on the *laptop*, never on the router).
-
-### 1.1 Clean slate — getting to vanilla OpenWrt
-
-Take the profile from the official index for *your* device; never from memory. Verified against `downloads.openwrt.org/releases/25.12.5` (current stable) and `24.10.8` (oldstable):
-
-| Device | Target | Profile | Images published |
-|---|---|---|---|
-| GL-MT3000 | `mediatek/filogic` | `glinet_gl-mt3000` | `squashfs-sysupgrade.bin`, `initramfs-kernel.bin` — **no `factory` image** |
-| GL-MT6000 | `mediatek/filogic` | `glinet_gl-mt6000` | `squashfs-sysupgrade.bin`, `squashfs-factory.bin`, `initramfs-kernel.bin`, `preloader.bin`, `bl31-uboot.fip` |
-| GL-AR300M | `ath79/generic` | `glinet_gl-ar300m-lite` or `glinet_gl-ar300m16` | `squashfs-sysupgrade.bin`, `initramfs-kernel.bin` |
-| GL-AR300M (NAND units) | `ath79/nand` | `glinet_gl-ar300m-nor` or `glinet_gl-ar300m-nand` | `squashfs-sysupgrade.bin`, `initramfs-kernel.bin` |
-
-> ⚠️ **There is no plain `glinet_gl-ar300m` profile** in 25.12.5 or 24.10.8 — only `-lite`, `-ar300m16` (ath79/**generic**) and `-nor`, `-nand` (ath79/**nand**). Picking wrong is a brick, not a misconfiguration. **Record which profile you used.** The installer resolves this itself by board name (all four boards verified present in 25.12.5); a human flashing by hand must not guess.
->
-> ⚠️ **MT3000 publishes no `factory` image.** No OEM→OpenWrt web-recovery upload with a `factory.bin` on that device — use the GL.iNet OEM local-upgrade path, or vendor U-Boot recovery with the `sysupgrade.bin`. The MT6000 *does* publish `factory.bin`: do not copy MT3000's procedure onto it.
-
----
-
-## 2. Path A — installer wizard (reference, proven)
-
-**Interactive** (serves the UI at `:8099`; drive it in a browser):
-```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh)
+Interactive dashboard (translated-not-executed here):
+```powershell
+.\tollgate-installer-windows-amd64.exe -port 8099
+# open http://localhost:8099
 ```
 
-**Headless** (no browser; full deploy + verification):
-```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER_IP> '<ROUTER_PASSWORD>' <LIGHTNING_ADDRESS>
+The Bash launcher requires WSL or Git Bash for headless use; this is the translated PowerShell-side invocation:
+```powershell
+wsl bash -lc "bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER_IP> '<ROUTER_PASSWORD>' <LIGHTNING_ADDRESS>"
 ```
 
-Flags: `--tag <tag>` (pin the release under test), `--channel`, `--list`, `--bin <path>`, `--trust-host-key`.
-
-**Pin the tag** (`--tag v0.6.0-rc1-pre26`). A pass with no pinned tag is not evidence about pre26.
-
-What it does: detect OS+arch → download `tollgate-installer` → serve on `:8099` → scan LAN → identify router → `POST /api/deploy` → poll `/api/status/<id>` → verify. Deploy steps in order: `verify → stage → flash → firmware → password → upstream → install → brand → portal → lnurl → services → health`.
-
-**Arch → asset mapping is derived at deploy time, not stored** — the wizard detects the arch on the router (`DISTRIB_ARCH` → `opkg print-architecture` → `ubus call system board` → `apk --print-arch` → `uname -m`) and builds the asset URL from the tag. Asset URL shape:
-`https://github.com/FreedomTechFeed/packages/releases/download/<tag>/tollgate-wrt_<pkg_version>_<arch>.<ext>` — version = tag minus leading `v`, `-`→`_`.
-
----
+### Windows false-failure traps
+- SmartScreen may show “Windows protected your PC” for this unsigned binary. Verify the hash first, then More info -> Run anyway.
+- Headless mode needs OpenSSH Client (`ssh`); enable the Windows optional feature or use WSL/Git Bash.
+- Windows 10/11 supplies `tar.exe`; use `tar.exe -xzf <bundle>.tar.gz` for the offline bundle.
+- Not executed here: PowerShell download, `Get-FileHash`, `.exe`, SmartScreen, OpenSSH setup, and `tar.exe`.
 
 ## 3. Path B — manual install on vanilla OpenWrt
 
@@ -215,6 +165,3 @@ A manual install is not crippled — the package's `postinst` already runs the u
 Use `FEEDBACK-TEMPLATE.md`. For each run record: device + **variant**, OpenWrt version, pinned tag, path (**A / B1 / B2 / B3**), the exit code if any, §4 output, and pass/partial/fail.
 
 **State which path you actually ran.** A Path A pass is not evidence about Path B, and vice versa — that separation is the entire point of this session.
-
-
-> **Host-specific editions:** see [`runbook/README.md`](runbook/README.md) for the OS/architecture download table.
