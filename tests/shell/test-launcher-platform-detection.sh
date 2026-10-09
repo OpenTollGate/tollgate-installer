@@ -30,7 +30,7 @@ check() {
         TOLLGATE_TEST_PLATFORM_ONLY=1 bash "$SCRIPT" 2>&1)" || fail "$name exited nonzero: $out"
     printf '%s\n' "$out" | grep -Fqx "Detected platform: $want_platform" \
         || fail "$name platform mismatch: $out"
-    printf '%s\n' "$out" | grep -Fqx "Asset URL: https://github.com/felixfelix-bot/tollgate-installer/releases/latest/download/$want_asset" \
+    printf '%s\n' "$out" | grep -Fqx "Asset URL: https://github.com/OpenTollGate/tollgate-installer/releases/latest/download/$want_asset" \
         || fail "$name asset URL mismatch: $out"
     ok "$name => $want_platform and $want_asset"
 }
