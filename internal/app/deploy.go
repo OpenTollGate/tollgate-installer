@@ -1137,11 +1137,14 @@ func runDeployment(job *Job, req deployRequest) {
 		// Run sysupgrade. The router will go down and reboot onto OpenWrt.
 		upgradeOut := sshRun(client, "sysupgrade -n /tmp/openwrt-sysupgrade.bin 2>&1")
 		job.addLog("sysupgrade: " + truncate(upgradeOut, 200))
-		// If sysupgrade returned a recognizable error (image rejected, no
-		// space, missing binary), surface it immediately instead of waiting
-		// 3 minutes for a router that never reboots.
-		if strings.Contains(upgradeOut, "failed") || strings.Contains(upgradeOut, "error") ||
-			strings.Contains(upgradeOut, "not found") || strings.Contains(upgradeOut, "invalid") {
+		// A SUCCESSFUL sysupgrade deliberately closes every SSH session
+		// ("Commencing upgrade. Closing all shell sessions."), after which the
+		// router's ubus reports "Command failed: ubus call system sysupgrade"
+		// because the caller was killed mid-call. That is NOT a failure. Fail
+		// only on the genuinely fatal, pre-reboot errors (bad/incompatible
+		// image, no space, sysupgrade missing); otherwise proceed to wait for
+		// the reboot.
+		if sysupgradeFatal(upgradeOut) {
 			jobFail(job, 2, "sysupgrade failed", parseSysupgradeError(upgradeOut))
 			return
 		}
@@ -3811,6 +3814,28 @@ func isDefinitiveHTTPError(err error) bool {
 		return false
 	}
 	return code >= 400 && code < 500
+}
+
+// sysupgradeFatal reports whether sysupgrade output indicates the upgrade did
+// NOT start and the router will not reboot. It deliberately ignores the normal
+// "Command failed: ubus call system sysupgrade" / session-closure noise that a
+// successful upgrade emits when it kills the SSH session mid-command.
+func sysupgradeFatal(out string) bool {
+	low := strings.ToLower(out)
+	// Explicit success markers win: the upgrade commenced, so it is not fatal.
+	if strings.Contains(low, "commencing upgrade") || strings.Contains(low, "closing all shell sessions") {
+		return false
+	}
+	for _, m := range []string{
+		"image check failed", "invalid image", "wrong image", "unsupported image",
+		"not a valid sysupgrade", "no space left", "not enough space",
+		"insufficient space", "cannot allocate", "sysupgrade: not found",
+	} {
+		if strings.Contains(low, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseSysupgradeError inspects sysupgrade output for common failure modes and
