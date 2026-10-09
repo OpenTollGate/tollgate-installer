@@ -274,10 +274,10 @@ feed's package build:
 
 | | |
 |---|---|
-| Selected release tag | `v0.6.0-alpha2-pre9` (the pinned pre-release default) |
-| Package version | `0.6.0_alpha2_pre9` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_alpha2_pre9-r1` |
-| Source commit | `373770a` of `tollgate-module-basic-go` |
-| Asset name | `tollgate-wrt_0.6.0_alpha2_pre9_<arch>.{ipk,apk}` for 7 arches |
+| Selected release tag | `v0.6.0-rc1-pre26` (the pinned pre-release default) |
+| Package version | `0.6.0_rc1_pre26` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_rc1_pre26-r1` |
+| Source commit | `4614ac2` of `tollgate-module-basic-go` |
+| Asset name | `tollgate-wrt_0.6.0_rc1_pre26_<arch>.{ipk,apk}` for 14 arches |
 
 The installed binary reports `v0.6.0-alpha2-g373770a` — the version string plus
 the **source commit**. That string is not the package version, on purpose: the
@@ -293,9 +293,11 @@ TOLLGATE_FEED_RELEASE_TAG=v0.6.0-alpha1 ./tollgate-installer
 ```
 
 An empty or malformed value is ignored in favour of the default. If the feed
-does not publish the selected tag, the wizard falls back to the pinned
-`v0.5.0` GitHub release asset (aarch64 only) and the deploy log names which
-source was used. `go test ./...` fails if the selected tag does not exist on the
+does not publish the selected tag, the wizard **refuses** rather than
+silently downgrading: the GitHub `v0.5.0` asset (aarch64 only) is reachable
+only by explicit opt-in — the `--allow-fallback` flag or
+`TOLLGATE_ALLOW_GITHUB_FALLBACK=1` — and the deploy log names which source
+was used. `go test ./...` fails if the selected tag does not exist on the
 feed. See [docs/package-provenance.md](docs/package-provenance.md).
 
 ### Pre-download (staging) + on-disk re-deploy cache
