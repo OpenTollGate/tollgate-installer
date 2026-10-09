@@ -318,6 +318,17 @@
     <details class="advanced">
       <summary>Advanced settings (optional)</summary>
       <div class="field">
+        <label>Clean slate (advanced)</label>
+        <select id="clean-slate-version">
+          <option value="25.12.5">OpenWrt 25.12.5 (apk)</option>
+          <option value="24.10.8">OpenWrt 24.10.8 (ipk)</option>
+        </select>
+        <button type="button" class="btn btn-secondary" onclick="prepareCleanSlate()">Inspect clean-slate image</button>
+        <div class="hint" id="clean-slate-info"></div>
+        <input id="clean-slate-confirm" placeholder="Type the detected board name to enable flashing" oninput="checkCleanSlateReady()">
+        <button type="button" class="btn btn-secondary" id="clean-slate-btn" onclick="startCleanSlate()" disabled>Clean slate: flash vanilla OpenWrt</button>
+      </div>
+      <div class="field">
         <label>Dev split <span class="range-val" id="devsplit-val">21%</span></label>
         <input type="range" id="devsplit" min="0" max="50" value="21"
                oninput="document.getElementById('devsplit-val').textContent=this.value+'%'">
@@ -1515,6 +1526,39 @@ function checkReady() {
   if (hintEl) hintEl.textContent = hint;
 }
 
+async function prepareCleanSlate() {
+  const ip = selectedRouterIP();
+  const password = document.getElementById('password').value;
+  const version = document.getElementById('clean-slate-version').value;
+  const info = document.getElementById('clean-slate-info');
+  if (!ip) return;
+  info.textContent = 'Resolving board and published checksum...';
+  const resp = await fetch('/api/clean-slate-info', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip, password, version}) });
+  const data = await resp.json();
+  if (!resp.ok || data.error) { info.textContent = data.error || 'Unable to resolve clean-slate image.'; return; }
+  window._cleanSlateBoard = data.board;
+  info.textContent = 'Board: ' + data.board + ' | Image: ' + data.image_url + ' | sha256: ' + data.sha256;
+  checkCleanSlateReady();
+}
+function checkCleanSlateReady() {
+  const board = window._cleanSlateBoard || '';
+  const typed = document.getElementById('clean-slate-confirm').value;
+  document.getElementById('clean-slate-btn').disabled = !board || typed !== board;
+}
+async function startCleanSlate() {
+  const ip = selectedRouterIP();
+  const password = document.getElementById('password').value;
+  const version = document.getElementById('clean-slate-version').value;
+  const confirmation = document.getElementById('clean-slate-confirm').value;
+  if (!ip || !confirmation) return;
+  if (!(await ensureRouterHostKeyTrusted(ip, password))) return;
+  document.getElementById('select-view').classList.add('hidden');
+  document.getElementById('deploy-view').classList.remove('hidden');
+  const resp = await fetch('/api/clean-slate-flash', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip, password, version, confirmation}) });
+  const data = await resp.json();
+  if (!resp.ok || data.error) { showError(data.error || 'Clean-slate flash refused.'); return; }
+  pollTimer = setInterval(() => pollStatus(data.job_id), 1000);
+}
 async function startDeploy() {
   const ip = selectedRouterIP();
   const password = document.getElementById('password').value;
