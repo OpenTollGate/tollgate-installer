@@ -1802,6 +1802,8 @@ func Main() {
 	mux.HandleFunc("/api/wifi-test", handleWifiTest)
 	mux.HandleFunc("/api/prestage", handlePreStage)
 	mux.HandleFunc("/api/deploy", handleDeploy)
+	mux.HandleFunc("/api/clean-slate-info", cleanSlateInfo)
+	mux.HandleFunc("/api/clean-slate-flash", cleanSlateFlash)
 	mux.HandleFunc("/api/status/", handleStatus)
 	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/", handleIndex)

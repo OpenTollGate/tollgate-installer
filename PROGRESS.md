@@ -1,0 +1,6 @@
+- Created clean-slate worktree from origin/main on pr/clean-slate-flash.
+- Read AGENTS.md and existing image, deploy, SSH, job, UI, and fakerouter conventions.
+- Added clean-slate TDD tests and captured RED output showing missing helpers.
+- Implemented release-selectable image derivation, server-side board confirmation, checksum verification before SSH upload, job polling, routes, and advanced UI control.
+- Ran gofmt, full go test ./..., and all tests/shell/test-*.sh pins successfully.
+- Commit/push/PR still pending.
