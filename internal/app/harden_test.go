@@ -74,16 +74,19 @@ func TestPortalMissingAssets(t *testing.T) {
 
 // TestFeedPkgVersionPrefixMatchesInstalled documents why the install step
 // compares with HasPrefix: the feed PKG_VERSION has no "release" suffix while
-// the installed package does ("0.6.0_alpha2_pre9" vs "0.6.0_alpha2_pre9-r1").
+// the installed package does ("0.6.0_rc1_pre26" vs "0.6.0_rc1_pre26-r1").
 func TestFeedPkgVersionPrefixMatchesInstalled(t *testing.T) {
-	want := feedPkgVersion() // derived from feedReleaseTagDefault (pre9)
+	want := feedPkgVersion() // derived from feedReleaseTagDefault
 	if want == "" {
 		t.Fatal("feedPkgVersion() returned empty")
 	}
-	if !strings.HasPrefix("0.6.0_alpha2_pre9-r1", want) {
+	if !strings.HasPrefix("0.6.0_rc1_pre26-r1", want) {
 		t.Errorf("installed version does not start with %q", want)
 	}
-	if strings.HasPrefix("0.6.0_alpha2_pre6-r1", want) {
-		t.Errorf("pre6 must NOT match the pre9 prefix %q", want)
+	// The IMMEDIATELY PREVIOUS release must not match. An adjacent version is
+	// the case an off-by-one in the prefix rule actually gets wrong, so this is
+	// a stronger assertion than reaching for a far-away older tag.
+	if strings.HasPrefix("0.6.0_alpha4_pre21-r1", want) {
+		t.Errorf("the previous release (alpha4_pre21) must NOT match the prefix %q", want)
 	}
 }

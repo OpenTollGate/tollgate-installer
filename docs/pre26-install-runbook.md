@@ -5,7 +5,6 @@
 
 > **Why this run book exists.** Every review so far went through the installer wizard. If the wizard ever fails, or a user refuses to run a binary, the package must still install by hand on stock OpenWrt. That is the fallback of record, so it gets tested every release — not just the wizard.
 >
-> ⚠️ **The old `TESTING-MANUAL.md` is stale v0.5.0 material.** It says `/etc/init.d/tollgate` and port `2060`. The current backend is **`/etc/init.d/tollgate-wrt`** on **port `:2121`**. Do not mix the two — a service that "isn't running" under the old name is a false failure.
 
 ---
 

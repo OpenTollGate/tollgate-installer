@@ -55,3 +55,25 @@ func TestDeployRequestForceFlashJSON(t *testing.T) {
 		t.Error("forceFlash must default to false")
 	}
 }
+
+func TestSysupgradeFatal(t *testing.T) {
+	// The exact shape a successful sysupgrade emits: it closes the SSH session,
+	// after which ubus reports "Command failed". This must NOT be fatal.
+	success := "verifying sysupgrade tar file integrity\n" +
+		"Tue Sep 15 07:31:17 UTC 2026 upgrade: Commencing upgrade. Closing all shell sessions.\n" +
+		"Command failed: ubus call system sysupgrade { \"prefix\": \"/tmp/root\" }"
+	if sysupgradeFatal(success) {
+		t.Error("successful sysupgrade output (session closure) was misclassified as fatal")
+	}
+
+	fatal := map[string]string{
+		"image rejected": "Image check failed:\n  Invalid image type",
+		"no space":       "no space left on device",
+		"missing binary": "sysupgrade: not found",
+	}
+	for name, out := range fatal {
+		if !sysupgradeFatal(out) {
+			t.Errorf("expected fatal for %q case", name)
+		}
+	}
+}

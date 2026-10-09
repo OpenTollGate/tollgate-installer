@@ -50,7 +50,9 @@ command -v go >/dev/null 2>&1 || die "go is required"
 command -v git >/dev/null 2>&1 || die "git is required"
 gh auth status >/dev/null 2>&1 || die "gh auth status is not valid"
 ACCOUNT=$(gh api user --jq .login) || die "could not determine authenticated GitHub account"
-[[ -n "$REPO" ]] || REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+# Default the TARGET repo to upstream: deriving it from the cwd (gh repo
+# view) dies outside a clone and silently targets the fork inside one.
+[[ -n "$REPO" ]] || REPO="OpenTollGate/tollgate-installer"
 [[ "$REPO" =~ ^[^/]+/[^/]+$ ]] || die "repo must be OWNER/NAME, got '$REPO'"
 [[ -n "$SOURCE_REPO" ]] || SOURCE_REPO="$REPO"
 PERM=$(gh api "repos/${REPO}" --jq '.permissions.push') || die "cannot inspect write permission for ${REPO} as ${ACCOUNT}"
