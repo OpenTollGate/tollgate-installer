@@ -62,8 +62,6 @@ fi
 printf 'Preflight: account=%s repo=%s push=%s\n' "$ACCOUNT" "$REPO" "$PERM"
 
 DEFAULT_REF=$(gh repo view "$REPO" --json defaultBranchRef --jq .defaultBranchRef.name)
-[[ -n "$REF" ]] || REF=$DEFAULT_REF
-
 if [[ -z "$TAG" ]]; then
   highest=0
   while IFS= read -r old; do
@@ -77,6 +75,27 @@ if [[ -z "$TAG" ]]; then
   printf 'Resolved tag: %s (no --tag supplied; highest released matching rc tag was %s%d)\n' "$TAG" "$prefix" "$highest"
 else
   printf 'Resolved tag: %s (--tag supplied explicitly)\n' "$TAG"
+fi
+
+# Resolve an existing tag before choosing the source ref. This is deliberately
+# done before cloning/building: a re-run must reproduce the bytes already
+# published, never silently follow a moving default branch.
+REMOTE_TAG_COMMIT=""
+REMOTE_TAG_TYPE=""
+if REMOTE_TAG_COMMIT=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null); then
+  REMOTE_TAG_TYPE=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.type')
+  if [[ "$REMOTE_TAG_TYPE" == tag ]]; then
+    REMOTE_TAG_COMMIT=$(gh api "repos/${REPO}/git/tags/${REMOTE_TAG_COMMIT}" --jq '.object.sha') || die "cannot dereference annotated tag ${TAG}"
+  fi
+  [[ -n "$REMOTE_TAG_COMMIT" ]] || die "remote tag ${TAG} has no commit"
+  if [[ -z "$REF" ]]; then
+    REF="refs/tags/${TAG}"
+    printf 'Tag exists: tag %s exists at %s; building from the tag so a re-run reproduces the published bytes\n' "$TAG" "$REMOTE_TAG_COMMIT"
+  else
+    printf 'Tag exists: tag %s points to %s; building from explicitly requested ref %s\n' "$TAG" "$REMOTE_TAG_COMMIT" "$REF"
+  fi
+else
+  [[ -n "$REF" ]] || REF=$DEFAULT_REF
 fi
 
 FEED_PRENUMBER_RE='(^|[^A-Za-z0-9])pre[0-9]+([^0-9]|$)'
@@ -96,6 +115,9 @@ git clone --quiet --depth 1 --branch "$REF" "https://github.com/${SOURCE_REPO}.g
 COMMIT=$(git -C "$SRC" rev-parse HEAD)
 printf 'Source: ref=%s commit=%s tree=%s (clean)\n' "$REF" "$COMMIT" "$SRC"
 [[ -f "$SRC/scripts/release-binaries.sh" ]] || die "scripts/release-binaries.sh is missing"
+if [[ -n "$REMOTE_TAG_COMMIT" && "$REMOTE_TAG_COMMIT" != "$COMMIT" ]]; then
+  die "tag commit mismatch for ${TAG}: remote tag ${REMOTE_TAG_COMMIT}, commit that would be built ${COMMIT}; pass --ref ${REMOTE_TAG_COMMIT} to rebuild the published code, or pick a new --tag"
+fi
 
 BUILD_CMD="scripts/release-binaries.sh --tag ${TAG} --publish --repo ${REPO} --repro-check"
 printf 'Plan: tag=%s repo=%s commit=%s\n' "$TAG" "$REPO" "$COMMIT"
@@ -116,13 +138,8 @@ if ((PRERELEASE)); then
   gh release edit "$TAG" --repo "$REPO" --prerelease --latest=false
 fi
 
-REMOTE_COMMIT=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.sha') || die "remote tag ${TAG} is missing"
-REMOTE_TYPE=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.type')
-if [[ "$REMOTE_TYPE" == tag ]]; then
-  REMOTE_COMMIT=$(gh api "repos/${REPO}/git/tags/${REMOTE_COMMIT}" --jq '.object.sha')
-fi
-[[ "$REMOTE_COMMIT" == "$COMMIT" ]] || die "tag commit mismatch: built ${COMMIT}, remote tag ${REMOTE_COMMIT}"
-printf 'Verified tag commit: %s\n' "$REMOTE_COMMIT"
+printf 'Verified tag commit: %s\n' "${REMOTE_TAG_COMMIT:-$COMMIT}"
+
 
 ASSET_LINES=$(gh release view "$TAG" --repo "$REPO" --json tagName,isDraft,isPrerelease,assets --jq '.assets[] | "\(.name)\t\(.size)\t\(.url)"') || die "cannot read remote release ${TAG}"
 for expected in "${EXPECTED[@]}"; do
