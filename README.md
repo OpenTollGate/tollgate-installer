@@ -25,11 +25,12 @@ routers on your LAN and deploys the tollgate-wrt backend over SSH.
 
 ## Quick start
 
-1. **Flash your router to OpenWrt** (the wizard does NOT flash firmware). For
-   GL.iNet routers, use the web UI at `http://192.168.8.1` → Advanced →
-   Upload Firmware → untick "Keep settings".
+1. **Start from vanilla OpenWrt.** The wizard can flash supported GL.iNet
+   routers during deployment; for a clean-slate/manual-package test, use the
+   [pre26 install run book](docs/pre26-install-runbook.md), which covers both
+   wizard deployment and direct `.apk`/`.ipk` installation on vanilla OpenWrt.
 
-   Alternatively, SSH in and sysupgrade:
+   Alternatively, SSH in and sysupgrade manually:
    ```sh
    # GL-MT3000 on OpenWrt 25.12.5 (clean install, no config kept)
    curl -O https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-25.12.5-mediatek-filogic-glinet_gl-mt3000-squashfs-sysupgrade.bin
@@ -400,8 +401,9 @@ still works.
 
 ## Prerequisites
 
-- **Router** running OpenWrt (24.10.x or 25.x). The wizard does NOT flash
-  firmware — see GL.iNet or OpenWrt docs for flashing.
+- **Router** running OpenWrt (24.10.x or 25.x). The wizard flashes supported
+  GL.iNet stock routers during deployment; see [the pre26 install run book](docs/pre26-install-runbook.md)
+  for clean-slate and manual package-install paths.
 - **SSH access** — port 22 open, root password set (empty on a fresh reset).
 - **Upstream internet** — either Ethernet cable into the WAN port, or WiFi
   credentials for the router to join an existing network.
