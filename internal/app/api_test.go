@@ -45,6 +45,13 @@ func TestHandleIndex(t *testing.T) {
 	if resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Errorf("handleIndex: Content-Type = %q, want %q", resp.Header.Get("Content-Type"), "text/html; charset=utf-8")
 	}
+
+	// The UI is served from memory by a long-lived local process, so a cached
+	// copy can outlive a new binary and keep showing stale behaviour. It must
+	// never be stored.
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("handleIndex: Cache-Control = %q, want %q", got, "no-store")
+	}
 }
 
 func TestDeployRequestValidation(t *testing.T) {

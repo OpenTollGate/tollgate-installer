@@ -1543,6 +1543,12 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The UI is served from memory by a long-lived local process and changes
+	// with every installer build. A cached copy can therefore keep presenting
+	// an older wizard than the binary that is running — the operator clicks a
+	// control that the current binary no longer serves, or talks to an endpoint
+	// whose request shape has since changed. Never store it.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write(indexHTML)
 }
 
