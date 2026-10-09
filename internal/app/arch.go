@@ -96,10 +96,14 @@ func normalizeBareArch(b string) string {
 const (
 	// feedRepoSlug is the repo whose CI builds and publishes the feed packages.
 	feedRepoSlug = "FreedomTechFeed/packages"
-	// feedReleaseTagDefault is the feed release tag selected by default. pre4
-	// ships the vendored, working captive portal (the pre3 package had no
-	// /assets bundles); its source pin is still module main's tip, 373770a.
-	feedReleaseTagDefault = "v0.6.0-alpha2-pre9"
+	// feedReleaseTagDefault is the feed release tag selected by default. Keep it
+	// at the NEWEST published feed release. A stale pin does not merely miss
+	// fixes: it DOWNGRADES every router already running a newer build, because
+	// the installer pushes the pinned package over whatever is installed
+	// (observed 2026-10-05 — the pin was alpha2-pre9 and the router was running
+	// alpha4-pre21). refuseDowngrade in deploy.go catches that at deploy time;
+	// TestPinnedFeedReleaseTagExists catches a pin that has fallen off the feed.
+	feedReleaseTagDefault = "v0.6.0-rc1-pre26"
 	// feedReleaseTagEnv is the environment variable that overrides
 	// feedReleaseTagDefault. Set it to select another published release tag
 	// (e.g. a newer pre-release, or an older tag to reproduce an old build)

@@ -114,7 +114,7 @@ func TestPkgVersionVerdict(t *testing.T) {
 	const arch = pkgFallbackTestArch
 	feedIPK := feedAssetURL(arch, ".ipk")
 	fbIPK := githubFallbackURL(arch, ".ipk")
-	requested := feedPkgVersion()                   // 0.6.0_alpha2_pre9
+	requested := feedPkgVersion()                   // 0.6.0_rc1_pre26
 	fbVer := githubFallbackPkgVersion(arch, ".ipk") // 0.5.0
 	if fbVer == "" || fbVer == requested {
 		t.Fatalf("fixture broken: fallback %q vs requested %q", fbVer, requested)
