@@ -13,7 +13,14 @@ case "$*" in
   "repo view OpenTollGate/tollgate-installer"*) echo main;;
   "api repos/OpenTollGate/tollgate-installer/git/ref/tags/v-test --jq .object.sha") echo "$TAG_OBJECT";;
   "api repos/OpenTollGate/tollgate-installer/git/ref/tags/v-test --jq .object.type") echo commit;;
-  "release view"*) echo 'tollgate-installer-linux-amd64\t1\thttps://example/a';;
+  "release view"*) printf '%s\t%s\t%s\n' \
+    tollgate-installer-linux-amd64 1048576 https://example.invalid/linux-amd64 \
+    tollgate-installer-linux-arm64 1048576 https://example.invalid/linux-arm64 \
+    tollgate-installer-darwin-amd64 1048576 https://example.invalid/darwin-amd64 \
+    tollgate-installer-darwin-arm64 1048576 https://example.invalid/darwin-arm64 \
+    tollgate-installer-windows-amd64.exe 1048576 https://example.invalid/windows-amd64.exe \
+    SHA256SUMS 512 https://example.invalid/SHA256SUMS \
+    REPRODUCE.txt 576 https://example.invalid/REPRODUCE.txt;;
   *) exit 0;;
 esac
 EOF
@@ -44,5 +51,12 @@ test "$rc" -ne 0 || { echo 'FAIL: mismatch unexpectedly succeeded'; exit 1; }
 ! test -s "$TMP/publish.log" || { echo 'FAIL: build/publish invoked'; exit 1; }
 echo 'ok - mismatched remote tag aborts before build or publish'
 
-echo 'ok - matching-tag re-run path is covered by preflight commit selection'
+: > "$TMP/publish.log"
+GH_LOG="$TMP/gh-match.log" PUBLISH_LOG="$TMP/publish.log" FIXTURE_SCRIPT="$TMP/release-binaries.sh" TAG_OBJECT="$B" TREE_COMMIT="$B" PATH="$BIN:$PATH" HOME="$TMP" \
+  bash "$TREE/scripts/tag-release.sh" --tag v-test --repo OpenTollGate/tollgate-installer >"$TMP/match.out" 2>&1
+test "$?" -eq 0 || { echo 'FAIL: matching tag did not complete idempotent path'; exit 1; }
+test -s "$TMP/publish.log" || { echo 'FAIL: matching tag did not proceed to build/publish path'; exit 1; }
+grep -q 'Tag exists: tag v-test exists at' "$TMP/match.out" || { echo 'FAIL: matching tag did not announce tag source'; exit 1; }
+echo 'ok - matching remote tag proceeds down idempotent re-run path'
+
 echo 'PASS: tag release idempotency'
