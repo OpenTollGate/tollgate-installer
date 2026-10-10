@@ -1,21 +1,24 @@
-# TollGate pre26 install run book - host editions
+# TollGate install run book
 
-Choose the edition matching the workstation that runs the installer. Router-side sections are shared; editions change only host mechanics.
+There is **one canonical run book**, and it always targets the **latest
+pre-release** of `FreedomTechFeed/packages`:
 
-| OS | File |
-|---|---|
-| macOS Intel | [pre26-install-runbook-darwin-amd64.md](pre26-install-runbook-darwin-amd64.md) |
-| macOS Apple Silicon | [pre26-install-runbook-darwin-arm64.md](pre26-install-runbook-darwin-arm64.md) |
-| Linux x86_64 | [pre26-install-runbook-linux-amd64.md](pre26-install-runbook-linux-amd64.md) |
-| Linux arm64 | [pre26-install-runbook-linux-arm64.md](pre26-install-runbook-linux-arm64.md) |
-| Windows x86_64 | [pre26-install-runbook-windows-amd64.md](pre26-install-runbook-windows-amd64.md) |
+- **[Install Run Book (canonical, portable)](../install-runbook.md)** — the
+  complete host-independent OpenWrt procedure (wizard + manual, `.apk`/`.ipk`/
+  offline bundle). It resolves the release tag at the top of the session and
+  never hardcodes a `preNN`.
 
-## How to choose
+## Host mechanics
 
-Choose the host OS, then CPU architecture: Intel/AMD 64-bit is `amd64`/`x86_64`; Apple Silicon and Linux ARM are `arm64`/`aarch64`. Do not run amd64 on arm64. Windows uses PowerShell; headless Bash use requires WSL or Git Bash.
+The canonical run book is host-independent; the only host-specific part is how
+you download and launch the installer binary. Use the wizard's own launcher,
+which already handles the host OS/arch:
 
-These editions target existing release `v0.6.0-alpha2-rc17` in `felixfelix-bot/tollgate-installer`.
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh)
+```
 
-## Canonical portable runbook
-
-For the complete host-independent OpenWrt procedure, see the [canonical portable runbook](../pre26-install-runbook.md).
+> The former per-host editions (`pre26-install-runbook-<os>.md`) were removed:
+> they pinned a specific stale pre-release and the felixfelix-bot installer
+> build, which is exactly the "installed the wrong version" failure the canonical
+> run book now prevents. See git history if you need them.
