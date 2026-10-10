@@ -584,7 +584,7 @@ type deviceIdentity struct {
 	Nym         string // the operator's nym — the private SSID's prefix
 	Source      string // where the code came from: store|hostname|captive-ssid|minted
 	Hostname    string // tollgate-<code>
-	SSID        string // TollGate-<code> (brand prefix, as the discovery code expects)
+	SSID        string // !TollGate-<code> (brand prefix, leading '!' so the guest SSID sorts first)
 	PrivateSSID string // <nym>-<code>, or the operator's own rename
 }
 
@@ -640,7 +640,7 @@ func privateSSIDCommand(section, ssid string) string {
 //
 //  1. tollgate.device.code in /etc/config/tollgate   (authoritative)
 //  2. a machine-shaped hostname                      (tollgate-OQ3Q)
-//  3. a machine-shaped captive SSID                  (TollGate-OQ3Q, tollgate-0GLK)
+//  3. a machine-shaped captive SSID                  (!TollGate-OQ3Q, TollGate-OQ3Q, tollgate-0GLK)
 //  4. mint                                           (only when nothing above hit)
 //
 // BusyBox ash only: no bashisms, no `od` (the target has no guarantee of it),
@@ -656,8 +656,16 @@ code_norm() {
         [A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]) printf '%s' "$v" ;;
     esac
 }
+# The guest-facing SSID carries a leading '!' so it sorts first in an
+# alphabetically-sorted WiFi scan list (0x21 sorts before digits and letters):
+# the installer writes !TollGate-<code>. That '!' is OPTIONAL decoration in
+# front of the brand prefix — strip it before the prefix compare so a router
+# already in the field under the new spelling adopts the SAME code, while the
+# bare TollGate-<code> form (every router deployed before the bang) keeps
+# working. The suffix logic (everything after the first '-') is unchanged.
 code_from_name() {
     p=$(trim_ws "${1%%-*}" | tr 'A-Z' 'a-z')
+    p=${p#\!}
     s=${1#*-}
     case "$p" in
         tollgate|net4sats) code_norm "$s" ;;
@@ -729,7 +737,7 @@ uci -q set tollgate.device.nym="$NYM"
 uci commit tollgate
 
 HOSTNAME="tollgate-$CODE"
-SSID="TollGate-$CODE"
+SSID="!TollGate-$CODE"
 PRIVATE_SSID="$NYM-$CODE"
 PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
 if [ -n "$PRI" ] && ssid_safe "$PRI"; then
@@ -804,7 +812,7 @@ func fallbackDeviceIdentity() deviceIdentity {
 		Nym:         deviceIdentityDefaultNym,
 		Source:      "minted-locally",
 		Hostname:    "tollgate-" + code,
-		SSID:        "TollGate-" + code,
+		SSID:        "!TollGate-" + code,
 		PrivateSSID: deviceIdentityDefaultNym + "-" + code,
 	}
 }

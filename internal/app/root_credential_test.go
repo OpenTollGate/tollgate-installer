@@ -33,6 +33,21 @@ func shRun(t *testing.T, script string) string {
 	return shRunEnv(t, os.Environ(), script)
 }
 
+// shRunBashEnv is shRunEnv under bash instead of /bin/sh. It exists to prove
+// the '!' in the captive SSID is NOT eaten by history expansion: bash only
+// expands history in INTERACTIVE shells, and the router runs its script
+// through a non-interactive channel (SSH command, BusyBox ash).
+func shRunBashEnv(t *testing.T, env []string, script string) string {
+	t.Helper()
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("bash exited non-zero: %v\noutput:\n%s", err, out)
+	}
+	return string(out)
+}
+
 // shRunStrict / shRunEnvStrict are shRun/shRunEnv for a SHIPPED router-side
 // probe whose exit status is part of its contract — the root-hash probe always
 // exits 0, because every unreadable/undecidable path inside it is

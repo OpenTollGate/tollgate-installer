@@ -29,7 +29,7 @@ One code, four characters of `[A-Z0-9]`, stored in `/etc/config/tollgate`
 | Identifier | Value |
 |---|---|
 | hostname | `tollgate-<code>` |
-| captive SSID | `TollGate-<code>` |
+| captive SSID | `!TollGate-<code>` |
 | private SSID | `<nym>-<code>` |
 
 The installer no longer mints when it can adopt. Step 7 runs
@@ -37,7 +37,7 @@ The installer no longer mints when it can adopt. Step 7 runs
 
 1. reads `tollgate.device.code` from the store — authoritative, never re-minted;
 2. else adopts the code from a machine-shaped hostname (`tollgate-OQ3Q`);
-3. else from a machine-shaped captive SSID (`TollGate-OQ3Q`, `tollgate-0GLK`);
+3. else from a machine-shaped captive SSID (`!TollGate-OQ3Q`, `TollGate-OQ3Q`, `tollgate-0GLK`);
 4. else mints (BusyBox `hexdump`, no `od` on the target) and **stores** it.
 
 It also resolves the nym for the private SSID (stored value, else the prefix of
@@ -54,7 +54,7 @@ writer moves the hostname and the SSID, and the store still wins.
 
 * **Hostname**: `tollgate-<code>` (unchanged behaviour in shape — the installer
   has always written this spelling).
-* **Captive SSID**: `TollGate-<code>`, on the guest APs under **both** spellings
+* **Captive SSID**: `!TollGate-<code>`, on the guest APs under **both** spellings
   (`tollgate_2g_open` / `tollgate_5g_open` from the module, `default_radio0/1`
   from a stock OpenWrt). The old writer matched only `default_radio*`, so on a
   module-configured router it silently matched nothing.
@@ -84,6 +84,20 @@ The prefix case is deliberate on both sides: the captive SSID keeps `TollGate-`
 case-sensitively), the hostname is lowercase (RFC-1123), and the unified thing
 is the **code** — which is what a human reads and compares.
 
+**The leading `!`**: the guest-facing SSID carries a `!` (`!TollGate-<code>`)
+so it sorts FIRST in an alphabetically-sorted WiFi scan list — `0x21` sorts
+before the digits and letters. It is decoration in front of the brand prefix,
+not part of it: the reader (`code_from_name` in `deviceIdentityScript`) strips a
+leading `!` before the prefix compare, so a router already in the field under
+the bare `TollGate-<code>` spelling still adopts the SAME code. The `!` sits
+inside a double-quoted shell assignment the script ships over SSH; history
+expansion (which would eat a bare `!`) does not apply to the non-interactive
+shell the router runs, and `TestBangPrefixedSSIDSurvivesNonInteractiveShell`
+runs the shipped resolver under `bash -c` to prove it. The escaping guard
+(`ssid_safe` / `ssidSafeForShell`) still accepts `!` because it is not a quoting
+hazard — it keeps refusing a single quote and the empty string. The PRIVATE SSID
+is untouched.
+
 ## Where the code lives, and when it changes
 
 `/etc/config/tollgate`, which survives an in-place reinstall, an apk/opkg
@@ -97,7 +111,9 @@ mints a new code — the only case in which the code changes.
   order and the derived names, per case), `TestDeviceIdentityScriptNeverReMints`,
   `TestBrandingWritesAllThreeIdentifiers`,
   `TestPrivateSSIDCommandIsANoOpWithoutTheSection`,
-  `TestBrandingNeverMintsACode`, plus the existing pre-auth allow-list pins.
+  `TestBrandingNeverMintsACode`,
+  `TestBangPrefixedSSIDSurvivesNonInteractiveShell` (the `!` survives a
+  non-interactive shell), plus the existing pre-auth allow-list pins.
   All run the **shipped** router-side shell against a stub `uci`.
 * The same case table is pinned on the module side
   (`tests/uci-defaults-device-code_test.sh`), so a change to the adoption order

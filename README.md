@@ -85,7 +85,7 @@ routers on your LAN and deploys the tollgate-wrt backend over SSH.
    - Enter your Lightning address (where payouts go)
    - Click **"Deploy TollGate"**
 
-6. After ~30 seconds: connect to the `TollGate-XXXX` WiFi (4 random chars,
+6. After ~30 seconds: connect to the `!TollGate-XXXX` WiFi (4 random chars,
    all-caps) and open any website — the captive portal appears with payment
    options.
 
@@ -256,7 +256,7 @@ after the one-shot screen has been missed.
 ### The router's device identity — one code, minted once
 
 Branding resolves **one** four-character code on the router and builds every
-name from it: hostname tollgate-<code>, captive SSID TollGate-<code>, private
+name from it: hostname tollgate-<code>, captive SSID !TollGate-<code>, private
 SSID nym-<code>. The code is kept in the router's uci store, etc/config/tollgate,
 under the `code` option, and REUSED — a redeploy of an existing router keeps the
 name it already answers to, instead of minting a new one. Adoption order: the

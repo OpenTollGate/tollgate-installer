@@ -99,7 +99,7 @@ func testDeviceIdentity() deviceIdentity {
 		Nym:         deviceIdentityDefaultNym,
 		Source:      "store",
 		Hostname:    "tollgate-TEST",
-		SSID:        "TollGate-TEST",
+		SSID:        "!TollGate-TEST",
 		PrivateSSID: deviceIdentityDefaultNym + "-TEST",
 	}
 }
@@ -370,6 +370,20 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 			wantCode: "9K2M", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-9K2M",
 		},
 		{
+			// The guest-facing captive SSID now carries a leading '!' so it
+			// sorts first in an alphabetically-sorted WiFi scan list (0x21 sorts
+			// before digits and letters). The reader must strip that optional
+			// decoration BEFORE the brand-prefix compare, or a router already in
+			// the field under the new spelling would be re-named by the next
+			// deploy. The bare spelling above must keep working too.
+			name: "a bang-prefixed captive SSID is still a code source",
+			seed: []string{
+				"system.@system[0].hostname=OperatorBox",
+				"wireless.tollgate_2g_open.ssid=!TollGate-7F3A",
+			},
+			wantCode: "7F3A", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7F3A",
+		},
+		{
 			name: "a stock default_radio0 SSID is a code source too",
 			seed: []string{
 				"system.@system[0].hostname=myrouter",
@@ -431,7 +445,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 			if want := "tollgate-" + tc.wantCode; id.Hostname != want {
 				t.Errorf("hostname = %q, want %q", id.Hostname, want)
 			}
-			if want := "TollGate-" + tc.wantCode; id.SSID != want {
+			if want := "!TollGate-" + tc.wantCode; id.SSID != want {
 				t.Errorf("captive SSID = %q, want %q", id.SSID, want)
 			}
 			// And the value is STORED, so the next writer reads it back.
@@ -592,6 +606,18 @@ func TestPrivateSSIDCommandRefusesAValueItCannotQuote(t *testing.T) {
 	if !ssidSafeForShell("c08r4d0r-OQ3Q") || ssidSafeForShell("x'y") || ssidSafeForShell("") {
 		t.Errorf("ssidSafeForShell disagrees with the refusal above")
 	}
+	// The captive SSID now carries a leading '!' so it sorts first in an
+	// alphabetically-sorted WiFi list. '!' is history-expansion syntax in an
+	// INTERACTIVE shell, but this guard exists to keep a value quotable inside
+	// the single-quoted uci lines this file builds, and '!' is not a quoting
+	// hazard — so it must be ACCEPTED. The guard must still refuse a quote and
+	// the empty string (asserted right above and again here).
+	if !ssidSafeForShell("!TollGate-7F3A") {
+		t.Errorf("ssidSafeForShell refused %q — the leading '!' the captive SSID now carries is not a quoting hazard", "!TollGate-7F3A")
+	}
+	if ssidSafeForShell("x'y") || ssidSafeForShell("") {
+		t.Errorf("ssidSafeForShell stopped refusing a quote / the empty string")
+	}
 	safe := privateSSIDCommand("private_radio0", "c08r4d0r-OQ3Q")
 	if !strings.Contains(safe, "uci -q set wireless.private_radio0.ssid='c08r4d0r-OQ3Q'") {
 		t.Errorf("a quotable value was not written: %q", safe)
@@ -622,5 +648,29 @@ func TestBrandingNeverMintsACode(t *testing.T) {
 	}
 	if !strings.Contains(deviceIdentityScript, "hexdump") {
 		t.Error("deviceIdentityScript has no mint path — a router with no stored code and no machine-shaped name could not be named")
+	}
+}
+
+// TestBangPrefixedSSIDSurvivesNonInteractiveShell is the escaping proof the
+// leading '!' needs. The captive SSID is written inside a double-quoted shell
+// assignment (`SSID="!TollGate-$CODE"`) that ships to the router over SSH. In
+// an INTERACTIVE bash the '!' would be history-expansion syntax and be eaten;
+// the router runs the script through a NON-interactive channel, where history
+// expansion is off. This runs the SAME shipped resolver under `bash -c` (a
+// non-interactive shell, the closest strict stand-in for the SSH command
+// channel) and asserts the '!' survives into the SSID the resolver emits.
+func TestBangPrefixedSSIDSurvivesNonInteractiveShell(t *testing.T) {
+	env, statePath, _ := uciStubEnv(t, []string{
+		"system.@system[0].hostname=tollgate-7F3A",
+	})
+	store := filepath.Join(filepath.Dir(statePath), "tollgate.conf")
+	script := strings.Replace(deviceIdentityScript, identityStoreAnchor, "CODE_STORE="+store, 1)
+	out := shRunBashEnv(t, env, script)
+	id := parseDeviceIdentity(out)
+	if id.SSID != "!TollGate-7F3A" {
+		t.Fatalf("captive SSID = %q, want %q — the leading '!' was lost (history expansion or quoting)\nresolver output:\n%s", id.SSID, "!TollGate-7F3A", out)
+	}
+	if !strings.Contains(deviceIdentityScript, `SSID="!TollGate-$CODE"`) {
+		t.Errorf("the shipped resolver no longer emits the bang-prefixed captive SSID in its double-quoted assignment")
 	}
 }
