@@ -27,8 +27,9 @@ routers on your LAN and deploys the tollgate-wrt backend over SSH.
 
 1. **Start from vanilla OpenWrt.** The wizard can flash supported GL.iNet
    routers during deployment; for a clean-slate/manual-package test, use the
-   [pre26 install run book](docs/pre26-install-runbook.md), which covers both
-   wizard deployment and direct `.apk`/`.ipk` installation on vanilla OpenWrt.
+   [install run book](docs/install-runbook.md), which always targets the latest
+   pre-release and covers both wizard deployment and direct `.apk`/`.ipk`
+   installation on vanilla OpenWrt.
 
    Alternatively, SSH in and sysupgrade manually:
    ```sh
@@ -272,12 +273,12 @@ feed's package build:
 
 | | |
 |---|---|
-| Selected release tag | `v0.6.0-rc1-pre26` (the pinned pre-release default) |
-| Package version | `0.6.0_rc1_pre26` — the tag with `v` dropped and `-` → `_`, installed as `0.6.0_rc1_pre26-r1` |
-| Source commit | `4614ac2` of `tollgate-module-basic-go` |
-| Asset name | `tollgate-wrt_0.6.0_rc1_pre26_<arch>.{ipk,apk}` for 14 arches |
+| Selected release tag | the latest **pre-release** of `FreedomTechFeed/packages` (resolve it at the top of the run book) |
+| Package version | the tag with the leading `v` dropped and `-` → `_`, installed as `<pkg_version>-r1` |
+| Source commit | reported by `tollgate version` after install |
+| Asset name | `tollgate-wrt_<pkg_version>_<arch>.{ipk,apk}` for the shipped arches |
 
-The installed binary reports `v0.6.0-alpha2-g373770a` — the version string plus
+The installed binary reports `v<source-tag>-g<short-sha>` — the version string plus
 the **source commit**. That string is not the package version, on purpose: the
 commit identifies the build, the version string only identifies the release
 line. The wizard reads the installed build back off the router and logs it
@@ -421,7 +422,7 @@ still works.
 ## Prerequisites
 
 - **Router** running OpenWrt (24.10.x or 25.x). The wizard flashes supported
-  GL.iNet stock routers during deployment; see [the pre26 install run book](docs/pre26-install-runbook.md)
+  GL.iNet stock routers during deployment; see [the install run book](docs/install-runbook.md)
   for clean-slate and manual package-install paths.
 - **SSH access** — port 22 open, root password set (empty on a fresh reset).
 - **Upstream internet** — either Ethernet cable into the WAN port, or WiFi
