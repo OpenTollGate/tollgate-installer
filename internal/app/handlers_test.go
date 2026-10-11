@@ -87,22 +87,41 @@ func TestHandleDeploy(t *testing.T) {
 			expectedError:  "IP required",
 		},
 		{
-			// Fresh-reset OpenWrt routers ship with an empty root password —
-			// the deploy API must accept an empty password (see sshConnect).
-			name:           "empty password allowed (fresh reset)",
-			body:           `{"ip": "192.168.1.1", "password": "", "lnurl": "test@wallet.app", "mode": "wan"}`,
+			name:           "missing admin password",
+			body:           `{"ip": "192.168.1.1", "password": "", "privateWifiPassword": "wifipass123", "lnurl": "test@wallet.app", "mode": "wan"}`,
+			expectedStatus: 400,
+			expectedError:  "an admin password of at least 8 characters is required",
+		},
+		{
+			name:           "too-short admin password",
+			body:           `{"ip": "192.168.1.1", "password": "", "adminPassword": "short", "privateWifiPassword": "wifipass123", "lnurl": "test@wallet.app", "mode": "wan"}`,
+			expectedStatus: 400,
+			expectedError:  "an admin password of at least 8 characters is required",
+		},
+		{
+			name:           "missing private WiFi password",
+			body:           `{"ip": "192.168.1.1", "password": "", "adminPassword": "adminpass1", "lnurl": "test@wallet.app", "mode": "wan"}`,
+			expectedStatus: 400,
+			expectedError:  "a private WiFi password of at least 8 characters is required",
+		},
+		{
+			// Fresh-reset OpenWrt routers ship with an empty ROUTER password —
+			// the deploy API must accept an empty router password (see
+			// sshConnect). The ADMIN password is separate and required.
+			name:           "empty router password allowed (fresh reset)",
+			body:           `{"ip": "192.168.1.1", "password": "", "adminPassword": "adminpass1", "privateWifiPassword": "wifipass123", "lnurl": "test@wallet.app", "mode": "wan"}`,
 			expectedStatus: 200,
 			expectedError:  "",
 		},
 		{
 			name:           "invalid lightning address",
-			body:           `{"ip": "192.168.1.1", "password": "password", "lnurl": "invalid"}`,
+			body:           `{"ip": "192.168.1.1", "password": "password", "adminPassword": "adminpass1", "privateWifiPassword": "wifipass123", "lnurl": "invalid"}`,
 			expectedStatus: 400,
 			expectedError:  "a valid Lightning address is required",
 		},
 		{
 			name:           "valid request",
-			body:           `{"ip": "192.168.1.1", "password": "password", "lnurl": "test@wallet.app", "mode": "wan"}`,
+			body:           `{"ip": "192.168.1.1", "password": "password", "adminPassword": "adminpass1", "privateWifiPassword": "wifipass123", "lnurl": "test@wallet.app", "mode": "wan"}`,
 			expectedStatus: 200,
 			expectedError:  "",
 		},

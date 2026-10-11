@@ -1234,12 +1234,21 @@ func runDeployment(job *Job, req deployRequest) {
 	// wallet_drain_cashu, so a fresh deploy that skipped this step handed out
 	// root administration over plain HTTP.
 	//
-	// The operator's password stays OPTIONAL (a fresh OpenWrt has none to
-	// type), but the deployed router must never end up credential-less: when
-	// the router has no usable root password and none was supplied, GENERATE
-	// one, set it, and show it once. If a credential cannot be established,
-	// FAIL the deploy — never report success on a password-less router.
+	// The operator's router password (how we got in) stays OPTIONAL — a fresh
+	// OpenWrt has none to type — but the ADMIN password is REQUIRED: the wizard
+	// never generates or prints a credential, so the operator's own choice is
+	// applied here and the module is handed the same value (step 6). Setting it
+	// at step 4 (not deferred) also means the deploy's later reconnects use a
+	// credential we already know, instead of racing a module that keyed the
+	// router itself.
 	job.setStep(4, "running", "")
+	// Establish the operator's admin password; fall back to the router password
+	// only for callers that supplied that alone (the "re-assert what I use"
+	// behaviour).
+	rootCredential := req.AdminPassword
+	if rootCredential == "" {
+		rootCredential = req.Password
+	}
 	effectivePassword, credentialOK := ensureRootCredential(job, func(cmd string) string {
 		return sshRun(client, cmd)
 	}, func(pw string) bool {
@@ -1248,7 +1257,7 @@ func runDeployment(job *Job, req deployRequest) {
 		// the deploy session proves nothing about what the router will accept
 		// after the password write.
 		return proveRootPassword(req.IP, pw)
-	}, req.Password)
+	}, rootCredential)
 	if !credentialOK {
 		return
 	}
@@ -1547,10 +1556,9 @@ func runDeployment(job *Job, req deployRequest) {
 		// in the output as a hard failure regardless of binary existence.
 		// Hand the operator's own admin + private-WiFi credentials to the
 		// package's 99-tollgate-setup through the environment, so the module
-		// uses them instead of generating (and printing) its own. Empty => the
-		// module's own first-run flow (generate silently; the owner sets their
-		// own at the board first-run page). shellQuoteSingle keeps both values
-		// out of the shell's reach.
+		// uses them (and never generates one). Both are REQUIRED by the API, so
+		// the environment is always populated in a real deploy.
+		// shellQuoteSingle keeps both values out of the shell's reach.
 		credEnv := ""
 		if req.AdminPassword != "" {
 			credEnv += "TOLLGATE_ADMIN_PASSWORD=" + shellQuoteSingle(req.AdminPassword) + " "
