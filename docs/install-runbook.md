@@ -187,10 +187,11 @@ so a different release or target needs its own bundle.
 ### 3.2 Variant B2 — direct install, `.apk` lane (OpenWrt 25.12.x)
 
 **The admin and private-WiFi passwords are REQUIRED.** The package never
-generates or prints a credential: it uses `TOLLGATE_ADMIN_PASSWORD` (the board's
-admin password) and `TOLLGATE_PRIVATE_WIFI_PASSWORD` (the private/management
-WiFi). Without them no credential is established and the admin board is not
-served (fail closed) — set them before the install.
+generates or prints a credential. **apk-tools 3 does not forward the caller's
+environment to package scriptlets** (measured on 25.12.5 / apk-tools 3.0.5), so
+an exported `TOLLGATE_ADMIN_PASSWORD` **does not reach the package** on this
+lane. Write the credentials to two ROOT-ONLY files instead — the package reads,
+applies and removes them:
 
 ```sh
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
@@ -198,10 +199,10 @@ BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 # verify the manifest before trusting the bytes
 cd /tmp && wget -q "$BASE/SHA256SUMS"
 
-# the credentials YOU choose (>= 8 chars); exported so the package's postinst
-# sees them. They are applied to the router and never echoed.
-export TOLLGATE_ADMIN_PASSWORD='choose-a-strong-admin-password'
-export TOLLGATE_PRIVATE_WIFI_PASSWORD='choose-a-strong-wifi-password'
+# the credentials YOU choose (>= 8 chars), written root-only BEFORE the install
+mkdir -p /etc/tollgate && umask 077
+printf '%s' 'choose-a-strong-admin-password' > /etc/tollgate/admin-password
+printf '%s' 'choose-a-strong-wifi-password'  > /etc/tollgate/wifi-password
 
 # MT3000 / MT6000 (aarch64_cortex-a53)
 wget "$BASE/tollgate-wrt_${VER}_aarch64_cortex-a53.apk" -O /tmp/tollgate-wrt.apk
@@ -213,8 +214,6 @@ apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt.apk
 # wget "$BASE/tollgate-wrt_${VER}_mips_24kc.apk" -O /tmp/tollgate-wrt.apk
 # grep " tollgate-wrt_${VER}_mips_24kc.apk\$" SHA256SUMS | sha256sum -c -
 # apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt.apk
-
-unset TOLLGATE_ADMIN_PASSWORD TOLLGATE_PRIVATE_WIFI_PASSWORD
 ```
 
 **`--allow-untrusted` is required, not optional.** The `.apk`/`.ipk` files carry
@@ -228,9 +227,12 @@ mirrors the wizard.
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 cd /tmp && wget -q "$BASE/SHA256SUMS"
 
-# the credentials YOU choose (>= 8 chars) — required, see 3.2
-export TOLLGATE_ADMIN_PASSWORD='choose-a-strong-admin-password'
-export TOLLGATE_PRIVATE_WIFI_PASSWORD='choose-a-strong-wifi-password'
+# the credentials YOU choose (>= 8 chars) — required, see 3.2. opkg DOES forward
+# the environment, so `TOLLGATE_ADMIN_PASSWORD=... opkg install` also works
+# here; the root-only files below work on both lanes.
+mkdir -p /etc/tollgate && umask 077
+printf '%s' 'choose-a-strong-admin-password' > /etc/tollgate/admin-password
+printf '%s' 'choose-a-strong-wifi-password'  > /etc/tollgate/wifi-password
 
 # MT3000 / MT6000
 wget "$BASE/tollgate-wrt_${VER}_aarch64_cortex-a53.ipk" -O /tmp/tollgate-wrt.ipk
@@ -241,8 +243,6 @@ opkg update && opkg install /tmp/tollgate-wrt.ipk
 # wget "$BASE/tollgate-wrt_${VER}_mips_24kc.ipk" -O /tmp/tollgate-wrt.ipk
 # grep " tollgate-wrt_${VER}_mips_24kc.ipk\$" SHA256SUMS | sha256sum -c -
 # opkg update && opkg install /tmp/tollgate-wrt.ipk
-
-unset TOLLGATE_ADMIN_PASSWORD TOLLGATE_PRIVATE_WIFI_PASSWORD
 ```
 
 The wizard uses heavier flags on this lane
