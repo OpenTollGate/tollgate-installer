@@ -315,6 +315,19 @@
       <div class="hint">Lightning address (you@wallet.app) or raw LNURL (lnurl1...). Required.</div>
     </div>
 
+    <div class="field">
+      <label for="admin-password">Router admin password (optional)</label>
+      <input type="password" id="admin-password" placeholder="Leave blank to choose it at first login"
+             autocomplete="new-password">
+      <div class="hint">The board's admin password. Blank = choose it at the board's first-run page (recommended).</div>
+    </div>
+    <div class="field">
+      <label for="private-wifi-password">Private WiFi password (optional)</label>
+      <input type="password" id="private-wifi-password" placeholder="Leave blank to choose it at first login"
+             autocomplete="new-password">
+      <div class="hint">The private (management) WiFi password. Blank = choose it at the board's first-run page.</div>
+    </div>
+
     <details class="advanced">
       <summary>Advanced settings (optional)</summary>
       <div class="field">
@@ -1585,6 +1598,8 @@ async function startDeploy() {
     wifiPass: document.getElementById('wifi-pass').value,
     band: selectedSSIDBand(),
     lnurl: lnurl,
+    adminPassword: (document.getElementById('admin-password') || {}).value || '',
+    privateWifiPassword: (document.getElementById('private-wifi-password') || {}).value || '',
     devSplit: parseInt(document.getElementById('devsplit').value, 10),
     margin: parseInt(document.getElementById('margin').value, 10),
     mint: document.getElementById('mint').value,

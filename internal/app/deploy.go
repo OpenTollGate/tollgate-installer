@@ -1545,11 +1545,24 @@ func runDeployment(job *Job, req deployRequest) {
 		// to downgrade unless forced. --force-reinstall ensures the files land even
 		// if opkg thinks the package is already present. Detect "Not downgrading"
 		// in the output as a hard failure regardless of binary existence.
-		installCmd := "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
+		// Hand the operator's own admin + private-WiFi credentials to the
+		// package's 99-tollgate-setup through the environment, so the module
+		// uses them instead of generating (and printing) its own. Empty => the
+		// module's own first-run flow (generate silently; the owner sets their
+		// own at the board first-run page). shellQuoteSingle keeps both values
+		// out of the shell's reach.
+		credEnv := ""
+		if req.AdminPassword != "" {
+			credEnv += "TOLLGATE_ADMIN_PASSWORD=" + shellQuoteSingle(req.AdminPassword) + " "
+		}
+		if req.PrivateWiFiPassword != "" {
+			credEnv += "TOLLGATE_PRIVATE_WIFI_PASSWORD=" + shellQuoteSingle(req.PrivateWiFiPassword) + " "
+		}
+		installCmd := credEnv + "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
 		if pkgMgr == "apk" {
 			// apk has no downgrade refusal, but --force-overwrite guards against
 			// existing-file conflicts on reinstall.
-			installCmd = "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
+			installCmd = credEnv + "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
 		}
 		installOut := sshRun(client, installCmd)
 		job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
