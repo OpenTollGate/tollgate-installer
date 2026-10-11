@@ -1368,14 +1368,23 @@ func handleWifiTest(w http.ResponseWriter, r *http.Request) {
 type deployRequest struct {
 	IP       string `json:"ip"`
 	Password string `json:"password"`
-	Mode     string `json:"mode"`     // wan | sta
-	SSID     string `json:"ssid"`     // for sta mode
-	WifiPass string `json:"wifiPass"` // for sta mode
-	Band     string `json:"band"`     // sta mode: scan-derived band of SSID ("2.4"/"5"/"6")
-	LNURL    string `json:"lnurl"`    // Lightning address or raw LNURL
-	DevSplit *int   `json:"devSplit"` // advanced: % to dev fund (0-50); nil => defaultDevSplit
-	Margin   *int   `json:"margin"`   // advanced: operator markup % (0-100); nil => defaultMargin
-	Mint     string `json:"mint"`     // advanced: preferred Cashu mint URL
+	// AdminPassword is the operator's OWN root/admin password for the router.
+	// When set, it is handed to the package's 99-tollgate-setup as
+	// TOLLGATE_ADMIN_PASSWORD, so the module uses it instead of generating (and
+	// printing) one. Empty => the module's own first-run flow.
+	AdminPassword string `json:"adminPassword"`
+	// PrivateWiFiPassword is the operator's private-WiFi PSK. When set, it is
+	// handed to the package as TOLLGATE_PRIVATE_WIFI_PASSWORD, so the module
+	// does not generate-and-print its own.
+	PrivateWiFiPassword string `json:"privateWifiPassword"`
+	Mode                string `json:"mode"`     // wan | sta
+	SSID                string `json:"ssid"`     // for sta mode
+	WifiPass            string `json:"wifiPass"` // for sta mode
+	Band                string `json:"band"`     // sta mode: scan-derived band of SSID ("2.4"/"5"/"6")
+	LNURL               string `json:"lnurl"`    // Lightning address or raw LNURL
+	DevSplit            *int   `json:"devSplit"` // advanced: % to dev fund (0-50); nil => defaultDevSplit
+	Margin              *int   `json:"margin"`   // advanced: operator markup % (0-100); nil => defaultMargin
+	Mint                string `json:"mint"`     // advanced: preferred Cashu mint URL
 	// TestMints is OPT-IN: when false/absent (the default for real customer
 	// deployments) the wizard configures ONLY the 7 production mints. When
 	// true it additionally appends the 2 testnut test mints, which fake
