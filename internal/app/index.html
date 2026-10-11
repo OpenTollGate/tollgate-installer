@@ -316,16 +316,16 @@
     </div>
 
     <div class="field">
-      <label for="admin-password">Router admin password (optional)</label>
-      <input type="password" id="admin-password" placeholder="Leave blank to choose it at first login"
-             autocomplete="new-password">
-      <div class="hint">The board's admin password. Blank = choose it at the board's first-run page (recommended).</div>
+      <label for="admin-password">Router admin password <span class="req">*</span></label>
+      <input type="password" id="admin-password" placeholder="Choose the board's admin password (min 8 characters)"
+             autocomplete="new-password" oninput="checkReady()">
+      <div class="hint">Required. You sign in to the board with this. Set on the router during install and never printed.</div>
     </div>
     <div class="field">
-      <label for="private-wifi-password">Private WiFi password (optional)</label>
-      <input type="password" id="private-wifi-password" placeholder="Leave blank to choose it at first login"
-             autocomplete="new-password">
-      <div class="hint">The private (management) WiFi password. Blank = choose it at the board's first-run page.</div>
+      <label for="private-wifi-password">Private WiFi password <span class="req">*</span></label>
+      <input type="password" id="private-wifi-password" placeholder="Choose the private (management) WiFi password (min 8 characters)"
+             autocomplete="new-password" oninput="checkReady()">
+      <div class="hint">Required. The private (management) WiFi password. Set on the router during install and never printed.</div>
     </div>
 
     <details class="advanced">
@@ -1510,6 +1510,18 @@ function checkReady() {
   const ln = document.getElementById('lnurl').value;
   let ready = !!(ip && validLightning(ln));
   let hint = '';
+  // The admin and private-WiFi passwords are REQUIRED: the installer hands them
+  // to the router (TOLLGATE_ADMIN_PASSWORD / TOLLGATE_PRIVATE_WIFI_PASSWORD) and
+  // never generates or prints one, so there is nothing to fall back to.
+  const adminPw = (document.getElementById('admin-password') || {}).value || '';
+  const wifiPw = (document.getElementById('private-wifi-password') || {}).value || '';
+  if (ready && adminPw.length < 8) {
+    ready = false;
+    hint = 'Choose an admin password of at least 8 characters.';
+  } else if (ready && wifiPw.length < 8) {
+    ready = false;
+    hint = 'Choose a private WiFi password of at least 8 characters.';
+  }
   // STA (WiFi repeater) mode: the router's uplink IS the upstream WiFi, so
   // Deploy stays greyed out until that connection is CONFIRMED. "unavailable"
   // means the router is not on OpenWrt yet (stock, pre-flash) — the check can
@@ -1576,8 +1588,15 @@ async function startDeploy() {
   const ip = selectedRouterIP();
   const password = document.getElementById('password').value;
   const lnurl = document.getElementById('lnurl').value.trim();
+  const adminPassword = (document.getElementById('admin-password') || {}).value || '';
+  const privateWifiPassword = (document.getElementById('private-wifi-password') || {}).value || '';
 
   if (!ip || !validLightning(lnurl)) return;
+  // Defensive repeat of checkReady's gate: the Deploy button is disabled, but a
+  // submit path that skipped it must still refuse to deploy with no admin
+  // password (the router would be left without one).
+  if (adminPassword.length < 8) { showError('Choose an admin password of at least 8 characters.'); return; }
+  if (privateWifiPassword.length < 8) { showError('Choose a private WiFi password of at least 8 characters.'); return; }
 
   // The host-key decision belongs to the action that sends the password. Ask
   // ONCE, here, naming the fingerprint — instead of letting the job fail later
@@ -1598,8 +1617,8 @@ async function startDeploy() {
     wifiPass: document.getElementById('wifi-pass').value,
     band: selectedSSIDBand(),
     lnurl: lnurl,
-    adminPassword: (document.getElementById('admin-password') || {}).value || '',
-    privateWifiPassword: (document.getElementById('private-wifi-password') || {}).value || '',
+    adminPassword: adminPassword,
+    privateWifiPassword: privateWifiPassword,
     devSplit: parseInt(document.getElementById('devsplit').value, 10),
     margin: parseInt(document.getElementById('margin').value, 10),
     mint: document.getElementById('mint').value,
