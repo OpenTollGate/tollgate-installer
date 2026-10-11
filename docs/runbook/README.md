@@ -1,11 +1,11 @@
 # TollGate install run book
 
 There is **one canonical run book**, and it always targets the **latest
-pre-release** of `FreedomTechFeed/packages`:
+release** of `FreedomTechFeed/packages`:
 
 - **[Install Run Book (canonical, portable)](../install-runbook.md)** — the
-  complete host-independent OpenWrt procedure (wizard + manual, `.apk`/`.ipk`/
-  offline bundle). It resolves the release tag at the top of the session and
+  complete host-independent OpenWrt procedure (wizard + manual, `.apk`/`.ipk`).
+  It resolves the release tag at the top of the session and
   never hardcodes a `preNN`.
 
 ## Host mechanics

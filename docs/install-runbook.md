@@ -1,6 +1,7 @@
 # TollGate — Install Run Book (Review Club)
 
-**Release under test:** the **latest pre-release** of `FreedomTechFeed/packages`.
+**Release under test:** the **latest release** of `FreedomTechFeed/packages` — the
+release candidate, or the newest pre-release while still pre-testing.
 
 > **Never hardcode a `preNN` in this run book.** Resolve the tag once at the top
 > of every session (below) and use `$TAG` / `$VER` everywhere. A run book pinned
@@ -12,16 +13,16 @@
 ## 0. Resolve the release under test (do this first)
 
 ```sh
-# Latest pre-release tag of the feed (pre-releases are flagged `prerelease`)
+# Newest release tag of the feed (the RC, or the newest pre-release while testing)
 TAG=$(curl -fsSL 'https://api.github.com/repos/FreedomTechFeed/packages/releases?per_page=30' \
-  | python3 -c 'import sys,json;print(next(r["tag_name"] for r in json.load(sys.stdin) if r["prerelease"]))')
+  | python3 -c 'import sys,json;print(max(json.load(sys.stdin), key=lambda r: r["published_at"])["tag_name"])')
 # Package version = tag without the leading 'v', with '-' -> '_'
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
 echo "TAG=$TAG  VER=$VER"
 ```
 
 (`jq` equivalent if `python3` is unavailable:
-`... | jq -r '[.[] | select(.prerelease)][0].tag_name'`.)
+`... | jq -r 'max_by(.published_at).tag_name'`.)
 
 Everything below uses `$TAG` (release tag) and `$VER` (package version). Record
 both in your feedback.
@@ -38,9 +39,9 @@ both in your feedback.
 | | Path A — installer wizard | Path B — manual install |
 |---|---|---|
 | **Entry point** | `install-and-test.sh`, UI on `:8099` | shell on the workstation + router |
-| **Who it is for** | first-time users, review sessions | fallback, WAN-less sites, anyone avoiding a binary |
+| **Who it is for** | first-time users, review sessions | fallback; anyone avoiding a binary |
 | **Proven?** | proven on earlier pre-releases | **no — this is what the session must prove** |
-| **Internet needed on router?** | no | no for the offline bundle; yes for the single-file variants |
+| **Internet needed on router?** | no (assets pre-staged on the workstation) | **yes** — the direct variants run `apk`/`opkg update` for the OpenWrt deps |
 
 Both paths must end in the same observable state. **§4 is the shared acceptance
 check** — run it after whichever path you used. A path only "passes" if §4 passes.
@@ -54,7 +55,7 @@ check** — run it after whichever path you used. A path only "passes" if §4 pa
 |---|---|---|
 | GL.iNet MT3000 (Beryl AX) | `aarch64_cortex-a53` / `mediatek-filogic` | primary target |
 | GL.iNet MT6000 (Flint 2) | `aarch64_cortex-a53` / `mediatek-filogic` | same arch pair as MT3000 |
-| GL.iNet AR300M | `mips_24kc` / `ath79-generic` | **flash-constrained — read §3.4** |
+| GL.iNet AR300M | `mips_24kc` / `ath79-generic` | **flash-constrained — read §3.3** |
 
 > MT3000 and MT6000 share one arch pair, so a packaging pass on one implies the
 > other. Keep both in the matrix anyway: **they differ in flash layout**, and the
@@ -63,7 +64,9 @@ check** — run it after whichever path you used. A path only "passes" if §4 pa
 ### Router state
 - **Vanilla OpenWrt** — 25.12.x for the `.apk` lane, 24.10.x for the `.ipk` lane.
 - SSH reachable, root password known (a freshly reset OpenWrt ships with an **empty** root password).
-- **Either** an uplink, or a workstation with internet (the offline bundle needs internet on the *laptop*, never on the router).
+- **An uplink on the router** for the direct `.apk`/`.ipk` variants — `apk`/`opkg
+  update` fetch `nodogsplash`/`jq`/`ca-bundle` from the OpenWrt repos. Path A
+  pre-stages its assets on the workstation.
 
 ### 1.1 Clean slate — getting to vanilla OpenWrt
 
@@ -105,7 +108,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-instal
 
 Flags: `--tag <tag>` (pin the release under test), `--channel`, `--list`, `--bin <path>`, `--trust-host-key`.
 
-**Pin the tag to the resolved pre-release:** `--tag "$TAG"`. A pass with no
+**Pin the tag to the resolved release:** `--tag "$TAG"`. A pass with no
 pinned tag is not evidence about `$TAG`.
 
 What it does: detect OS+arch → download `tollgate-installer` → serve on `:8099`
@@ -134,57 +137,7 @@ an apk/opkg repository. Pointing `/etc/apk/repositories` or
 So the honest manual path is a **direct file install**, which is byte-for-byte
 what the wizard does: `fetch asset → verify sha256 → install the file by path`.
 
-### 3.1 Variant B1 — offline bundle (recommended; router needs NO uplink)
-
-The release ships a per-arch bundle containing the package **plus its whole
-dependency closure**, proven closed.
-
-```sh
-# on the workstation — this is where internet is needed
-BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
-curl -fsSL "$BASE/tollgate-wrt-${VER}-aarch64_cortex-a53-offline.tar.gz" | tar -xz
-sha256sum --check --strict MANIFEST.sha256
-./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'
-```
-For the AR300M use the `mips_24kc` bundle:
-`…/tollgate-wrt-${VER}-mips_24kc-offline.tar.gz`.
-
-Options: `--bundle <dir>`, `--user`, `--port`, `--staging-dir`, `--trust-mac`,
-`--iface`, `--password-file`, `--report <file>`, `--dry-run`, `--version`,
-`-h/--help`. **Run `--dry-run` first** and paste its output.
-
-> **Credentials (current B1 caveat).** The package no longer generates or
-> prints an admin/private-WiFi credential; it needs `TOLLGATE_ADMIN_PASSWORD`
-> and `TOLLGATE_PRIVATE_WIFI_PASSWORD`. The offline installer as pinned does
-> **not** yet forward them, so a B1 install leaves the admin board **refused**
-> (fail closed — no lockout: SSH still works). After a B1 install, set the
-> board password yourself with `passwd root` on the router (and the private
-> WiFi with `tollgate network private set-password`), or use Path A / B2 / B3,
-> which pass the credentials. Forwarding them in the offline installer is a
-> tracked follow-up.
-
-Order of operations (from the driver itself): verify the bundle's own manifest
-*before pushing a byte* → stage and **apply the management keepalive seed first**
-→ stage the closure over `ssh 'cat > …'` (**never `scp -O`** — a fresh dropbear
-has no `sftp-server`) → run the router-side sequence → probe the br-lan client
-view from the workstation → merge both halves into one machine-readable report.
-
-**Exit codes — quote the number in your feedback:**
-
-| code | meaning | | code | meaning |
-|---|---|---|---|---|
-| 0 | pass | | 6 | staged name/hash binding |
-| 2 | usage | | 7 | `apk` failed |
-| 3 | bundle failed its own manifest check | | 8 | runtime payload missing |
-| 4 | missing dependency | | 9 | a post-install assertion failed |
-| 5 | keepalive/lockout risk | | 10 | cannot reach the router |
-| | | | 11 | router image unsupported for this lane |
-
-**Limits of B1:** the `.ipk` / ≤24.10 `opkg` lane is **not covered** (apk-tools 3
-only, OpenWrt 25.x); the dependency closure is pinned to *this* release+target,
-so a different release or target needs its own bundle.
-
-### 3.2 Variant B2 — direct install, `.apk` lane (OpenWrt 25.12.x)
+### 3.1 Variant B1 — direct install, `.apk` lane (OpenWrt 25.12.x)
 
 **The admin and private-WiFi passwords are REQUIRED.** The package never
 generates or prints a credential. **apk-tools 3 does not forward the caller's
@@ -221,13 +174,13 @@ apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt.apk
 signs the manifest). The manifest check above *is* your integrity gate. It
 mirrors the wizard.
 
-### 3.3 Variant B3 — direct install, `.ipk` lane (OpenWrt 24.10.x) — least proven
+### 3.2 Variant B2 — direct install, `.ipk` lane (OpenWrt 24.10.x)
 
 ```sh
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 cd /tmp && wget -q "$BASE/SHA256SUMS"
 
-# the credentials YOU choose (>= 8 chars) — required, see 3.2. opkg DOES forward
+# the credentials YOU choose (>= 8 chars) — required, see 3.1. opkg DOES forward
 # the environment, so `TOLLGATE_ADMIN_PASSWORD=... opkg install` also works
 # here; the root-only files below work on both lanes.
 mkdir -p /etc/tollgate && umask 077
@@ -251,7 +204,7 @@ vanilla router try it plain first** — if dependencies resolve cleanly,
 `--force-depends` would only mask a real problem. Add flags one at a time and
 report which was needed.
 
-### 3.4 AR300M flash-space caveat
+### 3.3 AR300M flash-space caveat
 
 The default payload (`/usr/bin/tollgate-wrt` ≈ 12.4 MB + `/usr/bin/tollgate` ≈
 7.4 MB) does **not** fit a 16 MB NOR device against roughly 4.6 MB of free
@@ -296,7 +249,7 @@ enables+starts `tollgate-wrt`. The wizard additionally does:
 1. **`tollgate.lan` name resolution** — `/etc/hosts` entry, dnsmasq `address`.
    A manual install **will not serve the portal under that name**; use the IP.
 2. **Package integrity gate** — sha256 against `SHA256SUMS` before install
-   (manual equivalent: §3.2/§3.3's verify step).
+   (manual equivalent: §3.1/§3.2's verify step).
 3. **Flashing OpenWrt from stock GL.iNet firmware**, root-password setup, and
    upstream/STA WAN configuration.
 4. **LNURL / Lightning-address configuration.**
@@ -315,7 +268,7 @@ wizard-only step is not.
 ## 6. Reporting
 
 Use `FEEDBACK-TEMPLATE.md`. For each run record: device + **variant**, OpenWrt
-version, **`$TAG`/`$VER`**, path (**A / B1 / B2 / B3**), the exit code if any, §4
+version, **`$TAG`/`$VER`**, path (**A / B1 / B2**), the exit code if any, §4
 output, and pass/partial/fail.
 
 **State which path you actually ran**, and **confirm the installed version**
