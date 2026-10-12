@@ -162,11 +162,13 @@ resolves the arch from the router, verifies the manifest, then installs.
 : "${TAG:?run §0 first, then re-run this block with TAG exported}"
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
-ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d '"')
+ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d "\"'")
 if command -v apk >/dev/null 2>&1; then
     EXT=apk; PM="apk add --allow-untrusted --force-overwrite"
+    apk update
 else
     EXT=ipk; PM="opkg install"
+    opkg update
 fi
 FILE="tollgate-wrt_${VER}_${ARCH}.${EXT}"
 cd /tmp
