@@ -137,74 +137,74 @@ an apk/opkg repository. Pointing `/etc/apk/repositories` or
 So the honest manual path is a **direct file install**, which is byte-for-byte
 what the wizard does: `fetch asset → verify sha256 → install the file by path`.
 
-### 3.1 Variant B1 — direct install, `.apk` lane (OpenWrt 25.12.x)
+### 3.1 Set the passwords FIRST
 
-**The admin and private-WiFi passwords are REQUIRED.** The package never
-generates or prints a credential. **apk-tools 3 does not forward the caller's
-environment to package scriptlets** (measured on 25.12.5 / apk-tools 3.0.5), so
-an exported `TOLLGATE_ADMIN_PASSWORD` **does not reach the package** on this
-lane. Write the credentials to two ROOT-ONLY files instead — the package reads,
-applies and removes them:
-
-```sh
-BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
-
-# verify the manifest before trusting the bytes
-cd /tmp && wget -q "$BASE/SHA256SUMS"
-
-# the credentials YOU choose (>= 8 chars), written root-only BEFORE the install
-mkdir -p /etc/tollgate && umask 077
-printf '%s' 'choose-a-strong-admin-password' > /etc/tollgate/admin-password
-printf '%s' 'choose-a-strong-wifi-password'  > /etc/tollgate/wifi-password
-
-# MT3000 / MT6000 (aarch64_cortex-a53)
-wget "$BASE/tollgate-wrt_${VER}_aarch64_cortex-a53.apk" -O /tmp/tollgate-wrt.apk
-grep " tollgate-wrt_${VER}_aarch64_cortex-a53.apk\$" SHA256SUMS | sha256sum -c -
-apk update
-apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt.apk
-
-# AR300M (mips_24kc)
-# wget "$BASE/tollgate-wrt_${VER}_mips_24kc.apk" -O /tmp/tollgate-wrt.apk
-# grep " tollgate-wrt_${VER}_mips_24kc.apk\$" SHA256SUMS | sha256sum -c -
-# apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt.apk
-```
-
-**`--allow-untrusted` is required, not optional.** The `.apk`/`.ipk` files carry
-**no apk/opkg signature** (no signing key is published; the only release key
-signs the manifest). The manifest check above *is* your integrity gate. It
-mirrors the wizard.
-
-### 3.2 Variant B2 — direct install, `.ipk` lane (OpenWrt 24.10.x)
+**The package never sets a credential** — not the admin board's, not the private
+WiFi's — and the `:8090` admin board's login is checked against root's shadow
+hash. A freshly reset router has an **empty** root password, so its admin board
+is one rpcd would open to **any** password; the package fails closed and drops
+that board until root has a password. So set it **before** installing. `passwd`
+prompts twice and echoes nothing:
 
 ```sh
-BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
-cd /tmp && wget -q "$BASE/SHA256SUMS"
-
-# the credentials YOU choose (>= 8 chars) — required, see 3.1. opkg DOES forward
-# the environment, so `TOLLGATE_ADMIN_PASSWORD=... opkg install` also works
-# here; the root-only files below work on both lanes.
-mkdir -p /etc/tollgate && umask 077
-printf '%s' 'choose-a-strong-admin-password' > /etc/tollgate/admin-password
-printf '%s' 'choose-a-strong-wifi-password'  > /etc/tollgate/wifi-password
-
-# MT3000 / MT6000
-wget "$BASE/tollgate-wrt_${VER}_aarch64_cortex-a53.ipk" -O /tmp/tollgate-wrt.ipk
-grep " tollgate-wrt_${VER}_aarch64_cortex-a53.ipk\$" SHA256SUMS | sha256sum -c -
-opkg update && opkg install /tmp/tollgate-wrt.ipk
-
-# AR300M
-# wget "$BASE/tollgate-wrt_${VER}_mips_24kc.ipk" -O /tmp/tollgate-wrt.ipk
-# grep " tollgate-wrt_${VER}_mips_24kc.ipk\$" SHA256SUMS | sha256sum -c -
-# opkg update && opkg install /tmp/tollgate-wrt.ipk
+passwd root
 ```
 
-The wizard uses heavier flags on this lane
-(`--force-downgrade --force-reinstall --force-overwrite --force-depends`). **On a
-vanilla router try it plain first** — if dependencies resolve cleanly,
-`--force-depends` would only mask a real problem. Add flags one at a time and
-report which was needed.
+### 3.2 Direct file install (both lanes)
 
-### 3.3 AR300M flash-space caveat
+§3.0 applies: there is no feed to add, so install the release **file by path** —
+byte-for-byte what the wizard does (`fetch asset → verify sha256 → install the
+file`). One block serves both package managers: it detects `apk` vs `opkg`,
+resolves the arch from the router, verifies the manifest, then installs.
+
+```sh
+# $TAG is the tag you resolved in §0; derive the version exactly as §0 does.
+: "${TAG:?run §0 first, then re-run this block with TAG exported}"
+VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
+BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
+ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d '"')
+if command -v apk >/dev/null 2>&1; then
+    EXT=apk; PM="apk add --allow-untrusted --force-overwrite"
+else
+    EXT=ipk; PM="opkg install"
+fi
+FILE="tollgate-wrt_${VER}_${ARCH}.${EXT}"
+cd /tmp
+
+# A fresh image has no clock and no ca-bundle, so HTTPS verification fails with
+# "SSL verify error: unknown error". Skip TLS verification for the FETCH only —
+# the SHA256SUMS gate below is what carries integrity.
+wget -q --no-check-certificate "$BASE/SHA256SUMS" -O SHA256SUMS
+wget -q --no-check-certificate "$BASE/$FILE" -O "$FILE"
+grep " $FILE\$" SHA256SUMS | sha256sum -c - || { echo "CHECKSUM FAILED — do not install"; exit 1; }
+$PM "/tmp/$FILE"
+```
+
+**`--allow-untrusted` is required on the apk lane, not optional.** The
+`.apk`/`.ipk` files carry **no apk/opkg signature** (no signing key is published;
+the only release key signs the manifest). The manifest check above *is* your
+integrity gate. It mirrors the wizard.
+
+> The wizard uses heavier flags on the opkg lane
+> (`--force-downgrade --force-reinstall --force-overwrite --force-depends`). **On
+> a vanilla router try it plain first** — if dependencies resolve cleanly,
+> `--force-depends` would only mask a real problem. Add flags one at a time and
+> report which was needed.
+
+### 3.3 Set the private WiFi passphrase AFTER install
+
+The package leaves the private (management) **wireless** AP **disabled** until a
+passphrase exists — the wired LAN ports on `br-private` are unaffected. Set one
+once the service is up; this writes the key and enables the radio (the value is
+never echoed):
+
+```sh
+read -r -s -p 'private WiFi passphrase (min 8 chars): ' WIFIPW; echo
+tollgate network private set-password "$WIFIPW"
+unset WIFIPW
+```
+
+### 3.4 AR300M flash-space caveat
 
 The default payload (`/usr/bin/tollgate-wrt` ≈ 12.4 MB + `/usr/bin/tollgate` ≈
 7.4 MB) does **not** fit a 16 MB NOR device against roughly 4.6 MB of free
@@ -268,7 +268,7 @@ wizard-only step is not.
 ## 6. Reporting
 
 Use `FEEDBACK-TEMPLATE.md`. For each run record: device + **variant**, OpenWrt
-version, **`$TAG`/`$VER`**, path (**A / B1 / B2**), the exit code if any, §4
+version, **`$TAG`/`$VER`**, path (**A / B**), the exit code if any, §4
 output, and pass/partial/fail.
 
 **State which path you actually ran**, and **confirm the installed version**

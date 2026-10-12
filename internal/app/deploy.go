@@ -1554,23 +1554,17 @@ func runDeployment(job *Job, req deployRequest) {
 		// to downgrade unless forced. --force-reinstall ensures the files land even
 		// if opkg thinks the package is already present. Detect "Not downgrading"
 		// in the output as a hard failure regardless of binary existence.
-		// Hand the operator's own admin + private-WiFi credentials to the
-		// package's 99-tollgate-setup through the environment, so the module
-		// uses them (and never generates one). Both are REQUIRED by the API, so
-		// the environment is always populated in a real deploy.
-		// shellQuoteSingle keeps both values out of the shell's reach.
-		credEnv := ""
-		if req.AdminPassword != "" {
-			credEnv += "TOLLGATE_ADMIN_PASSWORD=" + shellQuoteSingle(req.AdminPassword) + " "
-		}
-		if req.PrivateWiFiPassword != "" {
-			credEnv += "TOLLGATE_PRIVATE_WIFI_PASSWORD=" + shellQuoteSingle(req.PrivateWiFiPassword) + " "
-		}
-		installCmd := credEnv + "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
+		//
+		// No credential is passed on the environment: the package never sets one
+		// (see the module's 99-tollgate-setup). The admin password set at step 4
+		// is what the board checks against, and the wizard's private-WiFi PSK is
+		// applied through the module CLI once the service is up
+		// (applyPrivateWiFiPassphrase).
+		installCmd := "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
 		if pkgMgr == "apk" {
 			// apk has no downgrade refusal, but --force-overwrite guards against
 			// existing-file conflicts on reinstall.
-			installCmd = credEnv + "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
+			installCmd = "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
 		}
 		installOut := sshRun(client, installCmd)
 		job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
@@ -2003,10 +1997,38 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		return
 	}
 
+	// The service is up (the health gate passed above), so the module CLI socket
+	// exists: apply the wizard's private-WiFi passphrase. The package sets no
+	// credential and leaves the private AP DISABLED until a passphrase exists, so
+	// this is what actually brings the management SSID up.
+	applyPrivateWiFiPassphrase(job, client, req)
+
 	job.mu.Lock()
 	job.Status = "done"
 	job.mu.Unlock()
 	job.addLog("TollGate deployment complete!")
+}
+
+// applyPrivateWiFiPassphrase hands the wizard's private-WiFi PSK to the running
+// module through its CLI. The package (99-tollgate-setup) deliberately sets no
+// credential and leaves the private AP DISABLED until a passphrase exists, so
+// this call is what enables the management SSID — going through the CLI (rather
+// than a bare `uci set`) records the value in config.json and enables the radio
+// in one step.
+//
+// The value is a caller-supplied passphrase: the CLI never echoes it back, and
+// neither the command nor the output is logged here. A failure is non-fatal —
+// the gateway is already serving customers (the health gate proved it), and the
+// operator can re-run `tollgate network private set-password` over SSH.
+func applyPrivateWiFiPassphrase(job *Job, client *ssh.Client, req deployRequest) {
+	if req.PrivateWiFiPassword == "" {
+		return
+	}
+	if _, err := sshRunE(client, "tollgate network private set-password "+shellQuoteSingle(req.PrivateWiFiPassword)); err != nil {
+		job.addLog("Private WiFi passphrase: `tollgate network private set-password` failed — set it yourself over SSH (tollgate network private set-password '<passphrase>')")
+		return
+	}
+	job.addLog("Private WiFi passphrase set and the private AP enabled")
 }
 
 // wirelessRollback is the wireless-restore side effect of the deploy's terminal
