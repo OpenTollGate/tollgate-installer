@@ -137,20 +137,55 @@ an apk/opkg repository. Pointing `/etc/apk/repositories` or
 So the honest manual path is a **direct file install**, which is byte-for-byte
 what the wizard does: `fetch asset → verify sha256 → install the file by path`.
 
-### 3.1 Set the passwords FIRST
+### 3.1 Set the admin password FIRST — do not skip
 
 **The package never sets a credential** — not the admin board's, not the private
-WiFi's — and the `:8090` admin board's login is checked against root's shadow
-hash. A freshly reset router has an **empty** root password, so its admin board
-is one rpcd would open to **any** password; the package fails closed and drops
-that board until root has a password. So set it **before** installing. `passwd`
-prompts twice and echoes nothing:
+WiFi's — and the admin board's login is checked against root's shadow hash. A
+freshly reset router has an **empty** root password, so the package fails closed
+and does **not** serve the board until root has one. Set it **before**
+installing. `passwd` prompts twice and echoes nothing:
 
 ```sh
 passwd root
 ```
 
+> ⚠️ **If you install first and the board is "NOT being served", that is expected
+> fail-closed behaviour — not an install failure.** The install output ends with
+> something like:
+> ```
+> WARNING: the TollGate admin board (…) is NOT being served:
+>   root has no usable password (state: empty).
+> …
+> TollGate: root has no usable password — the :8090 admin board is NOT served.
+> ```
+> The backend, portal and captive network are all up; only the admin login is
+> withheld (rpcd would accept **any** password against the empty hash). To
+> **recover**, set a password and re-run the setup — the gate lives in the
+> package's `uci-defaults`, which are consumed at install, so reinstall to re-run
+> them:
+> ```sh
+> passwd root                        # the password you want
+> # opkg lane:
+> opkg install --force-reinstall /tmp/tollgate-wrt_${VER}_${ARCH}.ipk
+> # apk lane:
+> apk del tollgate-wrt && apk add --allow-untrusted /tmp/tollgate-wrt_${VER}_${ARCH}.apk
+> ```
+
 ### 3.2 Direct file install (both lanes)
+
+> ⚠️ **The install restarts the network and WILL drop your SSH session.** The
+> package's `postinst` restarts network/wifi/firewall/dnsmasq/uhttpd/nodogsplash,
+> and the setup **moves the wired LAN port off the captive bridge (`br-lan`,
+> `192.168.1.1`) onto a new bridge, `br-private`** — the management subnet, a
+> derived `192.168.x.0/24` next to the LAN. So:
+> * a wired `ssh root@192.168.1.1` session **drops mid-install**;
+> * on that same cable the router is now at the **management** address — the
+>   install prints it as `Private SSID …, IP <x>.1`, and it is
+>   `uci get network.private.ipaddr`. Reconnect with `ssh root@<x>.1`;
+> * or reconnect over the router's WiFi at `192.168.1.1`;
+> * to survive the drop, run the block under `screen`/`tmux` — or just let it
+>   finish and run §4 in a fresh session; the install does not need the session
+>   to stay up.
 
 §3.0 applies: there is no feed to add, so install the release **file by path** —
 byte-for-byte what the wizard does (`fetch asset → verify sha256 → install the
@@ -206,7 +241,28 @@ tollgate network private set-password "$WIFIPW"
 unset WIFIPW
 ```
 
-### 3.4 AR300M flash-space caveat
+### 3.4 If your own device is on the management subnet
+
+The router puts its management network on the /24 **next to its LAN** — with the
+default LAN `192.168.1.0/24`, usually `192.168.2.0/24`. The chooser only avoids
+the router's **own** uplinks; it cannot see the networks **your** device is on.
+So if your laptop/phone is also on `192.168.x.0/24` (a common overlap), two
+devices answer `192.168.x.1` on your machine and your connectivity breaks.
+
+If that happens:
+* reach the router on the **wire only** (its management address is on the cable —
+  `ssh -b <your-wired-ip> root@<x>.1`), or disconnect the colliding network; or
+* relocate the management subnet for the test:
+  ```sh
+  uci set network.private.ipaddr=10.99.99.1
+  uci commit network
+  /etc/init.d/network restart      # reconnect at 10.99.99.1
+  ```
+
+> ⚠️ A reinstall/upgrade **re-derives** this address (it is not preserved today).
+> Tracked in OpenTollGate/tollgate-module-basic-go#906.
+
+### 3.5 AR300M flash-space caveat
 
 The default payload (`/usr/bin/tollgate-wrt` ≈ 12.4 MB + `/usr/bin/tollgate` ≈
 7.4 MB) does **not** fit a 16 MB NOR device against roughly 4.6 MB of free
@@ -235,6 +291,8 @@ logread | grep -i tollgate            # startup lines, no panic
 ndsctl status                         # nodogsplash active, no duplicate firewall rules
 nft list ruleset | grep -i tollgate   # firewall rules present, no duplicates
 cat /proc/sys/kernel/hostname         # TollGate-… hostname set
+
+grep -i "NOT served\|no usable password" /tmp/tollgate-setup.log   # fail-closed: board withheld when root has no password — see §3.1
 ```
 
 Declare pass only if all hold. An install that completes but never starts is a
