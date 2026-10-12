@@ -149,9 +149,11 @@ installing. `passwd` prompts twice and echoes nothing:
 passwd root
 ```
 
-> ⚠️ **If you install first and the board is "NOT being served", that is expected
-> fail-closed behaviour — not an install failure.** The install output ends with
-> something like:
+> ⚠️ **On rc3 and later the install REFUSES outright** if root has no password —
+> the package's `preinst` exits non-zero *before* unpacking, so nothing is
+> half-installed and you must `passwd root` and install again. On **rc2 and
+> earlier** the install succeeds but withholds the board; if you see "NOT being
+> served" there, that is expected fail-closed behaviour — not an install failure:
 > ```
 > WARNING: the TollGate admin board (…) is NOT being served:
 >   root has no usable password (state: empty).
@@ -160,9 +162,9 @@ passwd root
 > ```
 > The backend, portal and captive network are all up; only the admin login is
 > withheld (rpcd would accept **any** password against the empty hash). To
-> **recover**, set a password and re-run the setup — the gate lives in the
-> package's `uci-defaults`, which are consumed at install, so reinstall to re-run
-> them:
+> **recover on rc2 and earlier**, set a password and re-run the setup — the gate
+> lives in the package's `uci-defaults`, which are consumed at install, so
+> reinstall to re-run them:
 > ```sh
 > passwd root                        # the password you want
 > # opkg lane:
@@ -193,8 +195,21 @@ file`). One block serves both package managers: it detects `apk` vs `opkg`,
 resolves the arch from the router, verifies the manifest, then installs.
 
 ```sh
-# $TAG is the tag you resolved in §0; derive the version exactly as §0 does.
-: "${TAG:?run §0 first, then re-run this block with TAG exported}"
+# $TAG is resolved in §0 ON YOUR WORKSTATION; carry it to the router (which has
+# no curl/python3), e.g. `export TAG=v0.6.0-rc3`. An interactive shell does NOT
+# abort on ${TAG:?}, so this guard exits explicitly instead.
+if [ -z "${TAG:-}" ]; then
+    echo "ERROR: TAG is unset — resolve it in §0, then: export TAG=v0.6.0-rc3" >&2
+    exit 1
+fi
+
+# The package REFUSES to install without a root password (rc3+). Set one first
+# (§3.1); this fails fast with a clear message instead of a cryptic PM error.
+if [ -z "$(awk -F: '$1=="root"{print $2; exit}' /etc/shadow 2>/dev/null)" ]; then
+    echo "ERROR: root has no password — run 'passwd root' first (§3.1)." >&2
+    exit 1
+fi
+
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d "\"'")
@@ -211,8 +226,9 @@ cd /tmp
 # A fresh image has no clock and no ca-bundle, so HTTPS verification fails with
 # "SSL verify error: unknown error". Skip TLS verification for the FETCH only —
 # the SHA256SUMS gate below is what carries integrity.
-wget -q --no-check-certificate "$BASE/SHA256SUMS" -O SHA256SUMS
-wget -q --no-check-certificate "$BASE/$FILE" -O "$FILE"
+wget -q --no-check-certificate "$BASE/SHA256SUMS" -O SHA256SUMS || { echo "ERROR: cannot fetch $BASE/SHA256SUMS — is TAG correct?" >&2; exit 1; }
+[ -s SHA256SUMS ] || { echo "ERROR: SHA256SUMS is empty — wrong TAG?" >&2; exit 1; }
+wget -q --no-check-certificate "$BASE/$FILE" -O "$FILE" || { echo "ERROR: cannot fetch $BASE/$FILE (check TAG/arch)" >&2; exit 1; }
 grep " $FILE\$" SHA256SUMS | sha256sum -c - || { echo "CHECKSUM FAILED — do not install"; exit 1; }
 $PM "/tmp/$FILE"
 ```
@@ -292,7 +308,7 @@ ndsctl status                         # nodogsplash active, no duplicate firewal
 nft list ruleset | grep -i tollgate   # firewall rules present, no duplicates
 cat /proc/sys/kernel/hostname         # TollGate-… hostname set
 
-grep -i "NOT served\|no usable password" /tmp/tollgate-setup.log   # fail-closed: board withheld when root has no password — see §3.1
+grep -i "NOT served\|no usable password" /tmp/tollgate-setup.log   # rc2-and-earlier only: board withheld (rc3+ refuses the install; see §3.1)
 ```
 
 Declare pass only if all hold. An install that completes but never starts is a
