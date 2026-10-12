@@ -79,6 +79,13 @@ POSITIONAL=()
 TRUST_ARGS=()
 # --bin <path>: run a pre-built installer binary instead of downloading one.
 BIN_PATH=""
+# The deploy's admin (root) and private-WiFi passwords. The wizard NEVER
+# generates or prints a credential, so the deploy API REQUIRES both (>= 8 chars).
+# Defaults to the router password (the "use what I use" case); override with
+# --admin-password / --wifi-password, or TOLLGATE_ADMIN_PASSWORD /
+# TOLLGATE_WIFI_PASSWORD.
+ADMIN_PASS="${TOLLGATE_ADMIN_PASSWORD:-}"
+WIFI_PASS="${TOLLGATE_WIFI_PASSWORD:-}"
 # Filled in by preflight(). python3 is optional; ssh/sshpass are only needed
 # for the step-6 router verification.
 PYTHON3=""
@@ -110,6 +117,12 @@ Options:
                      Trust this router SSH host-key fingerprint for this run
                      (verify it on the router's console first). Same as
                      TOLLGATE_TRUST_HOST_KEY=<fingerprint>.
+  --admin-password <pw>
+                     Root/admin password to set on the router (>= 8 chars).
+                     Defaults to <ROUTER_PASSWORD>. Same as TOLLGATE_ADMIN_PASSWORD.
+  --wifi-password <pw>
+                     Private-WiFi passphrase to set (>= 8 chars). Defaults to
+                     <ROUTER_PASSWORD>. Same as TOLLGATE_WIFI_PASSWORD.
   -h, --help         Show this help.
 USAGE
 }
@@ -120,6 +133,8 @@ while [ $# -gt 0 ]; do
         --channel) FEED_CHANNEL="${2:-}"; shift 2 ;;
         --list)    LIST_RELEASES=1; shift ;;
         --bin)     BIN_PATH="${2:-}"; shift 2 ;;
+        --admin-password) ADMIN_PASS="${2:-}"; shift 2 ;;
+        --wifi-password)  WIFI_PASS="${2:-}"; shift 2 ;;
         --trust-host-key)
             if [ -z "${2:-}" ]; then
                 echo "ERROR: --trust-host-key needs a fingerprint, e.g. --trust-host-key SHA256:AbCdEf…" >&2
@@ -474,6 +489,12 @@ ROUTER_IP="${POSITIONAL[0]:-}"
 ROUTER_PASS="${POSITIONAL[1]:-}"
 LNURL="${POSITIONAL[2]:-}"
 
+# Default the admin + private-WiFi passwords to the router password (the "use
+# what I use" case). The wizard never generates a credential, so both are
+# REQUIRED by the deploy API; --admin-password / --wifi-password override.
+[ -n "${ADMIN_PASS}" ] || ADMIN_PASS="${ROUTER_PASS}"
+[ -n "${WIFI_PASS}" ]  || WIFI_PASS="${ROUTER_PASS}"
+
 if [ -z "${ROUTER_IP}" ]; then
     echo
     echo "No router IP given — interactive mode. Open http://localhost:${PORT}/"
@@ -487,8 +508,16 @@ echo "=== Scanning for routers on LAN ==="
 curl -s "http://127.0.0.1:${PORT}/api/scan" | pretty_json | head -40 || true
 
 echo
+# The deploy API requires BOTH the admin and the private-WiFi password (the
+# wizard never generates one). They default to the router password above.
+if [ "${#ADMIN_PASS}" -lt 8 ] || [ "${#WIFI_PASS}" -lt 8 ]; then
+    echo "ERROR: the deploy needs an admin password and a private-WiFi password of at least 8 characters." >&2
+    echo "       Pass a router password as the 2nd positional argument, or --admin-password / --wifi-password." >&2
+    exit 1
+fi
+
 echo "=== Deploying TollGate to ${ROUTER_IP} ==="
-DEPLOY_JSON="{\"ip\":\"${ROUTER_IP}\",\"password\":\"${ROUTER_PASS}\",\"lnurl\":\"${LNURL}\",\"mode\":\"wan\"}"
+DEPLOY_JSON="{\"ip\":\"${ROUTER_IP}\",\"password\":\"${ROUTER_PASS}\",\"adminPassword\":\"${ADMIN_PASS}\",\"privateWifiPassword\":\"${WIFI_PASS}\",\"lnurl\":\"${LNURL}\",\"mode\":\"wan\"}"
 RESP="$(curl -s -X POST "http://127.0.0.1:${PORT}/api/deploy" \
     -H 'Content-Type: application/json' -d "${DEPLOY_JSON}")"
 echo "Deploy response: ${RESP}"

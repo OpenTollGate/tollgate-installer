@@ -198,13 +198,19 @@ expect_positionals() {  # expect_positionals <case-name> <port>
         return
     fi
     local want_ip="\"ip\":\"$IP\"" want_pw="\"password\":\"$PASS\"" want_ln="\"lnurl\":\"$LNURL\""
+    # The deploy API REQUIRES the admin + private-WiFi passwords (the wizard
+    # never generates one); the launcher must send both, defaulted to the
+    # router password.
+    local want_admin="\"adminPassword\":\"$PASS\"" want_wifi="\"privateWifiPassword\":\"$PASS\""
     if printf '%s' "$body" | grep -Fq "$want_ip" &&
        printf '%s' "$body" | grep -Fq "$want_pw" &&
-       printf '%s' "$body" | grep -Fq "$want_ln"; then
-        pass "$case_name: positionals unshifted (ip=$IP password=<redacted> lnurl=$LNURL)"
+       printf '%s' "$body" | grep -Fq "$want_ln" &&
+       printf '%s' "$body" | grep -Fq "$want_admin" &&
+       printf '%s' "$body" | grep -Fq "$want_wifi"; then
+        pass "$case_name: positionals unshifted + admin/private-WiFi passwords present (ip=$IP password=<redacted> lnurl=$LNURL)"
     else
-        fail "$case_name: the deploy body does not carry the positionals unshifted
-          want: ip=$IP password=<redacted> lnurl=$LNURL
+        fail "$case_name: the deploy body is missing a required field
+          want: ip=$IP password=<redacted> lnurl=$LNURL adminPassword=<redacted> privateWifiPassword=<redacted>
           got:  $body"
     fi
     if printf '%s' "$body" | grep -Fq -- "--trust-host-key"; then

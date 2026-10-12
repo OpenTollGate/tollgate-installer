@@ -296,6 +296,60 @@ func TestChangedRouterHostKeyIsRefused(t *testing.T) {
 	}
 }
 
+// TestReimagedRouterHostKeyIsAcceptedAndRemembered pins the deploy's flash-step
+// contract (Gap C): after an operator-initiated re-image `sysupgrade -n`
+// regenerates the router's host key, so the post-flash reconnect presents a NEW
+// key. It must be accepted (and remembered) instead of refused as CHANGED —
+// which is what aborted the force-flash deploy with "Router unreachable after
+// flash". Only the operator-initiated re-image window may accept the change;
+// every other connect still refuses it.
+func TestReimagedRouterHostKeyIsAcceptedAndRemembered(t *testing.T) {
+	store := knownHostsStore(t)
+
+	oldKey := hostKeySigner(t)
+	newKey := hostKeySigner(t)
+	router := startRogueRouter(t, newKey)
+
+	// Trusted before the flash, when it presented oldKey — and the run's pin is
+	// that same (now-stale) key.
+	line := knownhosts.Line([]string{knownhosts.Normalize(router.ln.Addr().String())}, oldKey.PublicKey())
+	if err := os.WriteFile(store, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatalf("seed trust store: %v", err)
+	}
+	withTrustedFingerprint(t, ssh.FingerprintSHA256(oldKey.PublicKey()))
+
+	// Outside the window the changed key is still refused.
+	if c := dialRogueRouter(t, router); c != nil {
+		c.Close()
+		t.Fatal("a changed host key must still be refused outside a re-image window")
+	}
+
+	// The deploy marks the router it is about to flash.
+	markRouterReimaged(router.host())
+	t.Cleanup(func() { reimagedRouters.Delete(router.host()) })
+
+	client := dialRogueRouter(t, router)
+	if client == nil {
+		t.Fatalf("a re-image window must accept the router's new host key (refusal: %s)", lastHostKeyRefusal(router.host()))
+	}
+	client.Close()
+
+	// The new key is remembered and the stale pre-flash line is replaced.
+	body, err := os.ReadFile(store)
+	if err != nil {
+		t.Fatalf("read store: %v", err)
+	}
+	got := string(body)
+	newBlob := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(newKey.PublicKey())))
+	oldBlob := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(oldKey.PublicKey())))
+	if !strings.Contains(got, newBlob) {
+		t.Errorf("the re-imaged router's new key was not remembered:\n%s", got)
+	}
+	if strings.Contains(got, oldBlob) {
+		t.Errorf("the stale pre-flash key is still in the store:\n%s", got)
+	}
+}
+
 // TestMismatchedTrustPinIsRefused: a --trust-host-key that does not match what
 // the host presents is a refusal, not a hint. The pin only ever matches the exact
 // fingerprint the operator verified.
