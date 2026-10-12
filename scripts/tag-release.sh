@@ -95,6 +95,10 @@ if REMOTE_TAG_COMMIT=$(gh api "repos/${REPO}/git/ref/tags/${TAG}" --jq '.object.
     printf 'Tag exists: tag %s points to %s; building from explicitly requested ref %s\n' "$TAG" "$REMOTE_TAG_COMMIT" "$REF"
   fi
 else
+  # A missing tag makes `gh api` print the 404 JSON body to STDOUT (exit 1), so
+  # the failed command substitution still leaves REMOTE_TAG_COMMIT non-empty.
+  # Clear it, or the mismatch guard below fires against the error blob.
+  REMOTE_TAG_COMMIT=""
   [[ -n "$REF" ]] || REF=$DEFAULT_REF
 fi
 
