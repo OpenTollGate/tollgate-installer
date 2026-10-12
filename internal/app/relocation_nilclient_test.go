@@ -270,7 +270,7 @@ func TestRelocationFailureFailsTheJobAndNeverDereferencesTheNilClient(t *testing
 	defer closeSSHClient(client)
 
 	var nc *ssh.Client
-	if panicked(func() { nc = fixSubnetCollisions(job, client, "192.168.1.1", "pw") }) {
+	if panicked(func() { nc = fixSubnetCollisions(job, client, "192.168.1.1", "pw", true) }) {
 		t.Fatal("fixSubnetCollisions panicked — the deploy would have died with the whole installer process (BLOCK 2)")
 	}
 	if nc != nil {
@@ -326,7 +326,7 @@ func TestSemanticallyNilClientEntryFailsInsteadOfPanicking(t *testing.T) {
 	job.setStep(10, "running", "")
 
 	var nc *ssh.Client
-	if panicked(func() { nc = fixSubnetCollisions(job, nil, "192.168.1.1", "pw") }) {
+	if panicked(func() { nc = fixSubnetCollisions(job, nil, "192.168.1.1", "pw", true) }) {
 		t.Fatal("fixSubnetCollisions panicked on a nil client instead of reporting no session")
 	}
 	if nc != nil {
@@ -384,7 +384,7 @@ func TestSecondMoveReconnectDialsWhereTheRouterIsNow(t *testing.T) {
 
 	job := newJob("192.168.1.1")
 	var nc *ssh.Client
-	if panicked(func() { nc = fixSubnetCollisions(job, router.dial(t), "192.168.1.1", "pw") }) {
+	if panicked(func() { nc = fixSubnetCollisions(job, router.dial(t), "192.168.1.1", "pw", true) }) {
 		t.Fatal("fixSubnetCollisions panicked during a two-move relocation")
 	}
 	if nc != nil {
@@ -445,7 +445,7 @@ func TestReconnectFallbackReportsTheAddressThatAnswered(t *testing.T) {
 	defer closeSSHClient(client)
 
 	job := newJob("192.168.1.1")
-	nc, answered := moveLocalSubnet(job, client, "192.168.1.1", "pw", "br-lan", "lan", "lan", "test move", true)
+	nc, answered := moveLocalSubnet(job, client, "192.168.1.1", "pw", "br-lan", "lan", "lan", "test move", true, "br-lan")
 	if nc == nil {
 		t.Fatal("moveLocalSubnet returned no client although the fallback address answered")
 	}

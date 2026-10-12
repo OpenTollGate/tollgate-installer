@@ -95,7 +95,7 @@ func TestPrivateBridgeMoveNeverDialsTheRelocatedBridgeAddress(t *testing.T) {
 
 	job := newJob("192.168.7.1")
 	client := router.dial(t)
-	nc := fixSubnetCollisions(job, client, "192.168.7.1", "pw")
+	nc := fixSubnetCollisions(job, client, "192.168.7.1", "pw", true)
 	defer closeSSHClient(nc)
 
 	newPrivateIP := relocationMovedAddress(t, job, "br-private")
@@ -157,6 +157,40 @@ func TestPrivateBridgeMoveNeverDialsTheRelocatedBridgeAddress(t *testing.T) {
 	}
 }
 
+// TestStep5DoesNotMoveBrPrivate pins the rc3 fix. At deploy step 5 (before the
+// package install) the installer must NOT relocate br-private: the module
+// RE-derives network.private at install, so moving a STALE br-private this early
+// is premature — and on a wired deploy the deploy session is ON br-private, so
+// the move severs the very session the installer is using (the observed hang).
+func TestStep5DoesNotMoveBrPrivate(t *testing.T) {
+	router := collisionRouter(t,
+		"192.168.7.1/24\n", // br-lan: no collision
+		"192.168.1.2/24\n", // br-private: collides with the 192.168.1.0/24 upstream
+		"192.168.7.50",
+		"1700000000 aa:bb:cc:dd:ee:ff 192.168.7.50 laptop *\n")
+	stubReconnect(t, func(int, string) *ssh.Client { return nil })
+
+	job := newJob("192.168.7.1")
+	client := router.dial(t)
+	nc := fixSubnetCollisions(job, client, "192.168.7.1", "pw", false)
+	defer closeSSHClient(nc)
+
+	if nc == nil {
+		t.Fatal("fixSubnetCollisions returned no client at step 5")
+	}
+	for _, c := range router.sentCommands() {
+		if strings.Contains(c, "uci set network.private.ipaddr=") {
+			t.Errorf("step 5 relocated br-private (includePrivate=false); the module re-derives network.private at install and, on a wired deploy, the move severs the deploy session:\n%s", c)
+		}
+	}
+	job.mu.Lock()
+	status := job.Status
+	job.mu.Unlock()
+	if status == "failed" {
+		t.Errorf("step 5 failed the job over a br-private-only collision (log: %s)", strings.Join(jobLogAll(job), " | "))
+	}
+}
+
 // TestPrivateBridgeMoveReconnectsOnlyOnTheManagementAddressWhenItDies pins the
 // other half: IF the private move did take the management path down anyway, the
 // only address worth dialling is the management address — never the relocated
@@ -180,7 +214,7 @@ func TestPrivateBridgeMoveReconnectsOnlyOnTheManagementAddressWhenItDies(t *test
 
 	job := newJob("192.168.7.1")
 	client := router.dial(t)
-	nc := fixSubnetCollisions(job, client, "192.168.7.1", "pw")
+	nc := fixSubnetCollisions(job, client, "192.168.7.1", "pw", true)
 	defer closeSSHClient(nc)
 
 	newPrivateIP := relocationMovedAddress(t, job, "br-private")
@@ -223,7 +257,7 @@ func TestPrivateMoveFailureNamesTheBridgeThatMoved(t *testing.T) {
 
 	job := newJob("192.168.7.1")
 	job.setStep(10, "running", "")
-	nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, router.dial(t), "192.168.7.1", "pw"), 10)
+	nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, router.dial(t), "192.168.7.1", "pw", true), 10)
 	if ok || nc != nil {
 		t.Fatalf("adoptRelocatedClient = (%v, %v), want (nil, false) after the private move lost the router", nc, ok)
 	}
@@ -259,7 +293,7 @@ func TestRelocationReconnectIsBoundedAndLoggedProgressPerAttempt(t *testing.T) {
 
 	job := newJob("192.168.1.1")
 	client := router.dial(t)
-	nc := fixSubnetCollisions(job, client, "192.168.1.1", "pw")
+	nc := fixSubnetCollisions(job, client, "192.168.1.1", "pw", true)
 	defer closeSSHClient(nc)
 
 	if nc != nil {

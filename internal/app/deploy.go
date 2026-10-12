@@ -1297,7 +1297,7 @@ func runDeployment(job *Job, req deployRequest) {
 		// adoptRelocatedClient fails STEP 5 (jobFail — a setStep+return used to
 		// leave job.Status "running" forever) and we stop WITHOUT dereferencing
 		// the dead client.
-		nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password), 5)
+		nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password, false), 5)
 		if !ok {
 			return
 		}
@@ -1920,7 +1920,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	//
 	// Same contract as step 5: a nil client (the move lost the router) fails
 	// STEP 10 through jobFail and stops here, with no nil dereference.
-	nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password), 10)
+	nc, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password, true), 10)
 	if !ok {
 		return
 	}
@@ -3399,7 +3399,7 @@ func reconnectWithProgress(job *Job, ip, password string, attempts int, delay ti
 // therefore must fall back to where the router is NOW, not to the original
 // address the first move already killed: fixSubnetCollisions threads that
 // through (its curIP).
-func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string, management bool) (*ssh.Client, string) {
+func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSection, dhcpSection, why string, management bool, mgmtIfname string) (*ssh.Client, string) {
 	newIP := randomPrivateLANIP()
 	job.addLog(fmt.Sprintf("%s — moving %s to %s/24", why, ifname, newIP))
 
@@ -3409,7 +3409,7 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 		// blaming the bridge that moved.
 		mgmtBefore := relocationManagementAlive(client)
 		if mgmtBefore != nil {
-			job.addLog("WARNING: the deploy session on the management address " + ip + " (" + managementBridgeIfname + ") is not answering before the " + ifname + " move (" + mgmtBefore.Error() + ") — a failure below is not necessarily this move's doing")
+			job.addLog("WARNING: the deploy session on the management address " + ip + " (" + mgmtIfname + ") is not answering before the " + ifname + " move (" + mgmtBefore.Error() + ") — a failure below is not necessarily this move's doing")
 		}
 
 		sshRun(client, strings.Join(moveLocalSubnetCommands(netSection, dhcpSection, newIP), " && "))
@@ -3419,7 +3419,7 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 			// own result: it is NOT a session move, and the address to verify is
 			// the unchanged management one.
 			job.addLog(fmt.Sprintf("Moved %s to %s/24 — the deploy session stays on the management path %s (%s, unchanged, still answering); no reconnect needed",
-				ifname, newIP, ip, managementBridgeIfname))
+				ifname, newIP, ip, mgmtIfname))
 			return client, ip
 		}
 
@@ -3430,13 +3430,13 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 		if mgmtBefore != nil {
 			blame = " (it was already not answering before the move — see the WARNING above)"
 		}
-		job.addLog("ERROR: moving " + ifname + " to " + newIP + "/24 left the MANAGEMENT address " + ip + " (" + managementBridgeIfname + ") unreachable from this machine" + blame +
+		job.addLog("ERROR: moving " + ifname + " to " + newIP + "/24 left the MANAGEMENT address " + ip + " (" + mgmtIfname + ") unreachable from this machine" + blame +
 			". " + newIP + "/24 exists only inside the router, so it is NOT a recovery address from here.")
 		job.setRelocationFailDetail(fmt.Sprintf(
 			"A colliding local subnet was moved, but the router could not be reached from this machine afterwards, so the deploy stopped instead of continuing against a dead connection. "+
 				"The bridge that moved was %s (now %s/24) — the deploy session lives on %s, not on %s, and %s did not answer afterwards%s. "+
 				"A full network restart during the move can leave %s without an IPv4 address; power-cycle the router to restore %s, then re-run the wizard.",
-			ifname, newIP, managementBridgeIfname, ifname, managementBridgeIfname, blame, managementBridgeIfname, managementBridgeIfname))
+			ifname, newIP, mgmtIfname, ifname, mgmtIfname, blame, mgmtIfname, mgmtIfname))
 		closeSSHClient(client)
 		nc := reconnectWithProgress(job, ip, password, 3, 5*time.Second)
 		if nc == nil {
@@ -3485,7 +3485,7 @@ func moveLocalSubnet(job *Job, client *ssh.Client, ip, password, ifname, netSect
 // uci-defaults derives network.private from network.lan (lan/24 with the third
 // octet +/-1), which can land inside the upstream subnet even though nothing
 // collided at step 5. Returns the live client (reconnected if a subnet moved).
-func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh.Client {
+func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string, includePrivate bool) *ssh.Client {
 	if client == nil {
 		// Defensive, and reachable in a re-run: every query below goes through
 		// sshRun, which dereferences the client. Report it as "no session" so
@@ -3504,12 +3504,36 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 	// (br-lan: the address the wizard dialled, and the only path back to this
 	// machine). A move of a bridge that is NOT the management path must never
 	// relocate the session: see moveLocalSubnet.
+	// management = the bridge that CARRIES THE DEPLOY SSH SESSION. It is the one
+	// whose CIDR contains the address we dialled (ip): on a WiFi deploy that is
+	// br-lan; on a WIRED deploy the module moved the wired port onto br-private,
+	// so the session is on br-private. Deriving it (rather than hardcoding br-lan)
+	// is what stops a "non-management" br-private move from silently severing the
+	// session — the observed hang. A move of a bridge that is NOT the management
+	// path must never relocate the session: see moveLocalSubnet.
 	locals := []struct {
 		ifname, netSection, dhcpSection string
-		management                      bool
 	}{
-		{"br-lan", "lan", "lan", true},
-		{"br-private", "private", "private", false},
+		{"br-lan", "lan", "lan"},
+		{"br-private", "private", "private"},
+	}
+	cidrs := map[string]string{}
+	for _, ln := range locals {
+		if c := localCIDR(client, ln.ifname); c != "" {
+			cidrs[ln.ifname] = c
+		}
+	}
+	// The FIRST bridge whose CIDR contains the dialled address wins, and br-lan
+	// is first — so when both bridges overlap the dialled IP (a collision case)
+	// br-lan, the default management path, is kept. A wired deploy dials
+	// br-private, which br-lan does not contain, so br-private is identified
+	// instead.
+	mgmtIfname := managementBridgeIfname
+	for _, ln := range locals {
+		if c := cidrs[ln.ifname]; c != "" && subnetsOverlap(c, ip+"/32") {
+			mgmtIfname = ln.ifname
+			break
+		}
 	}
 	// curIP is where the router is NOW. Each successful move moves it, so the
 	// NEXT move's reconnect fallback dials an address that can actually answer
@@ -3518,12 +3542,19 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 	// failed and its fallback dialled the dead original address).
 	curIP := ip
 	for _, ln := range locals {
-		lCIDR := localCIDR(client, ln.ifname)
+		// At step 5 (includePrivate=false) the module has not run yet and will
+		// re-derive network.private at install, so relocating a STALE br-private
+		// here is premature — and on a wired deploy it severs the very session we
+		// are using. Only the post-install pass (step 10.5) relocates br-private.
+		if ln.ifname == "br-private" && !includePrivate {
+			continue
+		}
+		lCIDR := cidrs[ln.ifname]
 		if lCIDR == "" {
 			continue
 		}
 		if subnetsOverlap(lCIDR, upCIDR) {
-			if ln.netSection == "lan" {
+			if ln.ifname == mgmtIfname {
 				src := sshConnectionSourceIP(sshRun(client, "echo $SSH_CONNECTION"))
 				leases := sshRun(client, "cat /tmp/dhcp.leases 2>/dev/null")
 				if !relocationIsSafe(src, lCIDR, leases) {
@@ -3535,7 +3566,7 @@ func fixSubnetCollisions(job *Job, client *ssh.Client, ip, password string) *ssh
 				}
 			}
 			nc, answered := moveLocalSubnet(job, client, curIP, password, ln.ifname, ln.netSection, ln.dhcpSection,
-				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw), ln.management)
+				fmt.Sprintf("Subnet collision: %s=%s overlaps upstream %s (gw %s)", ln.ifname, lCIDR, upCIDR, gw), ln.ifname == mgmtIfname, mgmtIfname)
 			if nc == nil {
 				return nil
 			}
@@ -3681,7 +3712,7 @@ func configureSTA(job *Job, pclient **ssh.Client, ip, password, ssid, wifiPass, 
 	// cleanup is nil-safe — closeSSHClient), and return FALSE so the caller
 	// stops. Without this check the nil flowed into upstreamOnline ->
 	// repairLanDNS -> sshRun(nil) and panicked the whole installer (BLOCK 2).
-	client, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, ip, password), 5)
+	client, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, ip, password, false), 5)
 	*pclient = client
 	if !ok {
 		return false
