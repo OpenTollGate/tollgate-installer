@@ -514,12 +514,56 @@ line from %s and connect again to trust the new key.
 		host, keyType, fingerprint, strings.Join(known, ", "), storeDescription(store))
 }
 
+// reimagedRouters holds the addresses of a router the operator deliberately
+// re-imaged in THIS run (the deploy's flash step: a forced reflash, or flashing
+// a stock GL.iNet). `sysupgrade -n` regenerates the router's SSH host key, so
+// the run's --trust-host-key (taken from the PRE-flash key) and the store's
+// pre-flash entry both — correctly — refuse the new key as CHANGED. During an
+// operator-initiated re-image window that refusal is wrong: the operator chose
+// to overwrite this exact router's firmware, so its prior identity is
+// definitionally gone. For these addresses the callback trusts the first key it
+// sees and remembers it, so the rest of the run (e.g. the post-install service
+// restart) and later runs verify against it.
+//
+// Keyed by address, per-process, and never cleared within the run. A concurrent
+// deploy to a DIFFERENT address is unaffected.
+var reimagedRouters sync.Map // addr -> struct{}
+
+// markRouterReimaged opens the trust-on-first-use window for the given
+// addresses (the flashed router's IP plus the LAN defaults it may come back
+// on). Only the deploy's flash step calls this.
+func markRouterReimaged(addrs ...string) {
+	for _, a := range addrs {
+		if strings.TrimSpace(a) != "" {
+			reimagedRouters.Store(a, struct{}{})
+		}
+	}
+}
+
+// routerWasReimaged reports whether addr is inside an operator-initiated
+// re-image window opened by markRouterReimaged.
+func routerWasReimaged(addr string) bool {
+	_, ok := reimagedRouters.Load(addr)
+	return ok
+}
+
 // routerHostKeyCallback is the HostKeyCallback for every router connection:
-// pinned fingerprint, then the store, then refusal. It never silently accepts a
-// key, and it never accepts a changed key for a host already in the store.
+// an operator-initiated re-image window (trust-on-first-use), then the pinned
+// fingerprint, then the store, then refusal. It never silently accepts a
+// changed key for a host already in the store — except for the exact router the
+// operator just chose to re-image.
 func routerHostKeyCallback(ip string) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		fingerprint := ssh.FingerprintSHA256(key)
+
+		// 0. Operator-initiated re-image window: the pre-flash key is gone, so
+		//    this is trust-on-first-use for the router we just flashed.
+		if routerWasReimaged(hostname) || routerWasReimaged(ip) {
+			if err := rememberHostKey(hostname, key); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not remember %s in %s: %v\n", fingerprint, storeDescription(knownHostsPath()), err)
+			}
+			return nil
+		}
 
 		// 1. Explicit pin for this run (--trust-host-key / env).
 		if want := hostKeyTrust(); want != "" {

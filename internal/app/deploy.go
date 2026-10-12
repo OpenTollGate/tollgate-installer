@@ -1113,6 +1113,13 @@ func runDeployment(job *Job, req deployRequest) {
 			job.addLog(fmt.Sprintf("Force-flash requested: reflashing %s to OpenWrt %s (sysupgrade -n — config WIPED)", glModel, img.Version))
 		}
 
+		// The operator explicitly chose to (re)image this router. `sysupgrade -n`
+		// regenerates its SSH host key, so accept the NEW key when it comes back
+		// instead of failing the deploy on a CHANGED-key refusal. Mark the
+		// logged-in IP and the LAN defaults the router may reappear on (see
+		// waitForRouterAfterFlash). See reimagedRouters in hostkey.go.
+		markRouterReimaged(req.IP, "192.168.1.1", "192.168.8.1")
+
 		// Obtain the image on the laptop (not the router — limited storage).
 		// USE the staging cache first: when the PreStage step pre-downloaded
 		// this exact image URL, flashImageBytes serves the staged bytes with
