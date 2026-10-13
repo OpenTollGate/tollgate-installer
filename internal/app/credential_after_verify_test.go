@@ -2,23 +2,23 @@ package app
 
 // "Don't re-key a passwordless router until the install is actually verified."
 //
-// Today `ensureRootCredential` GENERATES and SETS a root password on a router
-// whose root hash is empty — at step 4, before the package download (step 6),
-// the branding, the portal, the LNURL config, the service restarts and the
-// health check. Every one of those can fail, and if one does, the operator's
-// router has been re-keyed by a deploy that did not finish: its only previous
-// access (an empty root password) is gone, replaced by a value they may never
-// have seen. Persisting the credential (PR #70) makes that recoverable; not
-// re-keying until the work has actually succeeded makes it not happen at all.
+// `ensureRootCredential` sets a root password on a router whose root hash is
+// empty (it installs the fixed default, defaultCredential) — historically at
+// step 4, before the package download (step 6), the branding, the portal, the
+// LNURL config, the service restarts and the health check. Every one of those
+// can fail, and if one does, a router re-keyed by a deploy that did not finish
+// has been changed out from under the operator for nothing. Persisting the
+// credential (PR #70) makes that recoverable; not re-keying until the work has
+// actually succeeded makes it not happen at all.
 //
 // New contract:
-//   * empty root hash -> generate, PERSIST, and DEFER. No `passwd`, no
-//     surrender. Later deploy steps keep using the empty credential that got
-//     them in, so nothing downstream changes.
+//   * empty root hash -> the fixed default, PERSISTED and DEFERRED. No `passwd`
+//     at step 4, no surrender. The value IS returned, so later deploy steps
+//     reconnect with the credential the router ends up with.
 //   * the deferred credential is applied ONCE, by the finalization call that
 //     runs after the health check has passed — and only then is it surrendered
-//     to the operator (so the failure view's "already been generated and set"
-//     claim can never be shown for a credential that was never set).
+//     to the operator (so the failure view can never claim a credential was set
+//     when it was not).
 //   * a deploy that fails before that point leaves the router's access as it
 //     found it.
 //
@@ -56,8 +56,11 @@ func TestEmptyRootPasswordIsNotSetUntilTheInstallIsVerified(t *testing.T) {
 	if fr.hash != rootHashEmpty {
 		t.Fatalf("router root hash = %q after step 4, want it untouched (%q)", fr.hash, rootHashEmpty)
 	}
-	if pw != "" {
-		t.Fatalf("ensureRootCredential returned %q as the password later steps must reconnect with; nothing was set, so the empty credential that got the deploy in must be what it returns", pw)
+	// The set is deferred, but the VALUE is returned now: the router ends up
+	// with the fixed default (the package writes the same one), so later steps
+	// must reconnect with it rather than the empty credential that got them in.
+	if pw != defaultCredential {
+		t.Fatalf("ensureRootCredential returned %q; on a password-less router it must return the fixed default %q so later steps reconnect with the credential the router ends up with", pw, defaultCredential)
 	}
 	// Nothing may be surrendered yet: the failure view tells the operator the
 	// password "has already been generated and set". Until it is set, that

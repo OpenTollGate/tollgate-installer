@@ -198,42 +198,6 @@ func parseRootHashState(out string) rootHashState {
 	return rootHashUnknown
 }
 
-// rootPasswordAlphabet omits characters that are hostile to a shell command or
-// to a human retyping the value: no quotes, backslashes, whitespace, or
-// look-alike pairs (0/O, 1/l/I).
-const rootPasswordAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-
-// rootPasswordLength is the generated credential length (log2(57)*20 ≈ 117
-// bits of entropy).
-const rootPasswordLength = 20
-
-// generateRootPassword returns a fresh root credential from crypto/rand. It
-// FAILS (rather than falling back to a weaker source) if the OS CSPRNG is
-// unavailable — a predictable root password is worse than a failed deploy.
-//
-// Rejection sampling above 4*len(alphabet) keeps every character uniformly
-// distributed (no modulo bias).
-func generateRootPassword() (string, error) {
-	const limit = 256 - (256 % len(rootPasswordAlphabet)) // 228
-	out := make([]byte, 0, rootPasswordLength)
-	buf := make([]byte, rootPasswordLength)
-	for len(out) < rootPasswordLength {
-		if _, err := cryptorand.Read(buf); err != nil {
-			return "", fmt.Errorf("crypto/rand unavailable: %w", err)
-		}
-		for _, b := range buf {
-			if int(b) >= limit {
-				continue
-			}
-			out = append(out, rootPasswordAlphabet[int(b)%len(rootPasswordAlphabet)])
-			if len(out) == rootPasswordLength {
-				break
-			}
-		}
-	}
-	return string(out), nil
-}
-
 const (
 	// credentialFileEnv overrides the recovery-log location. The tests use it to
 	// keep the operator's own log out of the way; an operator who keeps secrets
@@ -316,8 +280,10 @@ func persistRootCredential(ip, password string) (string, error) {
 //  3. the router's root password is locked ('!'/'*') -> leave it alone (a
 //     locked account is not credential-less, and re-enabling password login
 //     on a deliberately locked router would be a regression);
-//  4. the router has NO credential (the fresh-deploy state) -> generate one,
-//     set it, verify it, and show it once;
+//  4. the router has NO credential (the fresh-deploy state) -> install the
+//     fixed default (defaultCredential), set it, and prove it took — the same
+//     value the package's 99-tollgate-setup writes for an empty root, which the
+//     admin board forces the operator to change at first login;
 //  5. the state cannot be read -> fail closed (never assume "fine").
 //
 // Returns ok=false after calling jobFail when the deploy must stop.
@@ -340,32 +306,30 @@ func ensureRootCredential(job *Job, run routerRun, prove routerAuthProof, suppli
 		job.setStep(4, "done", "locked (unchanged)")
 		return "", true
 	case rootHashEmpty:
-		pw, err := generateRootPassword()
-		if err != nil {
-			jobFail(job, 4, "cannot generate a root credential",
-				"The router has NO root password and none was supplied, and a credential could not be generated: "+err.Error())
-			return "", false
-		}
-		// Persist BEFORE applying: whatever happens after this point — a crash,
-		// a Ctrl-C, a failed package download two steps later — the router's new
-		// credential is already recoverable from disk instead of existing only
-		// in this process's memory and one one-shot read.
+		// The router has no credential of its own and none was supplied, so it
+		// will end up with the fixed default (defaultCredential) — the SAME value
+		// the package's 99-tollgate-setup writes for an empty root, which the
+		// admin board forces the operator to change at first login. The value is
+		// returned NOW so every later reconnect (module handoff, post-install
+		// re-auth) uses the credential the router ends up with instead of racing
+		// the module; the SET itself is DEFERRED until the install is verified
+		// (finalizeRootCredential), so a mid-way failure leaves the router's
+		// access as it found it.
+		pw := defaultCredential
+		// Persist BEFORE applying so a crash or a missed one-shot poll still
+		// leaves a recovery record of the credential this router was given.
 		if path, perr := persistRootCredential(job.IP, pw); perr != nil {
 			where := credentialFilePath()
 			if where == "" {
 				where = "(no path available)"
 			}
-			job.addLog("WARNING: could not save the generated root credential to " + where + " (" + perr.Error() + ").")
-			job.addLog("It is shown ONCE on this deploy's final screen — store it in your password manager before you close the page, because it is not recoverable from disk.")
+			job.addLog("WARNING: could not save the root credential to " + where + " (" + perr.Error() + ").")
 		} else {
 			job.setCredentialFile(path)
 		}
-		// DEFER the set. The router keeps the empty credential that got the
-		// deploy in until the whole deploy has succeeded (finalizeRootCredential),
-		// so a failure at any later step leaves the operator's access untouched.
 		job.setPendingRootPassword(pw)
 		job.setStep(4, "done", "deferred until the install is verified")
-		return "", true
+		return pw, true
 	default:
 		// rootHashUnknown: /etc/shadow missing or unreadable, no awk, or a
 		// dead session. Never assume this is the credential-less state —
@@ -378,22 +342,23 @@ func ensureRootCredential(job *Job, run routerRun, prove routerAuthProof, suppli
 	}
 }
 
-// finalizeRootCredential applies a credential DEFERRED by ensureRootCredential
-// (the router had no root password, so the deploy generated one). It is set
-// here, once, after the deploy's last gate — the health check — has passed, and
-// only then is it armed for the one-shot view.
+// finalizeRootCredential applies the credential DEFERRED by ensureRootCredential
+// (the router had no root password and none was supplied, so it gets the fixed
+// default, defaultCredential). It is set here, once, after the deploy's last
+// gate — the health check — has passed, and only then is it armed for the
+// one-shot view.
 //
 // Why the deferral: setting a root password OVERWRITES the router's existing
 // access, which on a freshly-reset router is "log in with an empty password".
 // Doing it at step 4 — before the package download (step 6), the branding, the
 // portal, the LNURL config, the service restarts and the health check — means
-// any later failure leaves the operator locked out of hardware the wizard just
-// changed. Persisting the value (PR #70) makes that recoverable; not re-keying
-// until the work has actually succeeded means it does not happen at all.
+// any later failure leaves the router with different access than it was found
+// in. Persisting the value (PR #70) makes a missed one-shot read recoverable;
+// not re-keying until the work has actually succeeded means a successful deploy
+// is the only one that re-keys at all.
 //
-// Arming happens ONLY here, so the failure view's "this deploy failed AFTER the
-// router's root password had already been generated and set" can never be shown
-// for a credential that was never set.
+// Arming happens ONLY here, so the failure view can never be shown for a
+// credential that was never set.
 //
 // Returns false after jobFail when the deploy must not be reported successful:
 // a deploy that does not establish the credential it promised is not complete.
