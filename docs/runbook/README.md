@@ -25,7 +25,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-instal
 
 ## Recordings
 
-Short narrated walkthroughs sit next to the instructions. The wizard path has
-one now; the manual and offline paths follow.
+Short narrated walkthroughs sit next to the instructions.
+Every install path has one.
 
-- **Path A — installer wizard:** [video (55 s, narrated, real UI with a visible cursor)](https://blossom2.orangesync.tech/f202527b2ab8909b89c20ce0014059d0d0b7d994661d4c3a1617bb1b1ca3ae27.mp4) · [captions](https://blossom2.orangesync.tech/133d3cf07954935e893197e4446784e96004d787ae69fe39d4edf4371b0f3f52.vtt)
+- **Path A — installer wizard (interactive):** [video (55 s, real UI + visible cursor)](https://blossom2.orangesync.tech/f202527b2ab8909b89c20ce0014059d0d0b7d994661d4c3a1617bb1b1ca3ae27.mp4) · [captions](https://blossom2.orangesync.tech/133d3cf07954935e893197e4446784e96004d787ae69fe39d4edf4371b0f3f52.vtt)
+- **Path A — installer wizard (headless):** [video (20 s)](https://blossom2.orangesync.tech/b7f9c8a4cb9aeb4f477d4924c39ee250a82e918f7aba43ead389414ce3ff2105.mp4)
+- **Path B — manual `.apk` (OpenWrt 25.12):** [video (54 s)](https://blossom2.orangesync.tech/ac19249bc124f46dcb9e494d7303e5c12d2493c1c2dac240468d5dd95a66f014.mp4)
+- **Path B — manual `.ipk` (OpenWrt 24.10):** [video (43 s)](https://blossom2.orangesync.tech/f8fdb4b6e589241bf9a28f41e8631dbd5e00d5cd5b587f289502d28f04619257.mp4)
+- **Path B — offline bundle (no uplink):** [video (20 s)](https://blossom2.orangesync.tech/75800809a3be1911431a98795a16b72411fde5479b35ecfc1b31012838179942.mp4)
+- **Appendix A — flash vanilla + WiFi uplink:** [video (36 s)](https://blossom2.orangesync.tech/afc2576f0be3091e5db6cbf37fa22ea9ce68be7ec7788763aa04ac18a948caec.mp4)
+
