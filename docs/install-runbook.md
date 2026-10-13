@@ -1,19 +1,30 @@
 # TollGate — Install Run Book (Review Club)
 
-**Release under test:** the newest release of `FreedomTechFeed/packages`. Resolve
-`$TAG`/`$VER` in §0 and use them everywhere — never paste a stale tag.
+Test the newest `FreedomTechFeed/packages` release on a GL.iNet router.
+**The fastest path is the installer wizard (§1)** — it flashes the router,
+sets the root password, brings up the uplink, installs TollGate and configures
+name resolution. §2 covers a manual install if the wizard can't run.
 
-**Lanes** (test the one you were assigned; §4 is the shared acceptance check):
-installer wizard (§2); manual `.apk` on 25.12 (§3); manual `.ipk` on 24.10 (§3);
-offline bundle when the router has no uplink (§3.2).
+**After install**, the router answers at **`https://tollgate-<4hex>.lan`** (its
+hostname, e.g. `tollgate-e753.lan`) and the default admin **and** management-WiFi
+password is **`TollGate`** — the board forces a change at first login.
 
+## Contents
+
+| § | What | When |
+|---|---|---|
+| 0 | Resolve the release under test | always, first |
+| 1 | **tollgate-installer** — the fastest path | the default |
+| 2 | Manual install (fallback): prerequisites · install · names | if the wizard can't run |
+| 3 | Access after install — bridges · names · password · cert | to reach the UI |
+| 4 | Acceptance check | after either path |
+| 5 | Reporting | when you're done |
+| A | Appendix — flash vanilla, WiFi uplink, `conwrt` | reference |
+
+**Lanes:** installer wizard (§1) · manual `.apk` on 25.12 and `.ipk` on 24.10
+(§2) · offline bundle when the router has no uplink (§2.2).
 **Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic`);
-GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, §3.6).
-
-> **`conwrt` (optional helper).** The `conwrt` tool
-> (`git clone https://github.com/Amperstrand/conwrt`; runs on Linux/macOS) wraps
-> the flashing and uplink steps below as `make` targets. Every step gives the raw
-> command **and** its `make` equivalent — use whichever you prefer.
+GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, §A.4).
 
 ---
 
@@ -25,113 +36,18 @@ TAG=$(curl -fsSL 'https://api.github.com/repos/FreedomTechFeed/packages/releases
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g'); echo "TAG=$TAG VER=$VER"
 ```
 
-`jq` alternative: `... | jq -r 'max_by(.published_at).tag_name'`.
+`jq` alternative: `... | jq -r 'max_by(.published_at).tag_name'`. Use `$TAG`/`$VER`
+everywhere below — never paste a stale tag.
 
 ---
 
-## 1. Prerequisites
+## 1. Path A — `tollgate-installer` (start here)
 
-- **Vanilla OpenWrt** — 25.12.x for the `.apk` lane, 24.10.x for the `.ipk` lane.
-- SSH reachable; root password known (a fresh reset ships **empty**).
-- **An uplink on the router** for the manual path (§1.2) — `apk`/`opkg update`
-  fetch the OpenWrt deps. The wizard (§2) pre-stages them; the offline bundle
-  (§3.2) needs no uplink at all.
+`tollgate-installer` (`OpenTollGate/tollgate-installer`) is a small Go binary that
+serves a setup wizard at `:8099` and drives the whole install over SSH: flash →
+root password → uplink → install → brand → portal → LNURL → health.
 
-### 1.1 Clean slate — flash vanilla OpenWrt
-
-Take the profile from the official index for *your* device — never from memory
-(`https://downloads.openwrt.org/releases/`).
-
-| Device | Target | Profile | Notes |
-|---|---|---|---|
-| GL-MT3000 | `mediatek/filogic` | `glinet_gl-mt3000` | **no `factory` image** — use the OEM local-upgrade path or U-Boot `sysupgrade.bin` |
-| GL-MT6000 | `mediatek/filogic` | `glinet_gl-mt6000` | has `factory.bin` — do **not** copy the MT3000 procedure |
-| GL-AR300M | `ath79/generic` | `glinet_gl-ar300m-lite` / `-ar300m16` | there is no plain `glinet_gl-ar300m` profile |
-| GL-AR300M (NAND) | `ath79/nand` | `glinet_gl-ar300m-nor` / `-nand` | **picking wrong is a brick** |
-
-**Record which profile you used.**
-
-**Flash it manually** (download the image, verify it, push it, `sysupgrade -n`):
-
-```sh
-RELEASE=25.12.5 ; TARGET=mediatek/filogic ; PROFILE=glinet_gl-mt3000 ; IP=192.168.1.1
-BASE="https://downloads.openwrt.org/releases/$RELEASE/targets/$TARGET"
-IMG="openwrt-$RELEASE-${TARGET//\//-}-$PROFILE-squashfs-sysupgrade.bin"
-
-curl -fsSLO "$BASE/sha256sums"; curl -fsSLO "$BASE/$IMG"
-grep -F "$IMG" sha256sums | sha256sum -c -          # verify BEFORE flashing
-
-ssh root@$IP 'cat > /tmp/sysup.bin' < "$IMG"        # dropbear has no sftp-server — pipe, do not scp -O
-ssh root@$IP "sha256sum /tmp/sysup.bin"             # must match the line you just verified
-ssh root@$IP "sysupgrade -n /tmp/sysup.bin"         # -n = do NOT keep config (this is the clean slate)
-# the router reboots to 192.168.1.1 with an EMPTY root password (~1-2 min)
-```
-
-> `sysupgrade -n` is the reset: it drops all config and packages. Use `-c` to
-> **keep** config only when you deliberately want to preserve state.
-
-With `conwrt`, the same flash is one step (it resolves the profile from `models/`):
-
-```sh
-make detect                                     # identify the connected router
-make source-image MODEL=glinet-mt3000           # download + verify the image (RELEASE=25.12.5 to pin)
-make flash MODEL=glinet-mt3000                  # source the image and run sysupgrade -n
-# no SSH? recovery mode instead:
-make recovery MODEL=glinet-mt3000 IFACE=enp0s31f6
-make flash-uboot MODEL=glinet-mt3000            # force a U-Boot recovery flash
-```
-
-### 1.2 Give the router an uplink (WiFi STA) — **do this before §3**
-
-The manual install runs `apk`/`opkg update`, so the router needs an uplink. Join
-an upstream AP as a client and route it through the WAN zone:
-
-```sh
-# radio0 = 2.4 GHz, radio1 = 5 GHz on MT3000/MT6000 — use the one your AP is on.
-RADIO=radio0 ; SSID='<upstream-ssid>' ; KEY='<upstream-key>'
-uci set wireless.sta=wifi-iface
-uci set wireless.sta.device="$RADIO"
-uci set wireless.sta.mode=sta
-uci set wireless.sta.ssid="$SSID"
-uci set wireless.sta.key="$KEY"
-uci set wireless.sta.encryption=psk2
-uci set wireless.sta.network=wwan
-uci set wireless.sta.disabled=0
-uci set network.wwan=interface
-uci set network.wwan.proto=dhcp
-WANZONE=$(uci show firewall | sed -n 's/^firewall\.\(@zone\[[0-9]*\]\)\.name=.wan.$/\1/p' | head -1)
-[ -n "$WANZONE" ] && uci add_list "$WANZONE.network=wwan"
-uci commit wireless; uci commit network; uci commit firewall
-wifi reload
-ip route | grep default ; ping -c2 9.9.9.9      # confirm the uplink is up
-```
-
-`conwrt` equivalent (also installs an SSH key):
-
-```sh
-make sta SSID=<upstream-ssid> KEY=<upstream-key>            # 2.4 GHz
-make sta SSID=<upstream-ssid> KEY=<upstream-key> BAND=5ghz  # 5 GHz
-```
-
-### 1.3 Which network is which (and what you can reach)
-
-The install puts the router on **two bridges**, and **moves the wired LAN port
-off `br-lan` onto `br-private`** — so your cable ends up on the management side.
-
-| Bridge | Address | Who is on it | Can reach |
-|---|---|---|---|
-| **`br-lan`** — guest / captive | `192.168.1.1/24` | the open guest SSIDs | the captive portal (`:2050`/`:2051`) + the internet. The admin ports are **dropped** here |
-| **`br-private`** — management | derived: `192.168.2.1`, or a `10.x` if your LAN collides | the wired LAN ports + the private (management) SSIDs | the **board** (`:8080`/`:443`), **LuCI** (`:8090`/`:8443`), and **SSH** |
-
-So a **guest** on `br-lan` pays and gets internet but cannot reach the admin UIs;
-**you**, on the wire or the private SSID (`br-private`), can. Your management
-address is `uci get network.private.ipaddr`.
-
----
-
-## 2. Path A — installer wizard
-
-**Interactive** (serves the UI on `:8099`):
+**Interactive** (opens the wizard in your browser):
 
 ```sh
 bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh)
@@ -143,46 +59,51 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-instal
 bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER_IP> '<ROUTER_PASSWORD>' <LIGHTNING_ADDRESS>
 ```
 
-**Pin the release:** add `--tag "$TAG"` — a pass with no pinned tag is not
-evidence about `$TAG`. Other flags: `--channel`, `--list`, `--bin <path>`,
-`--trust-host-key`.
+The wizard detects OS+arch, scans the LAN, and installs. The admin and
+management-WiFi password fields are **optional** (under *advanced*) — leave them
+blank to install the **`TollGate`** default and change it at first login.
 
-The wizard detects OS+arch, downloads `tollgate-installer`, serves it, scans the
-LAN, and runs the deploy steps in order:
-`verify → stage → flash → firmware → password → upstream → install → brand → portal → lnurl → services → health`.
-The password fields are **optional** (advanced) — blank installs the `TollGate`
-default (§3.1). The wizard also configures the uplink and name resolution for you.
+**Get the current build.** The launcher resolves the newest installer for its
+channel (`alpha` = newest pre-release). Pin it explicitly if you need a specific
+one, and pin the release under test:
+
+```sh
+... install-and-test.sh --installer-tag v0.6.0-alpha2-rc23 --tag "$TAG"
+```
+
+A pass with no `--tag "$TAG"` is not evidence about `$TAG`.
 
 ---
 
-## 3. Path B — manual install on vanilla OpenWrt
+## 2. Path B — manual install on vanilla OpenWrt
 
-### 3.1 Passwords: `TollGate` is installed by default
+### 2.1 Prerequisites — flash vanilla OpenWrt + give it an uplink
 
-The package installs a **fixed default, `TollGate`**, for the admin board and the
-management WiFi when you have not chosen one, and marks the admin credential
-*provisional* — the board **forces a change at first login**, so a fresh install
-is never locked out. To choose your own up front instead:
+Do both **before** §2.2 (the direct install runs `apk`/`opkg update`). Full
+commands, and the `conwrt` equivalents, are in **Appendix A**. In short:
+
+- **Flash vanilla** (25.12.x for `.apk`, 24.10.x for `.ipk`) — §A.1.
+- **Uplink** the router to a WiFi AP as a client — §A.2.
+
+You can also **choose your own passwords up front** — a value you set is
+preserved across reinstalls and never overwritten; skip it and the **`TollGate`**
+default is installed (§3):
 
 ```sh
 passwd root                                            # admin password
-tollgate network private set-password '<passphrase>'   # management WiFi
+tollgate network private set-password '<passphrase>'   # management WiFi (after install)
 ```
 
-A value you set is preserved across reinstalls; skip it and you sign in with
-`TollGate`.
-
-### 3.2 Direct file install (both lanes)
+### 2.2 Direct file install (both lanes)
 
 There is **no feed to add** — `FreedomTechFeed/packages` publishes release assets
 only (no `APKINDEX`/`Packages.gz`). Install the release **file by path**, exactly
 as the wizard does.
 
 > ⚠️ **The install drops your SSH session.** The `postinst` restarts the network
-> and **moves the wired LAN port off `br-lan` (`192.168.1.1`) onto `br-private`**
-> (the derived management subnet). Reconnect at the new address
-> (`uci get network.private.ipaddr`) or over the router's WiFi at `192.168.1.1`.
-> Running the block under `screen`/`tmux` survives the drop.
+> and **moves the wired LAN port off `br-lan` onto `br-private`** (§3). Reconnect
+> at the new address (`uci get network.private.ipaddr`) or over the router's WiFi
+> at `192.168.1.1`. Running the block under `screen`/`tmux` survives the drop.
 
 ```sh
 # Carry $TAG from §0 to the router (which has no curl/python3). An interactive
@@ -216,18 +137,18 @@ tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
 directory. It stages the package plus its full dependency closure and installs
 offline.
 
-### 3.3 Names you can use (Path B)
+### 2.3 Names you can use
 
 The router answers to its **hostname** on the `lan` domain — `<hostname>.lan`,
 i.e. `tollgate-<4hex>.lan` (find it with `cat /proc/sys/kernel/hostname`). It
-resolves to the **management** address (§1.3), so the board and LuCI are at
+resolves to the **management** address (§3), so the board and LuCI are at
 `http://<hostname>.lan:8080` and `http://<hostname>.lan:8090`. This works on
 every path.
 
 The fixed alias **`tollgate.lan`** is set by the **wizard**, not the package, so
 a manual install has neither it nor a `gatewaydomainname` (the package removes
 that on purpose — nodogsplash would redirect-loop, #428). Add the alias
-yourself, after reconnecting (§3.2):
+yourself, after reconnecting (§2.2):
 
 ```sh
 IP=$(uci -q get network.private.ipaddr); IP=${IP%%/*}; [ -n "$IP" ] || IP=192.168.1.1
@@ -237,30 +158,47 @@ uci -q add_list dhcp.@dnsmasq[0].address="/tollgate.lan/$IP"
 uci commit dhcp; /etc/init.d/dnsmasq restart
 ```
 
-### 3.4 Optional: set your own management-WiFi passphrase
+---
+
+## 3. Access after install (either path)
+
+### The two bridges — and what you can reach
+
+The install puts the router on **two bridges**, and **moves the wired LAN port
+off `br-lan` onto `br-private`** — so your cable ends up on the management side.
+
+| Bridge | Address | Who is on it | Can reach |
+|---|---|---|---|
+| **`br-lan`** — guest / captive | `192.168.1.1/24` | the open guest SSIDs | the captive portal (`:2050`/`:2051`) + the internet. The admin ports are **dropped** here |
+| **`br-private`** — management | derived: `192.168.2.1`, or a `10.x` if your LAN collides | the wired LAN ports + the private (management) SSIDs | the **board** (`:8080`/`:443`), **LuCI** (`:8090`/`:8443`), and **SSH** |
+
+A **guest** on `br-lan` pays and gets internet but cannot reach the admin UIs;
+**you**, on the wire or the private SSID (`br-private`), can. Your management
+address is `uci get network.private.ipaddr`.
+
+### The password
+
+The default admin **and** management-WiFi password is **`TollGate`**. Sign in to
+`https://tollgate-<4hex>.lan` with `root` / `TollGate`; the board **forces you to
+choose your own** at first login. (If your SSH session is key-based — e.g. after
+`make sta` installed a key — you won't be prompted for it, but the password is
+still the one the board wants.)
+
+### The certificate warning is expected
+
+`https://tollgate-<4hex>.lan` presents a **self-signed** certificate — no public
+CA issues certs for `.lan`, so the browser's "not secure / self-signed" warning
+is correct, not a fault. On your own box you can add an exception, or import the
+router's `/etc/tollgate/ssl/server.crt` into your trust store. For a managed
+deployment, install your own CA-signed cert covering the name:
 
 ```sh
-read -r -s -p 'private WiFi passphrase (min 8 chars): ' WIFIPW; echo
-tollgate network private set-password "$WIFIPW"; unset WIFIPW
+tollgate ssl apply <cert.pem> <key.pem>     # the module keeps an operator-installed covering identity
 ```
 
-### 3.5 If your device is on the management subnet
-
-The management network is the /24 next to the LAN (`192.168.2.0/24` for a default
-LAN). If your laptop/phone is also on `192.168.x.0/24`, two devices answer
-`192.168.x.1` and your connectivity breaks. Reach the router on the **wire**
-(`ssh -b <your-wired-ip> root@<x>.1`), or relocate:
-
-```sh
-uci set network.private.ipaddr=10.99.99.1; uci commit network; /etc/init.d/network restart
-```
-
-A reinstall re-derives this address (`tollgate-module-basic-go#906`).
-
-### 3.6 AR300M flash-space caveat
-
-The default payload (~20 MB) does **not** fit a 16 MB NOR device (~4.6 MB free
-jffs2): expect `ENOSPC`; a tmpfs fallback is volatile. Record the exact variant.
+Do **not** "fix" it by disabling TLS (`tollgate ssl remove` serves the
+root-capable board over plain HTTP) or by clicking through on a network you
+don't control.
 
 ---
 
@@ -285,23 +223,112 @@ a **fail** — attach `logread | grep -i tollgate`.
 
 ---
 
-## 5. What ONLY the wizard does
-
-A manual install is not crippled — the `postinst` runs the uci-defaults and
-starts `tollgate-wrt`. The wizard additionally: flashes from stock GL.iNet
-firmware and sets the root password + upstream/STA WAN; resolves `tollgate.lan`
-(§3.3) and enforces the sha256 gate; configures LNURL; installs `mdnsd` for
-`.local`; reads the version back; and, on the opkg lane, pre-installs
-`nodogsplash`+`jq`. **Report a manual gap as exactly that** ("works manually but
-X is missing") — not "the feature is broken".
-
----
-
-## 6. Reporting
+## 5. Reporting
 
 Use `FEEDBACK-TEMPLATE.md`. Record device + **variant**, OpenWrt version,
 **`$TAG`/`$VER`**, the path (**A/B**), any exit code, the §4 output, and
 pass/partial/fail. **Say which path you ran** — a Path A pass is not evidence
-about Path B.
+about Path B. Note the installer build (`--installer-tag`) too.
 
 > Host-specific editions: [`runbook/README.md`](runbook/README.md).
+
+---
+
+## Appendix A — flash vanilla, uplink, `conwrt`
+
+**`conwrt`** (`git clone https://github.com/Amperstrand/conwrt`; macOS/Linux) is
+a router-flashing and device-configuration framework. It wraps the two steps
+below as `make` targets, so you can skip pasting commands — but it is **optional**;
+the raw commands are given too. Run `make help` for the full target list.
+
+### A.1 Flash vanilla OpenWrt
+
+Take the profile from the official index for *your* device — never from memory
+(`https://downloads.openwrt.org/releases/`).
+
+| Device | Target | Profile | Notes |
+|---|---|---|---|
+| GL-MT3000 | `mediatek/filogic` | `glinet_gl-mt3000` | **no `factory` image** — OEM local-upgrade or U-Boot `sysupgrade.bin` |
+| GL-MT6000 | `mediatek/filogic` | `glinet_gl-mt6000` | has `factory.bin` — do **not** copy the MT3000 procedure |
+| GL-AR300M | `ath79/generic` | `glinet_gl-ar300m-lite` / `-ar300m16` | there is no plain `glinet_gl-ar300m` profile |
+| GL-AR300M (NAND) | `ath79/nand` | `glinet_gl-ar300m-nor` / `-nand` | **picking wrong is a brick** |
+
+Manual (`sysupgrade -n`), and the `conwrt` equivalent:
+
+```sh
+RELEASE=25.12.5 ; TARGET=mediatek/filogic ; PROFILE=glinet_gl-mt3000 ; IP=192.168.1.1
+BASE="https://downloads.openwrt.org/releases/$RELEASE/targets/$TARGET"
+IMG="openwrt-$RELEASE-${TARGET//\//-}-$PROFILE-squashfs-sysupgrade.bin"
+curl -fsSLO "$BASE/sha256sums"; curl -fsSLO "$BASE/$IMG"
+grep -F "$IMG" sha256sums | sha256sum -c -          # verify BEFORE flashing
+ssh root@$IP 'cat > /tmp/sysup.bin' < "$IMG"        # dropbear has no sftp-server — pipe, do not scp -O
+ssh root@$IP "sha256sum /tmp/sysup.bin"             # must match the line you just verified
+ssh root@$IP "sysupgrade -n /tmp/sysup.bin"         # -n = do NOT keep config (clean slate)
+
+# conwrt:
+make detect                                  # identify the connected router
+make source-image MODEL=glinet-mt3000        # download + verify (RELEASE=25.12.5 to pin)
+make flash MODEL=glinet-mt3000               # source + sysupgrade -n
+make recovery MODEL=glinet-mt3000 IFACE=enp0s31f6   # no SSH? recovery mode
+make flash-uboot MODEL=glinet-mt3000         # force a U-Boot recovery flash
+```
+
+`sysupgrade -n` is the reset (drops config and packages); `-c` keeps config when
+you deliberately want to.
+
+### A.2 WiFi uplink (repeater), before §2.2
+
+The manual install runs `apk`/`opkg update`, so the router needs an uplink. Join
+an upstream AP as a client and route it through the WAN zone:
+
+```sh
+# radio0 = 2.4 GHz, radio1 = 5 GHz on MT3000/MT6000 — use the one your AP is on.
+RADIO=radio0 ; SSID='<upstream-ssid>' ; KEY='<upstream-key>'
+uci set wireless.sta=wifi-iface
+uci set wireless.sta.device="$RADIO"
+uci set wireless.sta.mode=sta
+uci set wireless.sta.ssid="$SSID"
+uci set wireless.sta.key="$KEY"
+uci set wireless.sta.encryption=psk2
+uci set wireless.sta.network=wwan
+uci set wireless.sta.disabled=0
+uci set network.wwan=interface
+uci set network.wwan.proto=dhcp
+WANZONE=$(uci show firewall | sed -n 's/^firewall\.\(@zone\[[0-9]*\]\)\.name=.wan.$/\1/p' | head -1)
+[ -n "$WANZONE" ] && uci add_list "$WANZONE.network=wwan"
+uci commit wireless; uci commit network; uci commit firewall
+wifi reload
+ip route | grep default ; ping -c2 9.9.9.9      # confirm the uplink is up
+
+# conwrt (also installs an SSH key):
+make sta SSID=<upstream-ssid> KEY=<upstream-key>            # 2.4 GHz
+make sta SSID=<upstream-ssid> KEY=<upstream-key> BAND=5ghz  # 5 GHz
+```
+
+### A.3 If your device is on the management subnet
+
+The management network is the /24 next to the LAN (`192.168.2.0/24` for a
+default LAN). If your laptop/phone is also on `192.168.x.0/24`, two devices
+answer `192.168.x.1` and your connectivity breaks. Reach the router on the
+**wire** (`ssh -b <your-wired-ip> root@<x>.1`), or relocate:
+
+```sh
+uci set network.private.ipaddr=10.99.99.1; uci commit network; /etc/init.d/network restart
+```
+
+A reinstall re-derives this address (`tollgate-module-basic-go#906`).
+
+### A.4 AR300M flash-space caveat
+
+The default payload (~20 MB) does **not** fit a 16 MB NOR device (~4.6 MB free
+jffs2): expect `ENOSPC`; a tmpfs fallback is volatile. Record the exact variant.
+
+### A.5 What ONLY the wizard does
+
+A manual install is not crippled — the `postinst` runs the uci-defaults and
+starts `tollgate-wrt`. The wizard additionally: flashes from stock GL.iNet
+firmware and sets the root password + upstream/STA WAN; resolves `tollgate.lan`
+(§2.3) and enforces the sha256 gate; configures LNURL; installs `mdnsd` for
+`.local`; reads the version back; and, on the opkg lane, pre-installs
+`nodogsplash`+`jq`. **Report a manual gap as exactly that** ("works manually but
+X is missing") — not "the feature is broken".
