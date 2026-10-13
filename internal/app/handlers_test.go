@@ -87,10 +87,13 @@ func TestHandleDeploy(t *testing.T) {
 			expectedError:  "IP required",
 		},
 		{
-			name:           "missing admin password",
+			// The admin password is OPTIONAL: blank installs the fixed default
+			// (TollGate), which the admin board forces the operator to change at
+			// first login.
+			name:           "missing admin password defaults to the fixed default",
 			body:           `{"ip": "192.168.1.1", "password": "", "privateWifiPassword": "wifipass123", "lnurl": "test@wallet.app", "mode": "wan"}`,
-			expectedStatus: 400,
-			expectedError:  "an admin password of at least 8 characters is required",
+			expectedStatus: 200,
+			expectedError:  "",
 		},
 		{
 			name:           "too-short admin password",
@@ -99,10 +102,12 @@ func TestHandleDeploy(t *testing.T) {
 			expectedError:  "an admin password of at least 8 characters is required",
 		},
 		{
-			name:           "missing private WiFi password",
+			// The private WiFi password is OPTIONAL too: blank installs the
+			// fixed default (TollGate) on the private AP.
+			name:           "missing private WiFi password defaults to the fixed default",
 			body:           `{"ip": "192.168.1.1", "password": "", "adminPassword": "adminpass1", "lnurl": "test@wallet.app", "mode": "wan"}`,
-			expectedStatus: 400,
-			expectedError:  "a private WiFi password of at least 8 characters is required",
+			expectedStatus: 200,
+			expectedError:  "",
 		},
 		{
 			// Fresh-reset OpenWrt routers ship with an empty ROUTER password —

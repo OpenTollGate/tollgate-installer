@@ -137,41 +137,31 @@ an apk/opkg repository. Pointing `/etc/apk/repositories` or
 So the honest manual path is a **direct file install**, which is byte-for-byte
 what the wizard does: `fetch asset → verify sha256 → install the file by path`.
 
-### 3.1 Set the admin password FIRST — do not skip
+### 3.1 Passwords: a default is installed — change it at first login
 
-**The package never sets a credential** — not the admin board's, not the private
-WiFi's — and the admin board's login is checked against root's shadow hash. A
-freshly reset router has an **empty** root password, so the package fails closed
-and does **not** serve the board until root has one. Set it **before**
-installing. `passwd` prompts twice and echoes nothing:
+**The package installs a FIXED default, `TollGate`, for both the admin board and
+the private (management) WiFi** when you have not chosen one, and marks the admin
+credential *provisional*. The admin board then **forces you to choose your own
+password the first time you sign in** — so a fresh install is never locked out,
+and never left on a credential you cannot know.
+
+You can still choose your own up front. The wizard does it for you; on this
+manual path, set them yourself — each prompts and echoes nothing:
 
 ```sh
-passwd root
+passwd root                                            # admin password
+tollgate network private set-password '<passphrase>'   # management WiFi
 ```
 
-> ⚠️ **On rc3 and later the install REFUSES outright** if root has no password —
-> the package's `preinst` exits non-zero *before* unpacking, so nothing is
-> half-installed and you must `passwd root` and install again. On **rc2 and
-> earlier** the install succeeds but withholds the board; if you see "NOT being
-> served" there, that is expected fail-closed behaviour — not an install failure:
-> ```
-> WARNING: the TollGate admin board (…) is NOT being served:
->   root has no usable password (state: empty).
-> …
-> TollGate: root has no usable password — the :8090 admin board is NOT served.
-> ```
-> The backend, portal and captive network are all up; only the admin login is
-> withheld (rpcd would accept **any** password against the empty hash). To
-> **recover on rc2 and earlier**, set a password and re-run the setup — the gate
-> lives in the package's `uci-defaults`, which are consumed at install, so
-> reinstall to re-run them:
-> ```sh
-> passwd root                        # the password you want
-> # opkg lane:
-> opkg install --force-reinstall /tmp/tollgate-wrt_${VER}_${ARCH}.ipk
-> # apk lane:
-> apk del tollgate-wrt && apk add --allow-untrusted /tmp/tollgate-wrt_${VER}_${ARCH}.apk
-> ```
+A value you set this way is **preserved** across reinstalls and never rewritten.
+If you skip it, sign in with `TollGate`; the board will not let you past the
+password screen until you change it.
+
+> ℹ️ **History.** rc2 set *no* credential and withheld the board until root had
+> one ("… is NOT being served", printed to `/tmp/tollgate-setup.log`). rc3
+> instead **refused to install** (its `preinst` exited non-zero). Both are gone
+> in **rc4 and later**: the default above is installed, so neither the
+> withheld-board nor the refused-install state occurs.
 
 ### 3.2 Direct file install (both lanes)
 
@@ -203,13 +193,9 @@ if [ -z "${TAG:-}" ]; then
     exit 1
 fi
 
-# The package REFUSES to install without a root password (rc3+). Set one first
-# (§3.1); this fails fast with a clear message instead of a cryptic PM error.
-if [ -z "$(awk -F: '$1=="root"{print $2; exit}' /etc/shadow 2>/dev/null)" ]; then
-    echo "ERROR: root has no password — run 'passwd root' first (§3.1)." >&2
-    exit 1
-fi
-
+# The package installs the default credential `TollGate` when root has none
+# (§3.1), so no root-hash preflight is needed here any more — the install no
+# longer refuses.
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d "\"'")
@@ -244,12 +230,11 @@ integrity gate. It mirrors the wizard.
 > `--force-depends` would only mask a real problem. Add flags one at a time and
 > report which was needed.
 
-### 3.3 Set the private WiFi passphrase AFTER install
+### 3.3 Set your own private WiFi passphrase (optional)
 
-The package leaves the private (management) **wireless** AP **disabled** until a
-passphrase exists — the wired LAN ports on `br-private` are unaffected. Set one
-once the service is up; this writes the key and enables the radio (the value is
-never echoed):
+The package installs the management WiFi with the default `TollGate` and enables
+it (§3.1), so the private SSID is up after install. To choose your own now (the
+board also prompts at first login), run — the value is never echoed:
 
 ```sh
 read -r -s -p 'private WiFi passphrase (min 8 chars): ' WIFIPW; echo
@@ -308,7 +293,7 @@ ndsctl status                         # nodogsplash active, no duplicate firewal
 nft list ruleset | grep -i tollgate   # firewall rules present, no duplicates
 cat /proc/sys/kernel/hostname         # TollGate-… hostname set
 
-grep -i "NOT served\|no usable password" /tmp/tollgate-setup.log   # rc2-and-earlier only: board withheld (rc3+ refuses the install; see §3.1)
+grep -i "NOT served\|no usable password" /tmp/tollgate-setup.log   # rc2-and-earlier only: rc4+ installs the TollGate default (see §3.1)
 ```
 
 Declare pass only if all hold. An install that completes but never starts is a
