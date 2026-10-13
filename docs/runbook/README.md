@@ -22,3 +22,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-instal
 > they pinned a specific stale pre-release and the felixfelix-bot installer
 > build, which is exactly the "installed the wrong version" failure the canonical
 > run book now prevents. See git history if you need them.
+
+## Recordings
+
+Short narrated walkthroughs sit next to the instructions. The wizard path has
+one now; the manual and offline paths follow.
+
+- **Path A — installer wizard:** [video (30 s, narrated)](https://blossom2.orangesync.tech/bbccf0fdcb780271a0c7442da2df8d53eb4b6fc1615caeb8f038532592000682.mp4) · [captions](https://blossom2.orangesync.tech/af0593e2ac2e8e6f5ba7282e40b44858a9284728ab319515d1fc211d392808e8.vtt)
