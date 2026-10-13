@@ -237,13 +237,19 @@ func sshTransportAlive(client *ssh.Client) error {
 	if client == nil {
 		return errors.New("no SSH client — the router connection was lost (relocation, reboot, or a moved cable)")
 	}
-	session, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	defer session.Close()
+	// Bound the WHOLE probe, NewSession included: on a half-dead transport the
+	// SSH mux blocks inside NewSession with no timeout — far longer than the 8s
+	// budget here — and that is exactly the state this probe exists to detect.
 	done := make(chan error, 1)
-	go func() { done <- session.Run("true") }()
+	go func() {
+		session, err := client.NewSession()
+		if err != nil {
+			done <- err
+			return
+		}
+		go session.Close()
+		done <- session.Run("true")
+	}()
 	select {
 	case err := <-done:
 		return err
@@ -309,15 +315,18 @@ func sshRunE(client *ssh.Client, cmd string) (string, error) {
 	if client == nil {
 		return "", errors.New("no SSH client — the router connection was lost (relocation, reboot, or a moved cable)")
 	}
-	session, err := client.NewSession()
-	if err != nil {
-		return "", err
-	}
-	// Close OFF the critical path: on a half-dead transport Close can block on
-	// the same dead socket, and that is precisely the state this function exists
-	// to survive.
-	defer func() { go session.Close() }()
+	// Bound the WHOLE exchange, NewSession included. On a half-dead transport
+	// (the router re-addressed itself mid-deploy) the SSH mux blocks inside
+	// NewSession with NO timeout, so bounding only the command left the deploy
+	// parked there until the stall watchdog fired — the step-6 hang after the
+	// package's network restart. Close goes off the critical path: on the same
+	// dead socket it blocks too.
 	out, err := runBounded(sshCommandTimeout, cmd, func() ([]byte, error) {
+		session, err := client.NewSession()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { go session.Close() }()
 		return session.CombinedOutput(cmd)
 	})
 	return string(out), err
