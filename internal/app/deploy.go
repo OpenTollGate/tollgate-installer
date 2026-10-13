@@ -1242,12 +1242,13 @@ func runDeployment(job *Job, req deployRequest) {
 	// root administration over plain HTTP.
 	//
 	// The operator's router password (how we got in) stays OPTIONAL — a fresh
-	// OpenWrt has none to type — but the ADMIN password is REQUIRED: the wizard
-	// never generates or prints a credential, so the operator's own choice is
-	// applied here and the module is handed the same value (step 6). Setting it
-	// at step 4 (not deferred) also means the deploy's later reconnects use a
-	// credential we already know, instead of racing a module that keyed the
-	// router itself.
+	// OpenWrt has none to type — and so is the ADMIN password: the wizard never
+	// generates or prints a credential, and handleDeploy substitutes a FIXED
+	// default (defaultCredential) when the operator leaves the advanced field
+	// blank, so `rootCredential` below is non-empty. The value is applied here
+	// and the module is handed the same one (step 6). Setting it at step 4 (not
+	// deferred) also means the deploy's later reconnects use a credential we
+	// already know, instead of racing a module that keyed the router itself.
 	job.setStep(4, "running", "")
 	// Establish the operator's admin password; fall back to the router password
 	// only for callers that supplied that alone (the "re-assert what I use"
@@ -2016,12 +2017,14 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	job.addLog("TollGate deployment complete!")
 }
 
-// applyPrivateWiFiPassphrase hands the wizard's private-WiFi PSK to the running
-// module through its CLI. The package (99-tollgate-setup) deliberately sets no
-// credential and leaves the private AP DISABLED until a passphrase exists, so
-// this call is what enables the management SSID — going through the CLI (rather
-// than a bare `uci set`) records the value in config.json and enables the radio
-// in one step.
+// applyPrivateWiFiPassphrase hands the wizard's private-WiFi PSK — or the fixed
+// default that handleDeploy substitutes when the operator left the advanced
+// field blank — to the running module through its CLI. The package
+// (99-tollgate-setup) sets the same default on the private AP and enables it
+// when no passphrase exists, so this call matters for an OPERATOR-CHOSEN value:
+// going through the CLI (rather than a bare `uci set`) records the value in
+// config.json and enables the radio in one step. A blank value (a direct API
+// caller) is a no-op.
 //
 // The value is a caller-supplied passphrase: the CLI never echoes it back, and
 // neither the command nor the output is logged here. A failure is non-fatal —
