@@ -565,7 +565,7 @@ func TestEveryFixSubnetCollisionsCallSiteAdoptsTheResult(t *testing.T) {
 			t.Errorf("fixSubnetCollisions call site does not adopt the result through adoptRelocatedClient (nil client => panic / Status stuck on \"running\"):\n%s", line)
 		}
 	}
-	if sites != 3 {
-		t.Errorf("found %d fixSubnetCollisions call sites in deploy.go, want 3 (step 5, step 10.5, configureSTA) — a new one must use adoptRelocatedClient too", sites)
+	if sites != 4 {
+		t.Errorf("found %d fixSubnetCollisions call sites in deploy.go, want 4 (step 5, step 6 install-restart recovery, step 10.5, configureSTA) — a new one must use adoptRelocatedClient too", sites)
 	}
 }

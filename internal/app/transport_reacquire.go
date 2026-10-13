@@ -103,3 +103,58 @@ func ensureTransportAfterRestart(job *Job, client *ssh.Client, ip, password stri
 		return nil, err
 	}
 }
+
+// routerCandidatesFn returns the addresses the deploy tries when it must find
+// the router after a self-inflicted restart moved it. A var so a test can supply
+// candidates without touching the network.
+var routerCandidatesFn = func() []string {
+	out := []string{}
+	for _, r := range discoverRouters() {
+		if r.IP != "" {
+			out = append(out, r.IP)
+		}
+	}
+	return out
+}
+
+// reacquireAfterInstallRestart finds the router after the package INSTALL
+// restarted its networking. The postinst runs /etc/init.d/network restart and
+// 99-tollgate-setup derives network.private (lan/24 ±1), moving the wired port
+// onto br-private — so the pre-deploy address is gone and the step-6 session
+// dies with it. This is the install-time twin of ensureTransportAfterRestart
+// (which only covers the step-10 service restart).
+//
+// Candidates: a fresh LAN scan leads with the OS default-route gateway, which is
+// where the router lands once the wired client re-leases on br-private; the
+// pre-deploy address is a last resort. Every attempt logs, so a legitimate
+// ~2-minute reconnect keeps feeding the stall watchdog instead of being read as
+// a hang. Returns the live client and the address it answered on, or (nil, "")
+// when the router never came back within the bounded window.
+func reacquireAfterInstallRestart(job *Job, oldIP, password string) (*ssh.Client, string) {
+	job.addLog("The install moved the router: re-acquiring the SSH transport at its new address...")
+	cands := routerCandidatesFn()
+	if oldIP != "" {
+		cands = append(cands, oldIP)
+	}
+	seen := map[string]bool{}
+	deadline := time.Now().Add(deployReacquireTimeout)
+	for _, ip := range cands {
+		if ip == "" || seen[ip] {
+			continue
+		}
+		seen[ip] = true
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		perCandidate := 20 * time.Second
+		if remaining < perCandidate {
+			perCandidate = remaining
+		}
+		if c := reacquireTransport(job, ip, password, perCandidate, deployReacquireInterval); c != nil {
+			return c, ip
+		}
+	}
+	job.addLog("Could not re-acquire the SSH transport to the router after the install restart")
+	return nil, ""
+}

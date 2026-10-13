@@ -1541,6 +1541,41 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 		installOut := sshRun(client, installCmd)
 		job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
+		// The package postinst runs `/etc/init.d/network restart` on the router we
+		// are driving (packaging/Makefile): 99-tollgate-setup derives
+		// network.private (lan/24 ±1) and moves the wired port onto br-private, so
+		// the pre-deploy address is gone and THIS session dies with it. That is
+		// expected, not a router fault — prove the session survived and, if it did
+		// not, find the router at its new address and re-acquire BEFORE the
+		// verification checks and the steps that follow. Without this the deploy
+		// blamed the router for a failure it caused itself and the stall watchdog
+		// fired at step 6.
+		if aliveErr := transportAliveFn(client); aliveErr != nil {
+			job.addLog("The package's postinst restarted networking on the router (expected — it derives br-private and moves the wired port): " + aliveErr.Error())
+			transportCloseFn(client)
+			nc, newIP := reacquireAfterInstallRestart(job, req.IP, req.Password)
+			if nc == nil {
+				failTransportLost(job, 6, req.IP, aliveErr)
+				return
+			}
+			client = nc
+			if newIP != "" && newIP != req.IP {
+				job.addLog("The router answered at its new address " + newIP + " — continuing there")
+				req.IP = newIP
+			}
+			if priv := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null")); priv != "" {
+				job.addLog("Router private (management) network: " + priv)
+			}
+			// The derived network.private can collide with the upstream (e.g.
+			// 192.168.2.1 against a 192.168.2.0/24 upstream), which breaks DNS on
+			// the deployed router. Relocate now, as the post-install pass
+			// (step 10.5) also does.
+			nc2, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password, true), 6)
+			if !ok {
+				return
+			}
+			client = nc2
+		}
 		// If opkg refuses to downgrade, the OLD binary stays and the new config
 		// will crash against it — treat as a hard failure even if the binary exists.
 		if strings.Contains(installOut, "Not downgrading") {
