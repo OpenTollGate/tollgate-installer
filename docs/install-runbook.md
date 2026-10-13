@@ -13,18 +13,18 @@ password is **`TollGate`** — the board forces a change at first login.
 
 | § | What | When |
 |---|---|---|
-| 0 | Resolve the release under test | always, first |
-| 1 | **tollgate-installer** — the fastest path | the default |
-| 2 | Manual install (fallback): prerequisites · install · names | if the wizard can't run |
-| 3 | Access after install — bridges · names · password · cert | to reach the UI |
-| 4 | Acceptance check | after either path |
-| 5 | Reporting | when you're done |
-| A | Appendix — flash vanilla, WiFi uplink, `conwrt` | reference |
+| [0](#0-resolve-the-release-under-test-first) | Resolve the release under test | always, first |
+| [1](#1-path-a--tollgate-installer-start-here) | **tollgate-installer** — the fastest path | the default |
+| [2](#2-path-b--manual-install-on-vanilla-openwrt) | Manual install (fallback): prerequisites · install · names | if the wizard can't run |
+| [3](#3-access-after-install-either-path) | Access after install — bridges · names · password · cert | to reach the UI |
+| [4](#4-shared-acceptance-check-after-any-path) | Acceptance check | after either path |
+| [5](#5-reporting) | Reporting | when you're done |
+| [A](#appendix-a--flash-vanilla-uplink-conwrt) | Appendix — flash vanilla, WiFi uplink, `conwrt` | reference |
 
-**Lanes:** installer wizard (§1) · manual `.apk` on 25.12 and `.ipk` on 24.10
-(§2) · offline bundle when the router has no uplink (§2.2).
+**Lanes:** installer wizard ([§1](#1-path-a--tollgate-installer-start-here)) · manual `.apk` on 25.12 and `.ipk` on 24.10
+([§2](#2-path-b--manual-install-on-vanilla-openwrt)) · offline bundle when the router has no uplink ([§2.2](#22-direct-file-install-both-lanes)).
 **Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic`);
-GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, §A.4).
+GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, [§A.4](#a4-ar300m-flash-space-caveat)).
 
 ---
 
