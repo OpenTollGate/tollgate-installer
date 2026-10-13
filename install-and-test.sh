@@ -866,6 +866,17 @@ if router_verify "${ROUTER_IP}" "${ROUTER_PASS}"; then
     verify_rc=0
 else
     verify_rc=$?
+    # Deploy sets the router's root password to the admin password (when one
+    # is given), so the pre-deploy router password no longer authenticates.
+    # Retry with the admin password before declaring failure (rc 2 = probe
+    # unavailable on this host, keep that verdict as-is).
+    if [ "${verify_rc}" -ne 2 ] && [ -n "${ADMIN_PASS}" ] \
+        && [ "${ADMIN_PASS}" != "${ROUTER_PASS}" ]; then
+        if router_verify "${ROUTER_IP}" "${ADMIN_PASS}"; then
+            verify_rc=0
+            echo "(note: the deploy set the router's root password to the admin password)"
+        fi
+    fi
 fi
 
 case "${verify_rc}" in
