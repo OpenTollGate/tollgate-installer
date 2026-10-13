@@ -236,8 +236,8 @@ func TestGeneratedCredentialOnAnEmptyRouterNeedsNoLoginProof(t *testing.T) {
 	job.mu.Lock()
 	pw := job.pendingRootPassword
 	job.mu.Unlock()
-	if pw == "" || len(pw) != rootPasswordLength {
-		t.Fatalf("generated credential = %q, want %d characters", pw, rootPasswordLength)
+	if pw != defaultCredential {
+		t.Fatalf("deferred credential = %q, want the fixed default %q", pw, defaultCredential)
 	}
 	// The set is deferred to finalization, after the deploy's last gate.
 	if !finalizeRootCredential(job, fr.run, fr.proveLogin) {

@@ -395,18 +395,18 @@
       <p>Your router is now a Bitcoin WiFi hotspot.</p>
       <p style="margin-top:0.5rem;">Connect to the WiFi network and open any website to see the payment portal.</p>
     </div>
-    <!-- One-time root credential. Only rendered when the deploy had to create
-         a root password because the router had none; the server serves the
-         value exactly once, on the first read of the job in a terminal state.
-         A copy is persisted to an owner-only file whose PATH arrives as
-         credential_file on every poll (see showCredentialFile). -->
+    <!-- One-time root credential. Only rendered when the deploy set the
+         router's root password (the router had none and none was supplied, so
+         it gets the fixed default); the server serves the value exactly once,
+         on the first read of the job in a terminal state. A copy is persisted
+         to an owner-only file whose PATH arrives as credential_file on every
+         poll (see showCredentialFile). -->
     <div class="credential hidden" id="generated-credential" role="alert">
-      <h3>Save the router's new root password</h3>
+      <h3>The router's new root password</h3>
       <p class="credential-warn">
-        Your router had no root password, so one was generated for it. It is shown ONCE, and a copy is
-        also saved to a file on this machine (mode 600). Store it in your password manager
-        now, before you close or reload this page — you will need it to reach the router's
-        admin board.
+        Your router had no root password, so it was set to the default. The value is shown ONCE here,
+        and a copy is also saved to a file on this machine (mode 600) before you close or reload this
+        page. Change it to your own after you log in to the router's admin board.
       </p>
       <div class="credential-row">
         <code id="generated-password"></code>
@@ -426,12 +426,11 @@
       <p id="error-detail" style="margin-top:0.5rem;"></p>
       <button class="btn" style="margin-top:1rem;" onclick="location.reload()">Try again</button>
     </div>
-    <!-- One-time root credential, FAILURE path. A deploy can fail AFTER step 4
-         already generated a root password for the router and set it (the
-         package download, the health probe, the STA reconnect...). The success
-         view is never reached then, so without this block the router would hold
-         a credential the operator never sees — the same lockout the success-path
-         fix removed, on the other screen. The server surrenders the value on the
+    <!-- One-time root credential, FAILURE path. A deploy can fail AFTER the
+         router's root password had already been set (the package download, the
+         health probe, the STA reconnect...). The success view is never reached
+         then, so without this block the operator would not be told which
+         credential the router now holds. The server surrenders the value on the
          first read of the FAILED job (handleStatus) and pollStatus pins it here
          before this view is revealed. Mirror of the success view's
          #generated-credential block: the VALUE is written as text, shown once,
@@ -439,11 +438,11 @@
          secret) is persisted and served on every poll, so a missed one-shot
          read is still recoverable. -->
     <div class="credential hidden" id="failed-generated-credential" role="alert">
-      <h3>Save the router's new root password</h3>
+      <h3>The router's new root password</h3>
       <p class="credential-warn">
-        This deploy failed AFTER the router's root password had already been generated and set. It is
-        shown ONCE, and a copy is also saved to a file on this machine (mode 600). Store it in your password manager
-        now, before you close or reload this page — you will need it to reach the router.
+        This deploy failed AFTER the router's root password had already been set. The value is
+        shown ONCE here, and a copy is also saved to a file on this machine (mode 600) before you close
+        or reload this page — you will need it to reach the router.
       </p>
       <div class="credential-row">
         <code id="failed-generated-password"></code>

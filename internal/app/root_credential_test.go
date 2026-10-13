@@ -131,37 +131,6 @@ func TestRootHashProbeCmdClassifiesShadowFields(t *testing.T) {
 	}
 }
 
-// ─── Generated credential ────────────────────────────────────────
-
-// TestGenerateRootPassword checks the generated credential is long, is drawn
-// only from the shell-/human-safe alphabet, and differs across draws.
-func TestGenerateRootPassword(t *testing.T) {
-	seen := map[string]bool{}
-	for i := 0; i < 200; i++ {
-		pw, err := generateRootPassword()
-		if err != nil {
-			t.Fatalf("generateRootPassword: %v", err)
-		}
-		if len(pw) != rootPasswordLength {
-			t.Fatalf("length = %d, want %d (%q)", len(pw), rootPasswordLength, pw)
-		}
-		for _, r := range pw {
-			if !strings.ContainsRune(rootPasswordAlphabet, r) {
-				t.Fatalf("password %q contains %q, which is outside the safe alphabet", pw, r)
-			}
-			// Nothing that could break out of the router-side shell command
-			// or the passwd heredoc.
-			if strings.ContainsAny(string(r), `'"\\ `+"\t\n`;$&|<>()") {
-				t.Fatalf("password %q contains a shell-hostile character %q", pw, r)
-			}
-		}
-		if seen[pw] {
-			t.Fatalf("generateRootPassword repeated %q within 200 draws", pw)
-		}
-		seen[pw] = true
-	}
-}
-
 // ─── ensureRootCredential ────────────────────────────────────────
 
 // fakeCredentialRouter answers the probe and accepts passwd, like a real OpenWrt router.
@@ -286,18 +255,17 @@ func TestEnsureRootCredentialFreshDeployForcesACredential(t *testing.T) {
 	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
 		t.Fatalf("ensureRootCredential failed on a fresh deploy: %s", job.Error)
 	}
-	// Two-phase contract: step 4 GENERATES the credential and holds it, but does
-	// NOT apply it. The router keeps the empty credential that got the deploy in
-	// until the work has actually succeeded, so a failure at any later step
-	// cannot strand the operator on a router the wizard just re-keyed.
+	// Two-phase contract: step 4 holds the credential but does NOT apply it. The
+	// router keeps the empty credential that got the deploy in until the work has
+	// actually succeeded, so a failure at any later step cannot strand the
+	// operator on a router the wizard just re-keyed. The value itself is the
+	// FIXED DEFAULT (defaultCredential), the same one the package writes — not a
+	// random secret.
 	job.mu.Lock()
 	pw := job.pendingRootPassword
 	job.mu.Unlock()
-	if pw == "" {
-		t.Fatal("no credential was generated on a password-less router")
-	}
-	if len(pw) != rootPasswordLength {
-		t.Fatalf("generated credential length = %d, want %d", len(pw), rootPasswordLength)
+	if pw != defaultCredential {
+		t.Fatalf("deferred credential = %q, want the fixed default %q", pw, defaultCredential)
 	}
 	// The set happens at finalization, once the deploy's last gate has passed.
 	if !finalizeRootCredential(job, fr.run, fr.proveLogin) {

@@ -44,9 +44,9 @@ func TestSuccessViewSurfacesTheGeneratedCredentialOnce(t *testing.T) {
 		`onclick="copyGeneratedPassword()"`,
 		`aria-label="Copy root password to clipboard"`,
 		// The warning: an explicit "this is shown once" the operator cannot
-		// miss, plus where to put it.
+		// miss, plus what to do with it (the value is the fixed default now).
 		`shown ONCE`,
-		`Store it in your password manager`,
+		`Change it to your own`,
 		`before you close`,
 	} {
 		if !strings.Contains(view, want) {
@@ -98,9 +98,9 @@ func TestFailureViewSurfacesTheGeneratedCredentialOnce(t *testing.T) {
 		`onclick="copyFailedGeneratedPassword()"`,
 		`aria-label="Copy root password to clipboard"`,
 		// The warning: an explicit "this is shown once" the operator cannot
-		// miss, plus where to put it.
+		// miss, plus what the router now holds.
 		`shown ONCE`,
-		`Store it in your password manager`,
+		`had already been set`,
 		`before you close`,
 	} {
 		if !strings.Contains(view, want) {

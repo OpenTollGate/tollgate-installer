@@ -288,16 +288,16 @@ func (j *Job) addLog(msg string) {
 	j.mu.Unlock()
 }
 
-// setGeneratedPassword records a credential the wizard had to create (the
-// router had no root password and the operator supplied none). The operator
-// sees it ONCE, on the deploy's final screen — from the one-shot
-// generated_password field on /api/status (see handleStatus); the UI renders it
-// as a copyable callout on the SUCCESS view, and — because a deploy can fail
-// after this credential was already set on the router — on the FAILURE view too
-// (pinFailedGeneratedCredential). Otherwise the router would hold a credential
-// the operator never sees: a lockout. A copy is also persisted to an owner-only
-// recovery file BEFORE the router is re-keyed (see persistRootCredential), so
-// the one-shot screen is no longer the only way to recover the value.
+// setGeneratedPassword records the credential the wizard set on the router (the
+// router had no root password and the operator supplied none, so it gets the
+// fixed default, defaultCredential). The operator sees it ONCE, on the deploy's
+// final screen — from the one-shot generated_password field on /api/status (see
+// handleStatus); the UI renders it as a copyable callout on the SUCCESS view,
+// and — because a deploy can fail after this credential was set on the router —
+// on the FAILURE view too (pinFailedGeneratedCredential). Otherwise the router
+// would hold a credential the operator was never told. A copy is also persisted
+// to an owner-only recovery file (see persistRootCredential), so the one-shot
+// screen is not the only way to learn the value.
 //
 // The value is deliberately NOT written to the deploy log: job.Log is part of
 // EVERY /api/status response, so a "ROOT PASSWORD: …" line would re-serve the
@@ -309,8 +309,8 @@ func (j *Job) setGeneratedPassword(pw string) {
 	j.mu.Lock()
 	j.generatedPassword = pw
 	j.mu.Unlock()
-	j.addLog("Router had NO root password and none was supplied — generated a one-time credential.")
-	j.addLog("ROOT PASSWORD: generated — it is shown ONCE, on this deploy's final screen (success or failure), and a copy is saved to the credential file named above. Store it in your password manager NOW.")
+	j.addLog("Router had NO root password and none was supplied — the fixed default was set.")
+	j.addLog("ROOT PASSWORD: default — it is shown ONCE, on this deploy's final screen (success or failure), and a copy is saved to the credential file named above. Change it to your own at first login.")
 }
 
 // setCredentialFile records where the generated credential was persisted, and
@@ -322,11 +322,11 @@ func (j *Job) setCredentialFile(path string) {
 	j.mu.Lock()
 	j.credentialFile = path
 	j.mu.Unlock()
-	j.addLog("A copy of the generated root credential was saved to " + path + " (mode 600) — recoverable if you close this page before copying it.")
+	j.addLog("A copy of the root credential was saved to " + path + " (mode 600) — recoverable if you close this page before copying it.")
 }
 
-// setPendingRootPassword records a generated credential that must NOT be applied
-// to the router yet (see finalizeRootCredential).
+// setPendingRootPassword records the credential that must NOT be applied to the
+// router yet (see finalizeRootCredential).
 func (j *Job) setPendingRootPassword(pw string) {
 	j.mu.Lock()
 	j.pendingRootPassword = pw
@@ -1452,6 +1452,24 @@ func (r deployRequest) resolvedAdvanced() (int, int) {
 	return devSplit, margin
 }
 
+// validateDeployPasswords reports whether the supplied admin and private-WiFi
+// passwords are acceptable, returning the operator-facing message on rejection.
+//
+// A BLANK value is allowed and passed through UNCHANGED: the deploy then keeps
+// the router's existing credential, or installs the fixed default when there is
+// none (see ensureRootCredential). Substituting the default here — as the wizard
+// used to — would OVERWRITE an operator's existing root password with a blank
+// field, so the substitution is deliberately NOT done at this layer.
+func validateDeployPasswords(admin, wifi string) string {
+	if admin != "" && len(admin) < minAdminPasswordLen {
+		return "an admin password of at least 8 characters is required"
+	}
+	if wifi != "" && len(wifi) < minAdminPasswordLen {
+		return "a private WiFi password of at least 8 characters is required"
+	}
+	return ""
+}
+
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	var req deployRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1461,26 +1479,17 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	// Password is optional: a fresh-reset OpenWrt router ships with an
 	// EMPTY root password (see sshConnect's auth chain). The admin and
 	// management-WiFi passwords are OPTIONAL too: the wizard never generates or
-	// prints one, and leaving a field blank installs the fixed default
-	// (defaultCredential), which the admin board forces the operator to change
-	// at first login. A value the operator DOES supply is applied verbatim and
-	// must meet the length floor.
+	// prints one, and a BLANK field is passed through UNCHANGED. The deploy then
+	// applies the fixed default (defaultCredential) ONLY when the router has no
+	// credential of its own — so a blank field never overwrites an existing
+	// operator password. A value the operator DOES supply is applied verbatim
+	// and must meet the length floor.
 	if req.IP == "" {
 		writeError(w, 400, "IP required")
 		return
 	}
-	if req.AdminPassword == "" {
-		req.AdminPassword = defaultCredential
-	}
-	if req.PrivateWiFiPassword == "" {
-		req.PrivateWiFiPassword = defaultCredential
-	}
-	if len(req.AdminPassword) < minAdminPasswordLen {
-		writeError(w, 400, "an admin password of at least 8 characters is required")
-		return
-	}
-	if len(req.PrivateWiFiPassword) < minAdminPasswordLen {
-		writeError(w, 400, "a private WiFi password of at least 8 characters is required")
+	if msg := validateDeployPasswords(req.AdminPassword, req.PrivateWiFiPassword); msg != "" {
+		writeError(w, 400, msg)
 		return
 	}
 	if !validLightningAddress(req.LNURL) {

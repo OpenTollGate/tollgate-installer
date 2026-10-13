@@ -87,10 +87,11 @@ func TestHandleDeploy(t *testing.T) {
 			expectedError:  "IP required",
 		},
 		{
-			// The admin password is OPTIONAL: blank installs the fixed default
-			// (TollGate), which the admin board forces the operator to change at
-			// first login.
-			name:           "missing admin password defaults to the fixed default",
+			// The admin password is OPTIONAL: a BLANK field is passed through to
+			// the deploy, which applies the fixed default (TollGate) only when
+			// the router has no credential of its own — so a blank field never
+			// overwrites an existing operator password.
+			name:           "missing admin password is accepted (blank passes through)",
 			body:           `{"ip": "192.168.1.1", "password": "", "privateWifiPassword": "wifipass123", "lnurl": "test@wallet.app", "mode": "wan"}`,
 			expectedStatus: 200,
 			expectedError:  "",
@@ -102,9 +103,10 @@ func TestHandleDeploy(t *testing.T) {
 			expectedError:  "an admin password of at least 8 characters is required",
 		},
 		{
-			// The private WiFi password is OPTIONAL too: blank installs the
-			// fixed default (TollGate) on the private AP.
-			name:           "missing private WiFi password defaults to the fixed default",
+			// The private WiFi password is OPTIONAL too: a blank field is passed
+			// through and the deploy leaves the router's existing key alone (or
+			// the package sets the default when there is none).
+			name:           "missing private WiFi password is accepted (blank passes through)",
 			body:           `{"ip": "192.168.1.1", "password": "", "adminPassword": "adminpass1", "lnurl": "test@wallet.app", "mode": "wan"}`,
 			expectedStatus: 200,
 			expectedError:  "",
@@ -317,5 +319,32 @@ func TestConcurrentJobOperations(t *testing.T) {
 	// The exact step count depends on timing, but no crash is the key
 	if len(job.Steps) == 0 {
 		t.Error("Steps should not be empty after concurrent operations")
+	}
+}
+
+// TestBlankDeployPasswordsAreNotSubstituted is the regression for the wizard
+// OVERWRITING an operator's existing router password with the fixed default: a
+// blank advanced field must reach the deploy UNCHANGED, so the deploy keeps the
+// router's own credential (or installs the default only when there is none).
+// Only a value the operator actually TYPED is length-checked.
+func TestBlankDeployPasswordsAreNotSubstituted(t *testing.T) {
+	blank := deployRequest{AdminPassword: "", PrivateWiFiPassword: ""}
+	if msg := validateDeployPasswords(blank.AdminPassword, blank.PrivateWiFiPassword); msg != "" {
+		t.Fatalf("blank passwords were rejected: %s", msg)
+	}
+	if blank.AdminPassword != "" || blank.PrivateWiFiPassword != "" {
+		t.Fatalf("a blank password was substituted (%q/%q); the deploy must see it blank so it preserves an existing credential", blank.AdminPassword, blank.PrivateWiFiPassword)
+	}
+
+	// A supplied value below the floor is still refused...
+	if msg := validateDeployPasswords("short", ""); msg == "" {
+		t.Error("a too-short supplied admin password was accepted")
+	}
+	if msg := validateDeployPasswords("", "short"); msg == "" {
+		t.Error("a too-short supplied private WiFi password was accepted")
+	}
+	// ...and a supplied value at the floor is accepted.
+	if msg := validateDeployPasswords("goodenough", "goodenough"); msg != "" {
+		t.Errorf("a valid supplied password was rejected: %s", msg)
 	}
 }
