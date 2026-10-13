@@ -113,6 +113,20 @@ make sta SSID=<upstream-ssid> KEY=<upstream-key>            # 2.4 GHz
 make sta SSID=<upstream-ssid> KEY=<upstream-key> BAND=5ghz  # 5 GHz
 ```
 
+### 1.3 Which network is which (and what you can reach)
+
+The install puts the router on **two bridges**, and **moves the wired LAN port
+off `br-lan` onto `br-private`** — so your cable ends up on the management side.
+
+| Bridge | Address | Who is on it | Can reach |
+|---|---|---|---|
+| **`br-lan`** — guest / captive | `192.168.1.1/24` | the open guest SSIDs | the captive portal (`:2050`/`:2051`) + the internet. The admin ports are **dropped** here |
+| **`br-private`** — management | derived: `192.168.2.1`, or a `10.x` if your LAN collides | the wired LAN ports + the private (management) SSIDs | the **board** (`:8080`/`:443`), **LuCI** (`:8090`/`:8443`), and **SSH** |
+
+So a **guest** on `br-lan` pays and gets internet but cannot reach the admin UIs;
+**you**, on the wire or the private SSID (`br-private`), can. Your management
+address is `uci get network.private.ipaddr`.
+
 ---
 
 ## 2. Path A — installer wizard
@@ -202,19 +216,25 @@ tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
 directory. It stages the package plus its full dependency closure and installs
 offline.
 
-### 3.3 Name resolution — `tollgate.lan` (Path B only)
+### 3.3 Names you can use (Path B)
 
-The wizard points `tollgate.lan` at the router; a manual install does **not**, so
-`tollgate.lan` will not resolve until you add it. Do this after the install
-(reconnect first — §3.2):
+The router answers to its **hostname** on the `lan` domain — `<hostname>.lan`,
+i.e. `tollgate-<4hex>.lan` (find it with `cat /proc/sys/kernel/hostname`). It
+resolves to the **management** address (§1.3), so the board and LuCI are at
+`http://<hostname>.lan:8080` and `http://<hostname>.lan:8090`. This works on
+every path.
+
+The fixed alias **`tollgate.lan`** is set by the **wizard**, not the package, so
+a manual install has neither it nor a `gatewaydomainname` (the package removes
+that on purpose — nodogsplash would redirect-loop, #428). Add the alias
+yourself, after reconnecting (§3.2):
 
 ```sh
-IP=$(uci -q get network.private.ipaddr); [ -n "$IP" ] || IP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
+IP=$(uci -q get network.private.ipaddr); IP=${IP%%/*}; [ -n "$IP" ] || IP=192.168.1.1
 grep -q tollgate.lan /etc/hosts || echo "$IP tollgate.lan tollgate.local" >> /etc/hosts
 for a in $(uci -q get dhcp.@dnsmasq[0].address); do case "$a" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address="$a";; esac; done
 uci -q add_list dhcp.@dnsmasq[0].address="/tollgate.lan/$IP"
-uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'
-uci commit dhcp; uci commit nodogsplash; /etc/init.d/dnsmasq restart
+uci commit dhcp; /etc/init.d/dnsmasq restart
 ```
 
 ### 3.4 Optional: set your own management-WiFi passphrase
