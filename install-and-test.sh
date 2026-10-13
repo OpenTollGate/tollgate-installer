@@ -69,6 +69,16 @@ FORK_REPO="felixfelix-bot/tollgate-installer"
 FEED_REPO="FreedomTechFeed/packages"
 FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-alpha}"
 FEED_TAG_OVERRIDE="${TOLLGATE_FEED_RELEASE_TAG:-}"
+# Installer BINARY selection. The launcher used to download the binary from
+# GitHub's `releases/latest`, which pins the newest NON-pre-release — so an
+# installer cut as a pre-release (rc20…rcN) was never the one served and a
+# tester ran a stale build (measured 2026-10-13: the launcher served rc19 while
+# rc23 was the current build). Resolve it the SAME way as the feed: newest tag
+# in INSTALLER_CHANNEL (default: the feed channel). Override with
+# --installer-tag / --installer-channel, or TOLLGATE_INSTALLER_TAG /
+# TOLLGATE_INSTALLER_CHANNEL.
+INSTALLER_CHANNEL="${TOLLGATE_INSTALLER_CHANNEL:-$FEED_CHANNEL}"
+INSTALLER_TAG_OVERRIDE="${TOLLGATE_INSTALLER_TAG:-}"
 LIST_RELEASES=0
 POSITIONAL=()
 # Installer flags this script consumes but must still hand to the binary. The arg
@@ -79,11 +89,11 @@ POSITIONAL=()
 TRUST_ARGS=()
 # --bin <path>: run a pre-built installer binary instead of downloading one.
 BIN_PATH=""
-# The deploy's admin (root) and private-WiFi passwords. The wizard NEVER
-# generates or prints a credential, so the deploy API REQUIRES both (>= 8 chars).
-# Defaults to the router password (the "use what I use" case); override with
-# --admin-password / --wifi-password, or TOLLGATE_ADMIN_PASSWORD /
-# TOLLGATE_WIFI_PASSWORD.
+# The admin (root) and private-WiFi passwords are OPTIONAL. Left unset they are
+# sent EMPTY and the installer applies its fixed default (`TollGate`), which the
+# admin board then forces the operator to change at first login. Set them with
+# --admin-password / --wifi-password (or TOLLGATE_ADMIN_PASSWORD /
+# TOLLGATE_WIFI_PASSWORD) to install a value you choose up front.
 ADMIN_PASS="${TOLLGATE_ADMIN_PASSWORD:-}"
 WIFI_PASS="${TOLLGATE_WIFI_PASSWORD:-}"
 # Filled in by preflight(). python3 is optional; ssh/sshpass are only needed
@@ -109,7 +119,15 @@ Options:
   --tag <tag>        Install an exact feed release tag (e.g. v0.6.0-alpha2-pre12).
                      Same as TOLLGATE_FEED_RELEASE_TAG=<tag>.
   --channel <name>   Newest feed release in a channel: alpha (default, newest
-                     pre-release), beta, stable, or any.
+                     pre-release), beta, stable, or any. Also selects the
+                     installer BINARY unless --installer-channel overrides it.
+  --installer-tag <tag>
+                     Run this exact installer build (e.g. v0.6.0-alpha2-rc23).
+                     Same as TOLLGATE_INSTALLER_TAG=<tag>.
+  --installer-channel <name>
+                     Newest installer build in a channel (defaults to
+                     --channel). alpha follows the newest pre-release, so the
+                     launcher serves the current build, not `releases/latest`.
   --list             List recent feed releases (newest first) and exit.
   --bin <path>       Run this installer binary instead of downloading one
                      (e.g. a locally built ./tollgate-installer).
@@ -119,10 +137,11 @@ Options:
                      TOLLGATE_TRUST_HOST_KEY=<fingerprint>.
   --admin-password <pw>
                      Root/admin password to set on the router (>= 8 chars).
-                     Defaults to <ROUTER_PASSWORD>. Same as TOLLGATE_ADMIN_PASSWORD.
+                     Omitted -> the installer's default `TollGate`, changed at
+                     first login. Same as TOLLGATE_ADMIN_PASSWORD.
   --wifi-password <pw>
-                     Private-WiFi passphrase to set (>= 8 chars). Defaults to
-                     <ROUTER_PASSWORD>. Same as TOLLGATE_WIFI_PASSWORD.
+                     Private-WiFi passphrase to set (>= 8 chars). Omitted -> the
+                     installer's default `TollGate`. Same as TOLLGATE_WIFI_PASSWORD.
   -h, --help         Show this help.
 USAGE
 }
@@ -131,6 +150,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --tag)     FEED_TAG_OVERRIDE="${2:-}"; shift 2 ;;
         --channel) FEED_CHANNEL="${2:-}"; shift 2 ;;
+        --installer-tag)     INSTALLER_TAG_OVERRIDE="${2:-}"; shift 2 ;;
+        --installer-channel) INSTALLER_CHANNEL="${2:-}"; shift 2 ;;
         --list)    LIST_RELEASES=1; shift ;;
         --bin)     BIN_PATH="${2:-}"; shift 2 ;;
         --admin-password) ADMIN_PASS="${2:-}"; shift 2 ;;
@@ -236,16 +257,22 @@ gh_api_json() {
     fi
 }
 
-# feed_releases_json — the feed repo's recent releases (JSON array).
-feed_releases_json() {
-    gh_api_json "https://api.github.com/repos/${FEED_REPO}/releases?per_page=100"
+# repo_releases_json <repo> — the repo's recent releases (JSON array). The
+# hermetic shell test injects a fixture via TOLLGATE_TEST_RELEASES_JSON so no
+# network is needed.
+repo_releases_json() {
+    if [ -n "${TOLLGATE_TEST_RELEASES_JSON:-}" ]; then
+        printf '%s' "${TOLLGATE_TEST_RELEASES_JSON}"
+        return 0
+    fi
+    gh_api_json "https://api.github.com/repos/$1/releases?per_page=100"
 }
 
-# feed_awk is the python-free reader for that JSON (see the program text): the
+# releases_awk is the python-free reader for that JSON (see the program text): the
 # GitHub REST API pretty-prints with every release key indented by exactly four
 # spaces, so the four-space anchor picks release keys and nothing from nested
 # objects, arrays or release bodies.
-FEED_AWK='
+RELEASES_AWK='
 BEGIN { n = 0; tag = ""; pub = ""; crea = "" }
 /^  \{[ \t]*$/ { commit(); next }
 /^    "tag_name":[ \t]*/     { tag  = val() }
@@ -287,17 +314,44 @@ END {
 
 # print_feed_releases — tag + published date, newest first.
 print_feed_releases() {
-    feed_releases_json | awk -v mode=list "${FEED_AWK}"
+    repo_releases_json "${FEED_REPO}" | awk -v mode=list "${RELEASES_AWK}"
 }
 
-# resolve_feed_tag — the newest tag in FEED_CHANNEL, or empty if it cannot be
-# resolved (the caller then falls back to the installer's compiled pin).
+# resolve_tag <repo> <channel> — the newest tag in <channel>, or empty if it
+# cannot be resolved (the caller then falls back to a safe default).
+resolve_tag() {
+    repo_releases_json "$1" | awk -v mode=newest -v channel="$2" "${RELEASES_AWK}"
+}
+
+# resolve_feed_tag — the newest feed tag in FEED_CHANNEL (or the explicit
+# override). Empty => the caller falls back to the installer's compiled pin.
 resolve_feed_tag() {
     if [ -n "${FEED_TAG_OVERRIDE}" ]; then
         printf '%s' "${FEED_TAG_OVERRIDE}"
         return 0
     fi
-    feed_releases_json | awk -v mode=newest -v channel="${FEED_CHANNEL}" "${FEED_AWK}"
+    resolve_tag "${FEED_REPO}" "${FEED_CHANNEL}"
+}
+
+# resolve_installer_tag — the newest installer BINARY tag in INSTALLER_CHANNEL
+# (or the explicit override). Empty => the caller falls back to
+# `releases/latest`. This is what stops the launcher serving a stale build.
+resolve_installer_tag() {
+    if [ -n "${INSTALLER_TAG_OVERRIDE}" ]; then
+        printf '%s' "${INSTALLER_TAG_OVERRIDE}"
+        return 0
+    fi
+    resolve_tag "${GH_REPO}" "${INSTALLER_CHANNEL}"
+}
+
+# installer_download_url <repo> [tag] — the release-asset URL for the installer
+# binary, at a specific tag when resolved or `releases/latest` otherwise.
+installer_download_url() {
+    if [ -n "${2:-}" ]; then
+        printf 'https://github.com/%s/releases/download/%s/%s' "$1" "$2" "${BIN_ASSET}"
+    else
+        printf 'https://github.com/%s/releases/latest/download/%s' "$1" "${BIN_ASSET}"
+    fi
 }
 
 # --- 1. detect platform ---------------------------------------------------
@@ -324,8 +378,14 @@ detect_platform
 echo "Detected platform: ${PLATFORM}"
 
 # Used only by the hermetic shell regression test; never set by the operator.
+# No network here: the test injects a fixture via TOLLGATE_TEST_RELEASES_JSON to
+# exercise installer-tag resolution, or gets the `releases/latest` fallback.
 if [ "${TOLLGATE_TEST_PLATFORM_ONLY:-0}" = 1 ]; then
-    echo "Asset URL: https://github.com/${GH_REPO}/releases/latest/download/${BIN_ASSET}"
+    _fixture_tag=""
+    if [ -n "${TOLLGATE_TEST_RELEASES_JSON:-}" ] || [ -n "${INSTALLER_TAG_OVERRIDE:-}" ]; then
+        _fixture_tag="$(resolve_installer_tag)"
+    fi
+    echo "Asset URL: $(installer_download_url "${GH_REPO}" "${_fixture_tag}")"
     exit 0
 fi
 
@@ -361,11 +421,9 @@ else
 fi
 
 # --- 2. find + download binary -----------------------------------------------
-download() {
-    local repo="$1" url tries
-    url="https://github.com/${repo}/releases/latest/download/${BIN_ASSET}"
-    echo "Downloading ${BIN_ASSET} from ${repo} ..."
-    if curl -fsSL --retry 3 -o "${BIN_ASSET}" "${url}"; then
+download() {   # download <repo> <url>
+    echo "Downloading ${BIN_ASSET} from $2 ..."
+    if curl -fsSL --retry 3 -o "${BIN_ASSET}" "$2"; then
         chmod +x "${BIN_ASSET}"
         echo "OK: ./${BIN_ASSET} ($(du -h "${BIN_ASSET}" | cut -f1))"
         return 0
@@ -373,10 +431,11 @@ download() {
     return 1
 }
 
-# Try the fork pre-merge release first (contains the Go binary built from
-# PR #2 head). Once the PR merges, this same URL pattern works on the org repo.
-# --bin skips the download entirely: locally built binary, air-gapped host, or
-# a Mac smoke-testing a release candidate.
+# --bin skips the download entirely: locally built binary, air-gapped host, or a
+# Mac smoke-testing a release candidate. Otherwise resolve the installer tag by
+# channel and download it AT THAT TAG (falling back to the org's `latest` and
+# then the felixfelix-bot fork), so the launcher serves the current build instead
+# of whatever `releases/latest` points at.
 RUN_BIN="./${BIN_ASSET}"
 if [ -n "${BIN_PATH}" ]; then
     if [ ! -x "${BIN_PATH}" ]; then
@@ -385,11 +444,22 @@ if [ -n "${BIN_PATH}" ]; then
     fi
     RUN_BIN="${BIN_PATH}"
     echo "Using installer binary: ${BIN_PATH}"
-elif ! download "${GH_REPO}"; then
-    echo "OpenTollGate release download failed; trying the felixfelix-bot fork..." >&2
-    if ! download "${FORK_REPO}"; then
-        echo "ERROR: could not download ${BIN_ASSET} from either repo." >&2
-        exit 1
+else
+    RESOLVED_INSTALLER_TAG="$(resolve_installer_tag 2>/dev/null || true)"
+    if [ -n "${RESOLVED_INSTALLER_TAG}" ]; then
+        echo "Installer build: ${RESOLVED_INSTALLER_TAG} (channel ${INSTALLER_CHANNEL})"
+    else
+        echo "Installer build: could not resolve channel '${INSTALLER_CHANNEL}' — using the latest release" >&2
+    fi
+    if ! download "${GH_REPO}" "$(installer_download_url "${GH_REPO}" "${RESOLVED_INSTALLER_TAG}")"; then
+        echo "OpenTollGate release download failed; trying ${GH_REPO}@latest..." >&2
+        if ! download "${GH_REPO}" "$(installer_download_url "${GH_REPO}" "")"; then
+            echo "trying the felixfelix-bot fork..." >&2
+            if ! download "${FORK_REPO}" "$(installer_download_url "${FORK_REPO}" "")"; then
+                echo "ERROR: could not download ${BIN_ASSET} from any source." >&2
+                exit 1
+            fi
+        fi
     fi
 fi
 
@@ -489,11 +559,18 @@ ROUTER_IP="${POSITIONAL[0]:-}"
 ROUTER_PASS="${POSITIONAL[1]:-}"
 LNURL="${POSITIONAL[2]:-}"
 
-# Default the admin + private-WiFi passwords to the router password (the "use
-# what I use" case). The wizard never generates a credential, so both are
-# REQUIRED by the deploy API; --admin-password / --wifi-password override.
-[ -n "${ADMIN_PASS}" ] || ADMIN_PASS="${ROUTER_PASS}"
-[ -n "${WIFI_PASS}" ]  || WIFI_PASS="${ROUTER_PASS}"
+# The admin + private-WiFi passwords are OPTIONAL: left unset they are sent
+# EMPTY, and the installer applies its fixed default (`TollGate`) — the board
+# then forces a change at first login. A value set explicitly must still be
+# >= 8 chars (the deploy API's floor).
+if [ -n "${ADMIN_PASS}" ] && [ "${#ADMIN_PASS}" -lt 8 ]; then
+    echo "ERROR: --admin-password must be at least 8 characters." >&2
+    exit 1
+fi
+if [ -n "${WIFI_PASS}" ] && [ "${#WIFI_PASS}" -lt 8 ]; then
+    echo "ERROR: --wifi-password must be at least 8 characters." >&2
+    exit 1
+fi
 
 if [ -z "${ROUTER_IP}" ]; then
     echo
@@ -508,14 +585,6 @@ echo "=== Scanning for routers on LAN ==="
 curl -s "http://127.0.0.1:${PORT}/api/scan" | pretty_json | head -40 || true
 
 echo
-# The deploy API requires BOTH the admin and the private-WiFi password (the
-# wizard never generates one). They default to the router password above.
-if [ "${#ADMIN_PASS}" -lt 8 ] || [ "${#WIFI_PASS}" -lt 8 ]; then
-    echo "ERROR: the deploy needs an admin password and a private-WiFi password of at least 8 characters." >&2
-    echo "       Pass a router password as the 2nd positional argument, or --admin-password / --wifi-password." >&2
-    exit 1
-fi
-
 echo "=== Deploying TollGate to ${ROUTER_IP} ==="
 DEPLOY_JSON="{\"ip\":\"${ROUTER_IP}\",\"password\":\"${ROUTER_PASS}\",\"adminPassword\":\"${ADMIN_PASS}\",\"privateWifiPassword\":\"${WIFI_PASS}\",\"lnurl\":\"${LNURL}\",\"mode\":\"wan\"}"
 RESP="$(curl -s -X POST "http://127.0.0.1:${PORT}/api/deploy" \

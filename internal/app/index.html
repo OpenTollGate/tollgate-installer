@@ -337,7 +337,9 @@
         </select>
         <button type="button" class="btn btn-secondary" onclick="prepareCleanSlate()">Inspect clean-slate image</button>
         <div class="hint" id="clean-slate-info"></div>
-        <input id="clean-slate-confirm" placeholder="Type the detected board name to enable flashing" oninput="checkCleanSlateReady()">
+        <select id="clean-slate-confirm" onchange="checkCleanSlateReady()">
+          <option value="">Select the detected board to enable flashing</option>
+        </select>
         <button type="button" class="btn btn-secondary" id="clean-slate-btn" onclick="startCleanSlate()" disabled>Clean slate: flash vanilla OpenWrt</button>
       </div>
       <div class="field">
@@ -1562,13 +1564,24 @@ async function prepareCleanSlate() {
   const data = await resp.json();
   if (!resp.ok || data.error) { info.textContent = data.error || 'Unable to resolve clean-slate image.'; return; }
   window._cleanSlateBoard = data.board;
+  // Populate the confirm dropdown with the board the router reported, so the
+  // operator PICKS it instead of typing the exact OpenWrt board string (a typo
+  // there silently disables flashing). Left unselected so it stays a deliberate
+  // confirmation, not an auto-filled no-op.
+  const sel = document.getElementById('clean-slate-confirm');
+  sel.innerHTML = '<option value="">Select the detected board to enable flashing</option>';
+  const opt = document.createElement('option');
+  opt.value = data.board;
+  opt.textContent = data.board;
+  sel.appendChild(opt);
+  sel.value = '';
   info.textContent = 'Board: ' + data.board + ' | Image: ' + data.image_url + ' | sha256: ' + data.sha256;
   checkCleanSlateReady();
 }
 function checkCleanSlateReady() {
   const board = window._cleanSlateBoard || '';
-  const typed = document.getElementById('clean-slate-confirm').value;
-  document.getElementById('clean-slate-btn').disabled = !board || typed !== board;
+  const chosen = document.getElementById('clean-slate-confirm').value;
+  document.getElementById('clean-slate-btn').disabled = !board || chosen !== board;
 }
 async function startCleanSlate() {
   const ip = selectedRouterIP();
