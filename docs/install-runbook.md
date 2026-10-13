@@ -61,6 +61,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-instal
 bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER_IP> '<ROUTER_PASSWORD>' <LIGHTNING_ADDRESS>
 ```
 
+> **Watch (20 s, narrated):** the [headless install walkthrough](https://blossom2.orangesync.tech/b7f9c8a4cb9aeb4f477d4924c39ee250a82e918f7aba43ead389414ce3ff2105.mp4) · [captions](https://blossom2.orangesync.tech/8bba32cb270b77e012907abccd14f3b6be331d82ff831e18dd38c7e45e3ddd3f.vtt).
+
 The wizard detects OS+arch, scans the LAN, and installs. The admin and
 management-WiFi password fields are **optional** (under *advanced*) — leave them
 blank to install the **`TollGate`** default and change it at first login.
@@ -102,6 +104,8 @@ There is **no feed to add** — `FreedomTechFeed/packages` publishes release ass
 only (no `APKINDEX`/`Packages.gz`). Install the release **file by path**, exactly
 as the wizard does.
 
+> **Watch:** [manual install — `.apk` on OpenWrt 25.12](https://blossom2.orangesync.tech/ac19249bc124f46dcb9e494d7303e5c12d2493c1c2dac240468d5dd95a66f014.mp4) · [captions](https://blossom2.orangesync.tech/335ddc34ef9ebca253d81633e8945cb45404c3606696f162c0d6b90128a3e43e.vtt) · [`.ipk` on OpenWrt 24.10](https://blossom2.orangesync.tech/f8fdb4b6e589241bf9a28f41e8631dbd5e00d5cd5b587f289502d28f04619257.mp4) · [captions](https://blossom2.orangesync.tech/a5e976cfd6cb59a95c4aba93b302d6fadf7aeec990f6ac85e5b6416a732a02db.vtt).
+
 > ⚠️ **The install drops your SSH session.** The `postinst` restarts the network
 > and **moves the wired LAN port off `br-lan` onto `br-private`** (§3). Reconnect
 > at the new address (`uci get network.private.ipaddr`) or over the router's WiFi
@@ -138,6 +142,8 @@ with internet, `curl -fsSL <release>/tollgate-wrt_${VER}_${ARCH}-offline.tar.gz 
 tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
 directory. It stages the package plus its full dependency closure and installs
 offline.
+
+> **Watch (20 s, narrated):** the [offline-bundle walkthrough](https://blossom2.orangesync.tech/75800809a3be1911431a98795a16b72411fde5479b35ecfc1b31012838179942.mp4) · [captions](https://blossom2.orangesync.tech/b8459fc70f7156278dff0aaddb66467e04e10b850a39e67149a755e4b4a149ff.vtt).
 
 ### 2.3 Names you can use
 
@@ -282,6 +288,8 @@ you deliberately want to.
 
 The manual install runs `apk`/`opkg update`, so the router needs an uplink. Join
 an upstream AP as a client and route it through the WAN zone:
+
+> **Watch (36 s, narrated):** the [flash vanilla + WiFi uplink walkthrough](https://blossom2.orangesync.tech/afc2576f0be3091e5db6cbf37fa22ea9ce68be7ec7788763aa04ac18a948caec.mp4) · [captions](https://blossom2.orangesync.tech/613a3805dd2a54938192a9b5ec934512bc3cb26c263765aa3c63c2759411519a.vtt).
 
 ```sh
 # radio0 = 2.4 GHz, radio1 = 5 GHz on MT3000/MT6000 — use the one your AP is on.
