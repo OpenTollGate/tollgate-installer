@@ -135,6 +135,16 @@ Options:
                      Trust this router SSH host-key fingerprint for this run
                      (verify it on the router's console first). Same as
                      TOLLGATE_TRUST_HOST_KEY=<fingerprint>.
+                     REQUIRED for the headless path against this repo's own
+                     test fixture (scripts/fixture-router, run by
+                     tests/shell/test-missing-asset-fails-loudly.sh): the
+                     fixture generates a FRESH host key on every start, so it
+                     is never in the known-hosts store, and a headless deploy
+                     that does not trust it aborts at the SSH verify step
+                     before any credentials are sent. The fixture prints the
+                     fingerprint to its own log at startup — read it from
+                     there (`docker logs <container>`) and pass it as this
+                     flag (the process-level test does exactly that).
   --admin-password <pw>
                      Root/admin password to set on the router (>= 8 chars).
                      Omitted -> the installer's default `TollGate`, changed at

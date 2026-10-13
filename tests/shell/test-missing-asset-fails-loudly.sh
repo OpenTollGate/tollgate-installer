@@ -14,6 +14,15 @@
 # The verdict is install-and-test.sh's exit code, the failure text the operator
 # sees, and what the fixture was asked to do — not the installer's self-report.
 #
+# A green run requires the deploy to have REACHED step 4: the fixture's own log
+# must show the step-4 flow (>= 2 /etc/shadow probes and >= 1 passwd exec — see
+# applyRootPassword: probe, write, re-probe). A deploy that aborts at the SSH
+# handshake or anywhere before step 4 records none of those, and FAILS here
+# however its exit text reads — the pre-04aedb5 condition, where the host-key
+# refusal satisfied the generic 'refus' greps, could never produce a green run
+# again. TOLLGATE_TEST_FORCE_FINGERPRINT=<fp> pins a WRONG fingerprint on
+# purpose to reproduce that abort and prove this FAIL path (negative control).
+#
 # Requirements: docker with alpine:3.20, curl, go, and network access to
 # github.com. Prints PASS/FAIL; exit 0 = PASS, 2 = FAIL, 3 = environment.
 #
@@ -155,6 +164,16 @@ if [ -z "$FINGERPRINT" ]; then
   docker logs "$CONTAINER" 2>&1 | head -5 | emit_lines
   exit 3
 fi
+# TOLLGATE_TEST_FORCE_FINGERPRINT is the negative-control hook: it pins a
+# deliberately WRONG fingerprint so the deploy aborts at the SSH verify step,
+# before step 4 — reproducing the pre-fix condition and proving the step-4
+# assertions below FAIL such a run instead of reporting PASS on an abort.
+if [ -n "${TOLLGATE_TEST_FORCE_FINGERPRINT:-}" ]; then
+  emit "NEGATIVE CONTROL: pinning the FORCED (wrong) fingerprint $TOLLGATE_TEST_FORCE_FINGERPRINT"
+  emit "             instead of the fixture's real one ($FINGERPRINT) — the deploy"
+  emit "             must abort before step 4 and this script must FAIL."
+  FINGERPRINT="$TOLLGATE_TEST_FORCE_FINGERPRINT"
+fi
 emit "fixture SSH host key (trusted out of band, from the fixture's own log): $FINGERPRINT"
 # Make every package-manager install attempt observable *on the fixture*: a
 # shim that records the call and refuses. If the refusal path is correct, this
@@ -176,6 +195,15 @@ emit "--- 5. the failure the operator sees (verbatim, untrimmed) ---"
 emit_matches 'ERROR\|"error"\|DEPLOY FAILED\|source:'
 emit
 emit "--- 6. what the fixture router was asked to do (its own log) ---"
+# The fixture's own stdout is the ground truth for "step 4 really ran": every
+# exec request and every auth attempt is recorded there, in order (see
+# scripts/fixture-router/main.go: logCommand and the PasswordCallback). Dump it
+# verbatim into the artifact so the step-4 assertions below are auditable.
+FIXTURE_LOG_FILE="$WORK/fixture.log"
+docker logs "$CONTAINER" > "$FIXTURE_LOG_FILE" 2>&1
+emit "the fixture's own ordered log (exec requests and auth attempts):"
+sed -e 's/\(.\{400\}\).*/\1.../' "$FIXTURE_LOG_FILE" | emit_lines
+emit
 emit "install attempts recorded on the fixture:"
 ATTEMPTS="$(docker exec "$CONTAINER" cat /tmp/install-attempts.log 2>/dev/null || true)"
 if [ -z "$ATTEMPTS" ]; then
@@ -196,6 +224,20 @@ emit
 FAILED=0
 raw_attempts=$(docker exec "$CONTAINER" cat /tmp/install-attempts.log 2>/dev/null || true)
 staged_files=$(docker exec "$CONTAINER" sh -c 'ls /tmp/*.ipk /tmp/*.apk 2>/dev/null' || true)
+# Step-4 markers, counted from the FIXTURE'S OWN LOG (not the run output):
+#   - rootHashProbeCmd's leading guard, `[ -r /etc/shadow ] || { echo unknown; …`
+#     — sent once before the passwd write and once after it (applyRootPassword);
+#   - passwdCommand's `pw=$(printf '%b' …)` prefix — the write itself.
+# A deploy that never reached step 4 (an SSH handshake abort, a dead route, a
+# refused preflight) records NONE of them: these counts are the load-bearing
+# "the run really got past step 4" gate the acceptance criteria demand.
+# `grep -c` prints the count AND exits 1 on zero matches; `|| true` keeps that
+# printed 0 (an appended `printf 0` would double it to "0\n0" and break the
+# -ge test), and ${probe_count:-0} covers a missing/unreadable log file.
+probe_count=$(grep -c 'exec: \[ -r /etc/shadow \]' "$FIXTURE_LOG_FILE" 2>/dev/null || true)
+passwd_count=$(grep -c "exec: pw=\$(printf '%b'" "$FIXTURE_LOG_FILE" 2>/dev/null || true)
+probe_count=${probe_count:-0}
+passwd_count=${passwd_count:-0}
 
 emit "--- 7. assertions ---"
 if [ "$RC" -ne 0 ]; then
@@ -222,6 +264,28 @@ if grep -qi 'refus' "$OUT"; then
   emit "  PASS  the refusal wording is present"
 else
   emit "  FAIL  no refusal wording in the run output"; FAILED=1
+fi
+# The step-4 gate — the assertion this card exists for. Everything above is
+# still satisfiable by a run that aborted before reaching the code under test
+# (the pre-04aedb5 condition: the SSH host-key refusal exited non-zero, named
+# the tag from /api/config, and carried 'refus' wording), so the fixture's own
+# log must show the deploy actually DROVE step 4 before it could have refused
+# at step 6.
+if [ "${probe_count:-0}" -ge 2 ]; then
+  emit "  PASS  step 4 really ran: $probe_count /etc/shadow probe(s) reached the router (one before, one after the passwd write)"
+else
+  emit "  FAIL  only $probe_count /etc/shadow probe(s) reached the router — the deploy"
+  emit "        aborted before step 4 (handshake/preflight failure?), so the step-6"
+  emit "        refusal below was never exercised: this run is not a C2-I-02 verdict"
+  FAILED=1
+fi
+if [ "${passwd_count:-0}" -ge 1 ]; then
+  emit "  PASS  the passwd write reached the router: $passwd_count invocation(s)"
+else
+  emit "  FAIL  no passwd invocation reached the router — the deploy aborted before"
+  emit "        the step-4 credential write; a green C2-I-02 verdict on such a run"
+  emit "        would be vacuous"
+  FAILED=1
 fi
 # The two checks above are generic: an SSH host-key refusal at the verify step
 # ("CONNECTION REFUSED") also satisfies them, and so does the tag the run prints
