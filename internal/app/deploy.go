@@ -889,11 +889,11 @@ func brandingCommands(id deviceIdentity, routerIP string) []string {
 		"uci -q set dhcp.@dnsmasq[0].readethers='1'",
 		// network: set domain on lan interface
 		"uci -q set network.lan.domain='lan'",
-		// NoDogSplash config
+		// NoDogSplash config. gatewaydomainname is deliberately NOT set: with it
+		// set, nodogsplash 5.0.2 redirect-loops pre-auth clients (module #428),
+		// and the module deletes it anyway — `tollgate.lan` still resolves via
+		// the /etc/hosts + dnsmasq address above.
 		"uci -q set nodogsplash.@nodogsplash[0].gatewayname='" + id.SSID + "'",
-		// Rebrand gateway domain to tollgate.lan so the captive portal serves
-		// on tollgate.lan (DNS already resolves it).
-		"uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'",
 		"uci -q set nodogsplash.@nodogsplash[0].enabled='1'",
 		"uci -q set nodogsplash.@nodogsplash[0].clientid='mac'",
 		// Customer-journey ports: the captive check, the portal, the backend
