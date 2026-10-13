@@ -8,7 +8,12 @@ installer wizard (§2); manual `.apk` on 25.12 (§3); manual `.ipk` on 24.10 (§
 offline bundle when the router has no uplink (§3.2).
 
 **Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic`);
-GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, §3.5).
+GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, §3.6).
+
+> **`conwrt` (optional helper).** The `conwrt` tool
+> (`git clone https://github.com/Amperstrand/conwrt`; runs on Linux/macOS) wraps
+> the flashing and uplink steps below as `make` targets. Every step gives the raw
+> command **and** its `make` equivalent — use whichever you prefer.
 
 ---
 
@@ -28,7 +33,7 @@ VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g'); echo "TAG=$TAG VER=$VE
 
 - **Vanilla OpenWrt** — 25.12.x for the `.apk` lane, 24.10.x for the `.ipk` lane.
 - SSH reachable; root password known (a fresh reset ships **empty**).
-- **An uplink on the router** for the manual path (§3) — `apk`/`opkg update`
+- **An uplink on the router** for the manual path (§1.2) — `apk`/`opkg update`
   fetch the OpenWrt deps. The wizard (§2) pre-stages them; the offline bundle
   (§3.2) needs no uplink at all.
 
@@ -45,6 +50,68 @@ Take the profile from the official index for *your* device — never from memory
 | GL-AR300M (NAND) | `ath79/nand` | `glinet_gl-ar300m-nor` / `-nand` | **picking wrong is a brick** |
 
 **Record which profile you used.**
+
+**Flash it manually** (download the image, verify it, push it, `sysupgrade -n`):
+
+```sh
+RELEASE=25.12.5 ; TARGET=mediatek/filogic ; PROFILE=glinet_gl-mt3000 ; IP=192.168.1.1
+BASE="https://downloads.openwrt.org/releases/$RELEASE/targets/$TARGET"
+IMG="openwrt-$RELEASE-${TARGET//\//-}-$PROFILE-squashfs-sysupgrade.bin"
+
+curl -fsSLO "$BASE/sha256sums"; curl -fsSLO "$BASE/$IMG"
+grep -F "$IMG" sha256sums | sha256sum -c -          # verify BEFORE flashing
+
+ssh root@$IP 'cat > /tmp/sysup.bin' < "$IMG"        # dropbear has no sftp-server — pipe, do not scp -O
+ssh root@$IP "sha256sum /tmp/sysup.bin"             # must match the line you just verified
+ssh root@$IP "sysupgrade -n /tmp/sysup.bin"         # -n = do NOT keep config (this is the clean slate)
+# the router reboots to 192.168.1.1 with an EMPTY root password (~1-2 min)
+```
+
+> `sysupgrade -n` is the reset: it drops all config and packages. Use `-c` to
+> **keep** config only when you deliberately want to preserve state.
+
+With `conwrt`, the same flash is one step (it resolves the profile from `models/`):
+
+```sh
+make detect                                     # identify the connected router
+make source-image MODEL=glinet-mt3000           # download + verify the image (RELEASE=25.12.5 to pin)
+make flash MODEL=glinet-mt3000                  # source the image and run sysupgrade -n
+# no SSH? recovery mode instead:
+make recovery MODEL=glinet-mt3000 IFACE=enp0s31f6
+make flash-uboot MODEL=glinet-mt3000            # force a U-Boot recovery flash
+```
+
+### 1.2 Give the router an uplink (WiFi STA) — **do this before §3**
+
+The manual install runs `apk`/`opkg update`, so the router needs an uplink. Join
+an upstream AP as a client and route it through the WAN zone:
+
+```sh
+# radio0 = 2.4 GHz, radio1 = 5 GHz on MT3000/MT6000 — use the one your AP is on.
+RADIO=radio0 ; SSID='<upstream-ssid>' ; KEY='<upstream-key>'
+uci set wireless.sta=wifi-iface
+uci set wireless.sta.device="$RADIO"
+uci set wireless.sta.mode=sta
+uci set wireless.sta.ssid="$SSID"
+uci set wireless.sta.key="$KEY"
+uci set wireless.sta.encryption=psk2
+uci set wireless.sta.network=wwan
+uci set wireless.sta.disabled=0
+uci set network.wwan=interface
+uci set network.wwan.proto=dhcp
+WANZONE=$(uci show firewall | sed -n 's/^firewall\.\(@zone\[[0-9]*\]\)\.name=.wan.$/\1/p' | head -1)
+[ -n "$WANZONE" ] && uci add_list "$WANZONE.network=wwan"
+uci commit wireless; uci commit network; uci commit firewall
+wifi reload
+ip route | grep default ; ping -c2 9.9.9.9      # confirm the uplink is up
+```
+
+`conwrt` equivalent (also installs an SSH key):
+
+```sh
+make sta SSID=<upstream-ssid> KEY=<upstream-key>            # 2.4 GHz
+make sta SSID=<upstream-ssid> KEY=<upstream-key> BAND=5ghz  # 5 GHz
+```
 
 ---
 
@@ -70,7 +137,7 @@ The wizard detects OS+arch, downloads `tollgate-installer`, serves it, scans the
 LAN, and runs the deploy steps in order:
 `verify → stage → flash → firmware → password → upstream → install → brand → portal → lnurl → services → health`.
 The password fields are **optional** (advanced) — blank installs the `TollGate`
-default (§3.1).
+default (§3.1). The wizard also configures the uplink and name resolution for you.
 
 ---
 
@@ -99,9 +166,9 @@ as the wizard does.
 
 > ⚠️ **The install drops your SSH session.** The `postinst` restarts the network
 > and **moves the wired LAN port off `br-lan` (`192.168.1.1`) onto `br-private`**
-> (the derived management subnet, usually `192.168.2.1`). Reconnect at the new
-> address (`uci get network.private.ipaddr`) or over the router's WiFi at
-> `192.168.1.1`. Running the block under `screen`/`tmux` survives the drop.
+> (the derived management subnet). Reconnect at the new address
+> (`uci get network.private.ipaddr`) or over the router's WiFi at `192.168.1.1`.
+> Running the block under `screen`/`tmux` survives the drop.
 
 ```sh
 # Carry $TAG from §0 to the router (which has no curl/python3). An interactive
@@ -135,14 +202,29 @@ tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
 directory. It stages the package plus its full dependency closure and installs
 offline.
 
-### 3.3 Optional: set your own management-WiFi passphrase
+### 3.3 Name resolution — `tollgate.lan` (Path B only)
+
+The wizard points `tollgate.lan` at the router; a manual install does **not**, so
+`tollgate.lan` will not resolve until you add it. Do this after the install
+(reconnect first — §3.2):
+
+```sh
+IP=$(uci -q get network.private.ipaddr); [ -n "$IP" ] || IP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
+grep -q tollgate.lan /etc/hosts || echo "$IP tollgate.lan tollgate.local" >> /etc/hosts
+for a in $(uci -q get dhcp.@dnsmasq[0].address); do case "$a" in /tollgate.lan*) uci -q del_list dhcp.@dnsmasq[0].address="$a";; esac; done
+uci -q add_list dhcp.@dnsmasq[0].address="/tollgate.lan/$IP"
+uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'
+uci commit dhcp; uci commit nodogsplash; /etc/init.d/dnsmasq restart
+```
+
+### 3.4 Optional: set your own management-WiFi passphrase
 
 ```sh
 read -r -s -p 'private WiFi passphrase (min 8 chars): ' WIFIPW; echo
 tollgate network private set-password "$WIFIPW"; unset WIFIPW
 ```
 
-### 3.4 If your device is on the management subnet
+### 3.5 If your device is on the management subnet
 
 The management network is the /24 next to the LAN (`192.168.2.0/24` for a default
 LAN). If your laptop/phone is also on `192.168.x.0/24`, two devices answer
@@ -155,7 +237,7 @@ uci set network.private.ipaddr=10.99.99.1; uci commit network; /etc/init.d/netwo
 
 A reinstall re-derives this address (`tollgate-module-basic-go#906`).
 
-### 3.5 AR300M flash-space caveat
+### 3.6 AR300M flash-space caveat
 
 The default payload (~20 MB) does **not** fit a 16 MB NOR device (~4.6 MB free
 jffs2): expect `ENOSPC`; a tmpfs fallback is volatile. Record the exact variant.
@@ -186,12 +268,12 @@ a **fail** — attach `logread | grep -i tollgate`.
 ## 5. What ONLY the wizard does
 
 A manual install is not crippled — the `postinst` runs the uci-defaults and
-starts `tollgate-wrt`. The wizard additionally: resolves `tollgate.lan`; enforces
-the sha256 gate; flashes from stock GL.iNet firmware and sets the root password +
-upstream/STA WAN; configures LNURL; installs `mdnsd` for `.local`; reads the
-version back; and, on the opkg lane, pre-installs `nodogsplash`+`jq`. **Report a
-manual gap as exactly that** ("works manually but X is missing") — not "the
-feature is broken".
+starts `tollgate-wrt`. The wizard additionally: flashes from stock GL.iNet
+firmware and sets the root password + upstream/STA WAN; resolves `tollgate.lan`
+(§3.3) and enforces the sha256 gate; configures LNURL; installs `mdnsd` for
+`.local`; reads the version back; and, on the opkg lane, pre-installs
+`nodogsplash`+`jq`. **Report a manual gap as exactly that** ("works manually but
+X is missing") — not "the feature is broken".
 
 ---
 
