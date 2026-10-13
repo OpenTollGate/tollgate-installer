@@ -47,7 +47,7 @@ everywhere below — never paste a stale tag.
 serves a setup wizard at `:8099` and drives the whole install over SSH: flash →
 root password → uplink → install → brand → portal → LNURL → health.
 
-> **Watch (30 s, narrated):** the wizard walkthrough — [video](https://blossom2.orangesync.tech/bbccf0fdcb780271a0c7442da2df8d53eb4b6fc1615caeb8f038532592000682.mp4) · [captions](https://blossom2.orangesync.tech/af0593e2ac2e8e6f5ba7282e40b44858a9284728ab319515d1fc211d392808e8.vtt) · [still](https://blossom2.orangesync.tech/910964eb8b32fecc0f7ec734486f94ed4adec9e8b327202fa334f1d7b94cbcda.png) (mirror: [psbt.me](https://blossom.psbt.me/bbccf0fdcb780271a0c7442da2df8d53eb4b6fc1615caeb8f038532592000682)).
+> **Watch (55 s, narrated):** the wizard walkthrough — [video](https://blossom2.orangesync.tech/f202527b2ab8909b89c20ce0014059d0d0b7d994661d4c3a1617bb1b1ca3ae27.mp4) · [captions](https://blossom2.orangesync.tech/133d3cf07954935e893197e4446784e96004d787ae69fe39d4edf4371b0f3f52.vtt) · [still](https://blossom2.orangesync.tech/95d129ee3028d94c4d6174eccd0cf8399d5cb6a8008ed49cc939b89b7353f14d.png). It shows the real wizard with a visible cursor, and names the mandatory fields (router, upstream, Lightning address).
 
 **Interactive** (opens the wizard in your browser):
 
