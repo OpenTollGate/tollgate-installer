@@ -1,339 +1,205 @@
 # TollGate — Install Run Book (Review Club)
 
-**Release under test:** the **latest release** of `FreedomTechFeed/packages` — the
-release candidate, or the newest pre-release while still pre-testing.
+**Release under test:** the newest release of `FreedomTechFeed/packages`. Resolve
+`$TAG`/`$VER` in §0 and use them everywhere — never paste a stale tag.
 
-> **Never hardcode a `preNN` in this run book.** Resolve the tag once at the top
-> of every session (below) and use `$TAG` / `$VER` everywhere. A run book pinned
-> to an old `preNN` is how a tester ends up installing a stale package (that
-> exact mistake shipped pre26 to a bench that was believed to be on pre28).
+**Lanes** (test the one you were assigned; §4 is the shared acceptance check):
+installer wizard (§2); manual `.apk` on 25.12 (§3); manual `.ipk` on 24.10 (§3);
+offline bundle when the router has no uplink (§3.2).
 
-**Devices in scope:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53` / `mediatek-filogic`), GL-AR300M (`mips_24kc` / `ath79-generic`)
-
-## 0. Resolve the release under test (do this first)
-
-```sh
-# Newest release tag of the feed (the RC, or the newest pre-release while testing)
-TAG=$(curl -fsSL 'https://api.github.com/repos/FreedomTechFeed/packages/releases?per_page=30' \
-  | python3 -c 'import sys,json;print(max(json.load(sys.stdin), key=lambda r: r["published_at"])["tag_name"])')
-# Package version = tag without the leading 'v', with '-' -> '_'
-VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
-echo "TAG=$TAG  VER=$VER"
-```
-
-(`jq` equivalent if `python3` is unavailable:
-`... | jq -r 'max_by(.published_at).tag_name'`.)
-
-Everything below uses `$TAG` (release tag) and `$VER` (package version). Record
-both in your feedback.
-
-> **Why this run book exists.** Every review so far went through the installer
-> wizard. If the wizard ever fails, or a user refuses to run a binary, the
-> package must still install by hand on stock OpenWrt. That is the fallback of
-> record, so it gets tested every release — not just the wizard.
+**Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic`);
+GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, §3.5).
 
 ---
 
-## 0b. The two paths at a glance
+## 0. Resolve the release under test (first)
 
-| | Path A — installer wizard | Path B — manual install |
-|---|---|---|
-| **Entry point** | `install-and-test.sh`, UI on `:8099` | shell on the workstation + router |
-| **Who it is for** | first-time users, review sessions | fallback; anyone avoiding a binary |
-| **Proven?** | proven on earlier pre-releases | **no — this is what the session must prove** |
-| **Internet needed on router?** | no (assets pre-staged on the workstation) | **yes** — the direct variants run `apk`/`opkg update` for the OpenWrt deps |
+```sh
+TAG=$(curl -fsSL 'https://api.github.com/repos/FreedomTechFeed/packages/releases?per_page=30' \
+  | python3 -c 'import sys,json;print(max(json.load(sys.stdin), key=lambda r: r["published_at"])["tag_name"])')
+VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g'); echo "TAG=$TAG VER=$VER"
+```
 
-Both paths must end in the same observable state. **§4 is the shared acceptance
-check** — run it after whichever path you used. A path only "passes" if §4 passes.
+`jq` alternative: `... | jq -r 'max_by(.published_at).tag_name'`.
 
 ---
 
 ## 1. Prerequisites
 
-### Hardware
-| Device | Arch / target | Notes |
-|---|---|---|
-| GL.iNet MT3000 (Beryl AX) | `aarch64_cortex-a53` / `mediatek-filogic` | primary target |
-| GL.iNet MT6000 (Flint 2) | `aarch64_cortex-a53` / `mediatek-filogic` | same arch pair as MT3000 |
-| GL.iNet AR300M | `mips_24kc` / `ath79-generic` | **flash-constrained — read §3.3** |
-
-> MT3000 and MT6000 share one arch pair, so a packaging pass on one implies the
-> other. Keep both in the matrix anyway: **they differ in flash layout**, and the
-> MT3000 publishes no `factory` image while the MT6000 does.
-
-### Router state
 - **Vanilla OpenWrt** — 25.12.x for the `.apk` lane, 24.10.x for the `.ipk` lane.
-- SSH reachable, root password known (a freshly reset OpenWrt ships with an **empty** root password).
-- **An uplink on the router** for the direct `.apk`/`.ipk` variants — `apk`/`opkg
-  update` fetch `nodogsplash`/`jq`/`ca-bundle` from the OpenWrt repos. Path A
-  pre-stages its assets on the workstation.
+- SSH reachable; root password known (a fresh reset ships **empty**).
+- **An uplink on the router** for the manual path (§3) — `apk`/`opkg update`
+  fetch the OpenWrt deps. The wizard (§2) pre-stages them; the offline bundle
+  (§3.2) needs no uplink at all.
 
-### 1.1 Clean slate — getting to vanilla OpenWrt
+### 1.1 Clean slate — flash vanilla OpenWrt
 
-Take the profile from the official index for *your* device; never from memory.
-Check the **current** release directories under
-`https://downloads.openwrt.org/releases/` for the newest stable (`25.12.x`) and
-oldstable (`24.10.x`) — do not trust a version quoted in a doc.
+Take the profile from the official index for *your* device — never from memory
+(`https://downloads.openwrt.org/releases/`).
 
-| Device | Target | Profile | Images published |
+| Device | Target | Profile | Notes |
 |---|---|---|---|
-| GL-MT3000 | `mediatek/filogic` | `glinet_gl-mt3000` | `squashfs-sysupgrade.bin`, `initramfs-kernel.bin` — **no `factory` image** |
-| GL-MT6000 | `mediatek/filogic` | `glinet_gl-mt6000` | `squashfs-sysupgrade.bin`, `squashfs-factory.bin`, `initramfs-kernel.bin`, `preloader.bin`, `bl31-uboot.fip` |
-| GL-AR300M | `ath79/generic` | `glinet_gl-ar300m-lite` or `glinet_gl-ar300m16` | `squashfs-sysupgrade.bin`, `initramfs-kernel.bin` |
-| GL-AR300M (NAND units) | `ath79/nand` | `glinet_gl-ar300m-nor` or `glinet_gl-ar300m-nand` | `squashfs-sysupgrade.bin`, `initramfs-kernel.bin` |
+| GL-MT3000 | `mediatek/filogic` | `glinet_gl-mt3000` | **no `factory` image** — use the OEM local-upgrade path or U-Boot `sysupgrade.bin` |
+| GL-MT6000 | `mediatek/filogic` | `glinet_gl-mt6000` | has `factory.bin` — do **not** copy the MT3000 procedure |
+| GL-AR300M | `ath79/generic` | `glinet_gl-ar300m-lite` / `-ar300m16` | there is no plain `glinet_gl-ar300m` profile |
+| GL-AR300M (NAND) | `ath79/nand` | `glinet_gl-ar300m-nor` / `-nand` | **picking wrong is a brick** |
 
-> ⚠️ **There is no plain `glinet_gl-ar300m` profile** — only `-lite`,
-> `-ar300m16` (ath79/**generic**) and `-nor`, `-nand` (ath79/**nand**). Picking
-> wrong is a brick, not a misconfiguration. **Record which profile you used.**
-> The installer resolves this itself by board name; a human flashing by hand must
-> not guess.
->
-> ⚠️ **MT3000 publishes no `factory` image.** Use the GL.iNet OEM local-upgrade
-> path, or vendor U-Boot recovery with the `sysupgrade.bin`. The MT6000 *does*
-> publish `factory.bin`: do not copy MT3000's procedure onto it.
+**Record which profile you used.**
 
 ---
 
-## 2. Path A — installer wizard (reference)
+## 2. Path A — installer wizard
 
-**Interactive** (serves the UI at `:8099`; drive it in a browser):
+**Interactive** (serves the UI on `:8099`):
+
 ```sh
 bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh)
 ```
 
 **Headless** (no browser; full deploy + verification):
+
 ```sh
 bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER_IP> '<ROUTER_PASSWORD>' <LIGHTNING_ADDRESS>
 ```
 
-Flags: `--tag <tag>` (pin the release under test), `--channel`, `--list`, `--bin <path>`, `--trust-host-key`.
+**Pin the release:** add `--tag "$TAG"` — a pass with no pinned tag is not
+evidence about `$TAG`. Other flags: `--channel`, `--list`, `--bin <path>`,
+`--trust-host-key`.
 
-**Pin the tag to the resolved release:** `--tag "$TAG"`. A pass with no
-pinned tag is not evidence about `$TAG`.
-
-What it does: detect OS+arch → download `tollgate-installer` → serve on `:8099`
-→ scan LAN → identify router → `POST /api/deploy` → poll `/api/status/<id>` →
-verify. Deploy steps in order: `verify → stage → flash → firmware → password →
-upstream → install → brand → portal → lnurl → services → health`.
-
-**Arch → asset mapping is derived at deploy time, not stored** — the wizard
-detects the arch on the router (`DISTRIB_ARCH` → `opkg print-architecture` →
-`ubus call system board` → `apk --print-arch` → `uname -m`) and builds the asset
-URL from the tag. Asset URL shape:
-`https://github.com/FreedomTechFeed/packages/releases/download/$TAG/tollgate-wrt_${VER}_<arch>.<ext>`.
+The wizard detects OS+arch, downloads `tollgate-installer`, serves it, scans the
+LAN, and runs the deploy steps in order:
+`verify → stage → flash → firmware → password → upstream → install → brand → portal → lnurl → services → health`.
+The password fields are **optional** (advanced) — blank installs the `TollGate`
+default (§3.1).
 
 ---
 
 ## 3. Path B — manual install on vanilla OpenWrt
 
-### 3.0 Read this first: there is no feed to add
+### 3.1 Passwords: `TollGate` is installed by default
 
-`FreedomTechFeed/packages` publishes **GitHub release assets only** — per-arch
-`.apk`/`.ipk` files plus `SHA256SUMS`. There is **no `APKINDEX` and no
-`Packages.gz` anywhere in that repo**, so a GitHub release page cannot be used as
-an apk/opkg repository. Pointing `/etc/apk/repositories` or
-`/etc/opkg/customfeeds.conf` at it fails with an index-fetch error.
-
-So the honest manual path is a **direct file install**, which is byte-for-byte
-what the wizard does: `fetch asset → verify sha256 → install the file by path`.
-
-### 3.1 Passwords: a default is installed — change it at first login
-
-**The package installs a FIXED default, `TollGate`, for both the admin board and
-the private (management) WiFi** when you have not chosen one, and marks the admin
-credential *provisional*. The admin board then **forces you to choose your own
-password the first time you sign in** — so a fresh install is never locked out,
-and never left on a credential you cannot know.
-
-You can still choose your own up front. The wizard does it for you; on this
-manual path, set them yourself — each prompts and echoes nothing:
+The package installs a **fixed default, `TollGate`**, for the admin board and the
+management WiFi when you have not chosen one, and marks the admin credential
+*provisional* — the board **forces a change at first login**, so a fresh install
+is never locked out. To choose your own up front instead:
 
 ```sh
 passwd root                                            # admin password
 tollgate network private set-password '<passphrase>'   # management WiFi
 ```
 
-A value you set this way is **preserved** across reinstalls and never rewritten.
-If you skip it, sign in with `TollGate`; the board will not let you past the
-password screen until you change it.
-
-> ℹ️ **History.** rc2 set *no* credential and withheld the board until root had
-> one ("… is NOT being served", printed to `/tmp/tollgate-setup.log`). rc3
-> instead **refused to install** (its `preinst` exited non-zero). Both are gone
-> in **rc4 and later**: the default above is installed, so neither the
-> withheld-board nor the refused-install state occurs.
+A value you set is preserved across reinstalls; skip it and you sign in with
+`TollGate`.
 
 ### 3.2 Direct file install (both lanes)
 
-> ⚠️ **The install restarts the network and WILL drop your SSH session.** The
-> package's `postinst` restarts network/wifi/firewall/dnsmasq/uhttpd/nodogsplash,
-> and the setup **moves the wired LAN port off the captive bridge (`br-lan`,
-> `192.168.1.1`) onto a new bridge, `br-private`** — the management subnet, a
-> derived `192.168.x.0/24` next to the LAN. So:
-> * a wired `ssh root@192.168.1.1` session **drops mid-install**;
-> * on that same cable the router is now at the **management** address — the
->   install prints it as `Private SSID …, IP <x>.1`, and it is
->   `uci get network.private.ipaddr`. Reconnect with `ssh root@<x>.1`;
-> * or reconnect over the router's WiFi at `192.168.1.1`;
-> * to survive the drop, run the block under `screen`/`tmux` — or just let it
->   finish and run §4 in a fresh session; the install does not need the session
->   to stay up.
+There is **no feed to add** — `FreedomTechFeed/packages` publishes release assets
+only (no `APKINDEX`/`Packages.gz`). Install the release **file by path**, exactly
+as the wizard does.
 
-§3.0 applies: there is no feed to add, so install the release **file by path** —
-byte-for-byte what the wizard does (`fetch asset → verify sha256 → install the
-file`). One block serves both package managers: it detects `apk` vs `opkg`,
-resolves the arch from the router, verifies the manifest, then installs.
+> ⚠️ **The install drops your SSH session.** The `postinst` restarts the network
+> and **moves the wired LAN port off `br-lan` (`192.168.1.1`) onto `br-private`**
+> (the derived management subnet, usually `192.168.2.1`). Reconnect at the new
+> address (`uci get network.private.ipaddr`) or over the router's WiFi at
+> `192.168.1.1`. Running the block under `screen`/`tmux` survives the drop.
 
 ```sh
-# $TAG is resolved in §0 ON YOUR WORKSTATION; carry it to the router (which has
-# no curl/python3), e.g. `export TAG=v0.6.0-rc3`. An interactive shell does NOT
-# abort on ${TAG:?}, so this guard exits explicitly instead.
-if [ -z "${TAG:-}" ]; then
-    echo "ERROR: TAG is unset — resolve it in §0, then: export TAG=v0.6.0-rc3" >&2
-    exit 1
-fi
-
-# The package installs the default credential `TollGate` when root has none
-# (§3.1), so no root-hash preflight is needed here any more — the install no
-# longer refuses.
+# Carry $TAG from §0 to the router (which has no curl/python3). An interactive
+# shell does not abort on ${TAG:?}, so guard explicitly.
+[ -n "${TAG:-}" ] || { echo "ERROR: set TAG (see §0)"; exit 1; }
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d "\"'")
-if command -v apk >/dev/null 2>&1; then
-    EXT=apk; PM="apk add --allow-untrusted --force-overwrite"
-    apk update
-else
-    EXT=ipk; PM="opkg install"
-    opkg update
-fi
-FILE="tollgate-wrt_${VER}_${ARCH}.${EXT}"
-cd /tmp
+if command -v apk >/dev/null 2>&1; then EXT=apk; PM="apk add --allow-untrusted --force-overwrite"; apk update
+else EXT=ipk; PM="opkg install"; opkg update; fi
+FILE="tollgate-wrt_${VER}_${ARCH}.${EXT}"; cd /tmp
 
-# A fresh image has no clock and no ca-bundle, so HTTPS verification fails with
-# "SSL verify error: unknown error". Skip TLS verification for the FETCH only —
-# the SHA256SUMS gate below is what carries integrity.
-wget -q --no-check-certificate "$BASE/SHA256SUMS" -O SHA256SUMS || { echo "ERROR: cannot fetch $BASE/SHA256SUMS — is TAG correct?" >&2; exit 1; }
-[ -s SHA256SUMS ] || { echo "ERROR: SHA256SUMS is empty — wrong TAG?" >&2; exit 1; }
-wget -q --no-check-certificate "$BASE/$FILE" -O "$FILE" || { echo "ERROR: cannot fetch $BASE/$FILE (check TAG/arch)" >&2; exit 1; }
+# A fresh image has no clock/ca-bundle, so HTTPS fails ("SSL verify error"). The
+# SHA256SUMS gate below carries integrity, so skip TLS for the FETCH only.
+wget -q --no-check-certificate "$BASE/SHA256SUMS" -O SHA256SUMS || { echo "ERROR: cannot fetch SHA256SUMS (TAG?)" >&2; exit 1; }
+[ -s SHA256SUMS ] || { echo "ERROR: SHA256SUMS empty — wrong TAG?" >&2; exit 1; }
+wget -q --no-check-certificate "$BASE/$FILE" -O "$FILE" || { echo "ERROR: cannot fetch $FILE (TAG/arch?)" >&2; exit 1; }
 grep " $FILE\$" SHA256SUMS | sha256sum -c - || { echo "CHECKSUM FAILED — do not install"; exit 1; }
 $PM "/tmp/$FILE"
 ```
 
-**`--allow-untrusted` is required on the apk lane, not optional.** The
-`.apk`/`.ipk` files carry **no apk/opkg signature** (no signing key is published;
-the only release key signs the manifest). The manifest check above *is* your
-integrity gate. It mirrors the wizard.
+`--allow-untrusted` is required on the apk lane — the packages carry **no
+apk/opkg signature** (only the manifest is signed), so the `SHA256SUMS` check
+above *is* the integrity gate. The wizard also passes the opkg force flags
+(`--force-downgrade --force-reinstall --force-overwrite --force-depends`); on a
+vanilla router **try it plain first** and add flags one at a time.
 
-> The wizard uses heavier flags on the opkg lane
-> (`--force-downgrade --force-reinstall --force-overwrite --force-depends`). **On
-> a vanilla router try it plain first** — if dependencies resolve cleanly,
-> `--force-depends` would only mask a real problem. Add flags one at a time and
-> report which was needed.
+**No uplink on the router?** Use the release's **offline bundle**: on a machine
+with internet, `curl -fsSL <release>/tollgate-wrt_${VER}_${ARCH}-offline.tar.gz |
+tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
+directory. It stages the package plus its full dependency closure and installs
+offline.
 
-### 3.3 Set your own private WiFi passphrase (optional)
-
-The package installs the management WiFi with the default `TollGate` and enables
-it (§3.1), so the private SSID is up after install. To choose your own now (the
-board also prompts at first login), run — the value is never echoed:
+### 3.3 Optional: set your own management-WiFi passphrase
 
 ```sh
 read -r -s -p 'private WiFi passphrase (min 8 chars): ' WIFIPW; echo
-tollgate network private set-password "$WIFIPW"
-unset WIFIPW
+tollgate network private set-password "$WIFIPW"; unset WIFIPW
 ```
 
-### 3.4 If your own device is on the management subnet
+### 3.4 If your device is on the management subnet
 
-The router puts its management network on the /24 **next to its LAN** — with the
-default LAN `192.168.1.0/24`, usually `192.168.2.0/24`. The chooser only avoids
-the router's **own** uplinks; it cannot see the networks **your** device is on.
-So if your laptop/phone is also on `192.168.x.0/24` (a common overlap), two
-devices answer `192.168.x.1` on your machine and your connectivity breaks.
+The management network is the /24 next to the LAN (`192.168.2.0/24` for a default
+LAN). If your laptop/phone is also on `192.168.x.0/24`, two devices answer
+`192.168.x.1` and your connectivity breaks. Reach the router on the **wire**
+(`ssh -b <your-wired-ip> root@<x>.1`), or relocate:
 
-If that happens:
-* reach the router on the **wire only** (its management address is on the cable —
-  `ssh -b <your-wired-ip> root@<x>.1`), or disconnect the colliding network; or
-* relocate the management subnet for the test:
-  ```sh
-  uci set network.private.ipaddr=10.99.99.1
-  uci commit network
-  /etc/init.d/network restart      # reconnect at 10.99.99.1
-  ```
+```sh
+uci set network.private.ipaddr=10.99.99.1; uci commit network; /etc/init.d/network restart
+```
 
-> ⚠️ A reinstall/upgrade **re-derives** this address (it is not preserved today).
-> Tracked in OpenTollGate/tollgate-module-basic-go#906.
+A reinstall re-derives this address (`tollgate-module-basic-go#906`).
 
 ### 3.5 AR300M flash-space caveat
 
-The default payload (`/usr/bin/tollgate-wrt` ≈ 12.4 MB + `/usr/bin/tollgate` ≈
-7.4 MB) does **not** fit a 16 MB NOR device against roughly 4.6 MB of free
-jffs2. Expect `ENOSPC`; a tmpfs fallback is **volatile** — it works until the
-next reboot and then silently disappears. **Record the exact AR300M variant**
-(`-lite`, `-16`, `-nor`, `-nand`) and the free-space situation in your feedback.
+The default payload (~20 MB) does **not** fit a 16 MB NOR device (~4.6 MB free
+jffs2): expect `ENOSPC`; a tmpfs fallback is volatile. Record the exact variant.
 
 ---
 
-## 4. Shared acceptance check (run after ANY path)
+## 4. Shared acceptance check (after ANY path)
 
-> Note the names: service is **`tollgate-wrt`**, port is **`:2121`**. The router
-> has **no `curl`** — use `uclient-fetch`.
+The service is **`tollgate-wrt`**, the backend is **`:2121`**; the router has no
+`curl` — use `uclient-fetch`.
 
 ```sh
-/etc/init.d/tollgate-wrt status
-# expect: running: API :2121 listening and /var/run/tollgate.sock present
-
+/etc/init.d/tollgate-wrt status                 # "running: API :2121 …" + /var/run/tollgate.sock
 uclient-fetch -q -O- http://127.0.0.1:2121/ 2>/dev/null | head -5   # backend live
-uclient-fetch -q -O- http://127.0.0.1:2121/whoami 2>/dev/null       # answers even while the wallet loads
-uclient-fetch -q -O- http://127.0.0.1:2121/identity 2>/dev/null     # 404 EXPECTED unless a merchant key exists
-tollgate version                                                    # build identity — CONFIRM it matches $TAG/$VER
-
-ps | grep -i tollgate                 # process present
-logread | grep -i tollgate            # startup lines, no panic
-ndsctl status                         # nodogsplash active, no duplicate firewall rules
-nft list ruleset | grep -i tollgate   # firewall rules present, no duplicates
-cat /proc/sys/kernel/hostname         # TollGate-… hostname set
-
-grep -i "NOT served\|no usable password" /tmp/tollgate-setup.log   # rc2-and-earlier only: rc4+ installs the TollGate default (see §3.1)
+uclient-fetch -q -O- http://127.0.0.1:2121/whoami 2>/dev/null       # answers while the wallet loads
+uclient-fetch -q -O- http://127.0.0.1:2121/identity 2>/dev/null     # 404 unless a merchant key exists
+tollgate version                                                    # confirm it matches $TAG/$VER
+ps | grep -i tollgate; logread | grep -i tollgate                   # process + clean startup
+ndsctl status; nft list ruleset | grep -i tollgate                  # nodogsplash active, no dup rules
+cat /proc/sys/kernel/hostname                                       # TollGate-… hostname
 ```
 
-Declare pass only if all hold. An install that completes but never starts is a
-**fail**; the most useful attachment is `logread | grep -i tollgate`.
+Declare **pass** only if all hold. An install that completes but never starts is
+a **fail** — attach `logread | grep -i tollgate`.
 
 ---
 
 ## 5. What ONLY the wizard does
 
-A manual install is not crippled — the package's `postinst` already runs the
-uci-defaults, restarts network/wifi/firewall/dnsmasq/uhttpd/nodogsplash, and
-enables+starts `tollgate-wrt`. The wizard additionally does:
-
-1. **`tollgate.lan` name resolution** — `/etc/hosts` entry, dnsmasq `address`.
-   A manual install **will not serve the portal under that name**; use the IP.
-2. **Package integrity gate** — sha256 against `SHA256SUMS` before install
-   (manual equivalent: §3.1/§3.2's verify step).
-3. **Flashing OpenWrt from stock GL.iNet firmware**, root-password setup, and
-   upstream/STA WAN configuration.
-4. **LNURL / Lightning-address configuration.**
-5. **`mdnsd` install** for `.local` mDNS.
-6. **Post-install version read-back and provenance logging** — manual equivalent:
-   `tollgate version`.
-7. **opkg lane only:** pre-install of `nodogsplash`+`jq` with a laptop-side
-   fallback download.
-
-**Report a manual-install gap as exactly that** — "works manually but X is
-missing" is useful; inferring "the feature is broken" from a missing
-wizard-only step is not.
+A manual install is not crippled — the `postinst` runs the uci-defaults and
+starts `tollgate-wrt`. The wizard additionally: resolves `tollgate.lan`; enforces
+the sha256 gate; flashes from stock GL.iNet firmware and sets the root password +
+upstream/STA WAN; configures LNURL; installs `mdnsd` for `.local`; reads the
+version back; and, on the opkg lane, pre-installs `nodogsplash`+`jq`. **Report a
+manual gap as exactly that** ("works manually but X is missing") — not "the
+feature is broken".
 
 ---
 
 ## 6. Reporting
 
-Use `FEEDBACK-TEMPLATE.md`. For each run record: device + **variant**, OpenWrt
-version, **`$TAG`/`$VER`**, path (**A / B**), the exit code if any, §4
-output, and pass/partial/fail.
+Use `FEEDBACK-TEMPLATE.md`. Record device + **variant**, OpenWrt version,
+**`$TAG`/`$VER`**, the path (**A/B**), any exit code, the §4 output, and
+pass/partial/fail. **Say which path you ran** — a Path A pass is not evidence
+about Path B.
 
-**State which path you actually ran**, and **confirm the installed version**
-(`tollgate version`) matches `$TAG` — a Path A pass is not evidence about Path B,
-and vice versa.
-
-> **Host-specific editions:** see [`runbook/README.md`](runbook/README.md).
+> Host-specific editions: [`runbook/README.md`](runbook/README.md).
