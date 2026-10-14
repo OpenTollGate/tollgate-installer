@@ -79,31 +79,28 @@ func TestSelectPkgURL(t *testing.T) {
 // publishes is pinned here as a literal, so a change to the tag, the version
 // spelling, or the name layout is caught offline (no network) and named.
 func TestFeedAssetURL(t *testing.T) {
-	const prefix = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc1-pre26/tollgate-wrt_0.6.0_rc1_pre26_"
-	cases := []struct{ arch, ext, want string }{
-		{"aarch64_cortex-a53", ".ipk", prefix + "aarch64_cortex-a53.ipk"},
-		{"aarch64_cortex-a53", ".apk", prefix + "aarch64_cortex-a53.apk"},
-		{"aarch64_cortex-a72", ".ipk", prefix + "aarch64_cortex-a72.ipk"},
-		{"aarch64_cortex-a72", ".apk", prefix + "aarch64_cortex-a72.apk"},
-		{"arm_cortex-a7", ".ipk", prefix + "arm_cortex-a7.ipk"},
-		{"arm_cortex-a7", ".apk", prefix + "arm_cortex-a7.apk"},
-		{"mips64_octeonplus", ".ipk", prefix + "mips64_octeonplus.ipk"},
-		{"mips64_octeonplus", ".apk", prefix + "mips64_octeonplus.apk"},
-		{"mipsel_24kc", ".ipk", prefix + "mipsel_24kc.ipk"},
-		{"mipsel_24kc", ".apk", prefix + "mipsel_24kc.apk"},
-		{"mips_24kc", ".ipk", prefix + "mips_24kc.ipk"},
-		{"mips_24kc", ".apk", prefix + "mips_24kc.apk"},
-		{"x86_64", ".ipk", prefix + "x86_64.ipk"},
-		{"x86_64", ".apk", prefix + "x86_64.apk"},
-	}
-	for _, tc := range cases {
-		if got := feedAssetURL(tc.arch, tc.ext); got != tc.want {
-			t.Errorf("feedAssetURL(%q, %q) = %q, want %q", tc.arch, tc.ext, got, tc.want)
+	// The URL shape is derived independently from the EFFECTIVE tag, so this
+	// holds whatever release the wizard resolved (it auto-tracks the newest RC):
+	// prefix = .../download/<tag>/ and version = <tag> with "v" dropped and
+	// hyphens → underscores. If feedReleaseURLPrefix or feedPkgVersion drift from
+	// that rule, this disagrees.
+	tag := feedReleaseTag
+	prefix := "https://github.com/" + feedRepoSlug + "/releases/download/" + tag + "/"
+	ver := strings.ReplaceAll(strings.TrimPrefix(tag, "v"), "-", "_")
+
+	seen := 0
+	for _, arch := range feedReleasePublishedArches {
+		for _, ext := range []string{".ipk", ".apk"} {
+			seen++
+			want := prefix + "tollgate-wrt_" + ver + "_" + arch + ext
+			if got := feedAssetURL(arch, ext); got != want {
+				t.Errorf("feedAssetURL(%q, %q) = %q, want %q", arch, ext, got, want)
+			}
 		}
 	}
-	if len(cases) != len(feedReleasePublishedArches)*2 {
-		t.Errorf("this table pins %d names but the published release matrix is %d arches × 2 formats",
-			len(cases), len(feedReleasePublishedArches))
+	if seen != len(feedReleasePublishedArches)*2 {
+		t.Errorf("this table checks %d names but the published release matrix is %d arches × 2 formats",
+			seen, len(feedReleasePublishedArches))
 	}
 }
 

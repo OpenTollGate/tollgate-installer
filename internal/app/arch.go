@@ -96,36 +96,44 @@ func normalizeBareArch(b string) string {
 const (
 	// feedRepoSlug is the repo whose CI builds and publishes the feed packages.
 	feedRepoSlug = "FreedomTechFeed/packages"
-	// feedReleaseTagDefault is the feed release tag selected by default. Keep it
-	// at the NEWEST published feed release. A stale pin does not merely miss
-	// fixes: it DOWNGRADES every router already running a newer build, because
-	// the installer pushes the pinned package over whatever is installed
+	// feedReleaseTagDefault is the feed release tag used when the newest release
+	// CANNOT be resolved (no network, GitHub down). Keep it at the NEWEST
+	// published feed release. A stale pin does not merely miss fixes: it
+	// DOWNGRADES every router already running a newer build, because the
+	// installer pushes the pinned package over whatever is installed
 	// (observed 2026-10-05 — the pin was alpha2-pre9 and the router was running
 	// alpha4-pre21). refuseDowngrade in deploy.go catches that at deploy time;
 	// TestPinnedFeedReleaseTagExists catches a pin that has fallen off the feed.
-	feedReleaseTagDefault = "v0.6.0-rc1-pre26"
-	// feedReleaseTagEnv is the environment variable that overrides
-	// feedReleaseTagDefault. Set it to select another published release tag
-	// (e.g. a newer pre-release, or an older tag to reproduce an old build)
-	// without rebuilding the wizard:
+	//
+	// By default the wizard does NOT use this pin — it auto-resolves the newest
+	// release candidate (feedChannelDefault). The pin is the offline fallback.
+	feedReleaseTagDefault = "v0.6.0-rc5"
+	// feedReleaseTagEnv is the environment variable that overrides the resolved
+	// tag. Set it to select a specific published release tag (e.g. an older tag
+	// to reproduce an old build, or an exact pre-release) without a rebuild:
 	//
 	//	TOLLGATE_FEED_RELEASE_TAG=v0.6.0-alpha1 ./tollgate-installer
 	//
-	// An empty or implausible value is ignored in favour of the default, so a
+	// An empty or implausible value is ignored in favour of resolution, so a
 	// typo cannot turn into a malformed download URL for every arch.
 	feedReleaseTagEnv = "TOLLGATE_FEED_RELEASE_TAG"
-	// feedChannelEnv selects the newest feed release in a CHANNEL instead of a
-	// fixed tag. It is consulted only when feedReleaseTagEnv is unset, and it
-	// is OFF by default: no channel env means no network at startup and the
-	// compiled feedReleaseTagDefault is used, keeping builds reproducible. The
-	// curl|bash launcher resolves the tag itself and passes the exact tag, so
-	// this is for a directly-run binary:
+	// feedChannelEnv selects the newest feed release in a CHANNEL. It is
+	// consulted only when feedReleaseTagEnv is unset; unset it defaults to
+	// feedChannelDefault, so an out-of-the-box run follows the newest release
+	// candidate with no configuration:
 	//
-	//	TOLLGATE_FEED_CHANNEL=alpha ./tollgate-installer   # newest pre-release
+	//	TOLLGATE_FEED_CHANNEL=stable ./tollgate-installer  # newest non-pre-release
 	//
 	// alpha = newest tag matching (pre|alpha|beta|rc); beta = (beta|rc);
-	// stable = no pre-release marker; any/latest = newest overall.
+	// stable = no pre-release marker; any/latest = newest overall. Resolution is
+	// best-effort: if GitHub cannot be reached the compiled feedReleaseTagDefault
+	// applies, so a wizard still works offline.
 	feedChannelEnv = "TOLLGATE_FEED_CHANNEL"
+	// feedChannelDefault is the channel resolved when nothing is pinned: alpha =
+	// the newest release candidate (a tag matching pre|alpha|beta|rc). This is
+	// what makes a directly-run binary track the newest RC automatically, the
+	// same channel install-and-test.sh selects by default.
+	feedChannelDefault = "alpha"
 )
 
 // feedReleaseTagRe matches a plausible GitHub release tag (v0.6.0-alpha2-pre3,
@@ -137,11 +145,12 @@ const (
 var feedReleaseTagRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // feedReleaseTag is the effective release tag: the TOLLGATE_FEED_RELEASE_TAG
-// override, else the newest release in TOLLGATE_FEED_CHANNEL, else
-// feedReleaseTagDefault. It is resolved once at startup (the PreStage pins in
-// deploy.go are derived from it at init time), so set the override/channel
-// before starting the wizard, not per deploy. With neither env set there is no
-// network call and the compiled default applies, keeping builds reproducible.
+// override, else the newest release in TOLLGATE_FEED_CHANNEL (default alpha =
+// the newest release candidate), else feedReleaseTagDefault. It is resolved once
+// at startup (the PreStage pins in deploy.go are derived from it at init time),
+// so set the override/channel before starting the wizard, not per deploy. With
+// nothing pinned it resolves the default channel over the network; if that fails
+// (offline) the compiled default applies.
 var feedReleaseTag = resolveFeedTagWithChannel(os.Getenv, githubResolveChannel)
 
 // resolveFeedReleaseTag returns the effective feed release tag. Unset, empty,
@@ -254,10 +263,13 @@ func githubResolveChannel(channel string) string {
 
 // resolveFeedTagWithChannel is the full precedence used at startup:
 //
-//	TOLLGATE_FEED_RELEASE_TAG (explicit) > TOLLGATE_FEED_CHANNEL > compiled default
+//	TOLLGATE_FEED_RELEASE_TAG (explicit) > TOLLGATE_FEED_CHANNEL (unset => alpha)
+//	                                    > compiled feedReleaseTagDefault
 //
-// Injecting getenv and fetch keeps it pure for tests: with no channel env set
-// it never calls fetch, so unit tests stay network-free and deterministic.
+// With nothing pinned it resolves the DEFAULT channel (alpha = the newest
+// release candidate), so an out-of-the-box run tracks the newest RC with no
+// configuration; the compiled default applies only when resolution fails (e.g.
+// offline). Injecting getenv and fetch keeps it pure for tests.
 func resolveFeedTagWithChannel(getenv func(string) string, fetch func(string) string) string {
 	if getenv == nil {
 		return feedReleaseTagDefault
@@ -265,11 +277,13 @@ func resolveFeedTagWithChannel(getenv func(string) string, fetch func(string) st
 	if tag := strings.TrimSpace(getenv(feedReleaseTagEnv)); tag != "" && feedReleaseTagRe.MatchString(tag) {
 		return tag
 	}
-	if ch := strings.ToLower(strings.TrimSpace(getenv(feedChannelEnv))); feedChannelRe.MatchString(ch) {
-		if fetch != nil {
-			if tag := fetch(ch); tag != "" && feedReleaseTagRe.MatchString(tag) {
-				return tag
-			}
+	channel := strings.ToLower(strings.TrimSpace(getenv(feedChannelEnv)))
+	if channel == "" {
+		channel = feedChannelDefault
+	}
+	if feedChannelRe.MatchString(channel) && fetch != nil {
+		if tag := fetch(channel); tag != "" && feedReleaseTagRe.MatchString(tag) {
+			return tag
 		}
 	}
 	return feedReleaseTagDefault
