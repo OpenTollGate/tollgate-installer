@@ -26,6 +26,10 @@ password is **`TollGate`** — the board forces a change at first login.
 **Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic`);
 GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, [§A.4](#a4-ar300m-flash-space-caveat)).
 
+**Recordings (Review Club):** a narrated reel of every path — the wizard, the
+merged manual install, and the post-install board + payment —
+[watch all](https://blossom2.orangesync.tech/f0329daccf09d71413f86ada64bc9abc2ffa88bb0ea3f20fa9365ca24cb43d8e.html).
+
 ---
 
 ## 0. Resolve the release under test (first)
@@ -48,6 +52,8 @@ serves a setup wizard at `:8099` and drives the whole install over SSH: flash �
 root password → uplink → install → brand → portal → LNURL → health.
 
 > **Watch (55 s, narrated):** the wizard walkthrough — [video](https://blossom2.orangesync.tech/f202527b2ab8909b89c20ce0014059d0d0b7d994661d4c3a1617bb1b1ca3ae27.mp4) · [captions](https://blossom2.orangesync.tech/133d3cf07954935e893197e4446784e96004d787ae69fe39d4edf4371b0f3f52.vtt) · [still](https://blossom2.orangesync.tech/95d129ee3028d94c4d6174eccd0cf8399d5cb6a8008ed49cc939b89b7353f14d.png). It shows the real wizard with a visible cursor, and names the mandatory fields (router, upstream, Lightning address).
+
+> **Watch (94 s, narrated):** the wizard end-to-end — the real UI (mandatory fields named) plus the headless one-liner and the shared board + payment ending: [video](https://blossom2.orangesync.tech/37d821c79b89d776c5b16af5575324ba8b361928e9340b4afc34b487339db590.mp4) · [captions](https://blossom2.orangesync.tech/1ee12203c639fef974066a04d72c68902155df50a1069c2d41de889f580e5bc4.vtt).
 
 **Interactive** (opens the wizard in your browser):
 
@@ -105,6 +111,8 @@ only (no `APKINDEX`/`Packages.gz`). Install the release **file by path**, exactl
 as the wizard does.
 
 > **Watch:** [manual install — `.apk` on OpenWrt 25.12](https://blossom2.orangesync.tech/ac19249bc124f46dcb9e494d7303e5c12d2493c1c2dac240468d5dd95a66f014.mp4) · [captions](https://blossom2.orangesync.tech/335ddc34ef9ebca253d81633e8945cb45404c3606696f162c0d6b90128a3e43e.vtt) · [`.ipk` on OpenWrt 24.10](https://blossom2.orangesync.tech/f8fdb4b6e589241bf9a28f41e8631dbd5e00d5cd5b587f289502d28f04619257.mp4) · [captions](https://blossom2.orangesync.tech/a5e976cfd6cb59a95c4aba93b302d6fadf7aeec990f6ac85e5b6416a732a02db.vtt).
+
+> **Watch (287 s, narrated):** the full manual path — flash + uplink, the merged `.apk`/`.ipk` install, and the shared board + payment ending: [video](https://blossom2.orangesync.tech/c007a43623ca4fe18ffe9582be08a48d2d38794b78142f68a9629084c62d3659.mp4) · [captions](https://blossom2.orangesync.tech/1afec0cfee18915d4b5bcd68d3ffb5cc3edf8b911974750e19093cb217668cd6.vtt).
 
 > ⚠️ **The install drops your SSH session.** The `postinst` restarts the network
 > and **moves the wired LAN port off `br-lan` onto `br-private`** (§3). Reconnect
@@ -183,6 +191,8 @@ off `br-lan` onto `br-private`** — so your cable ends up on the management sid
 A **guest** on `br-lan` pays and gets internet but cannot reach the admin UIs;
 **you**, on the wire or the private SSID (`br-private`), can. Your management
 address is `uci get network.private.ipaddr`.
+
+> **Watch (160 s, narrated):** the board + payment — [the captive portal (Cashu + Lightning) and the admin board (dashboard → wallet → wifi → settings → Drain)](https://blossom2.orangesync.tech/5c2856066f3e2f6003bb3fcbca72725a5f751fe5851af7808dd5f59690b31f8a.mp4) · [captions](https://blossom2.orangesync.tech/0fef5e40ef971b1d1d07282e9c8d9a54b3d344a6ca5d57c13e5c0da4a3c060a1.vtt). The board is the **default face** at `https://tollgate-<4hex>.lan/`; LuCI is one **button** away.
 
 ### The password
 
