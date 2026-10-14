@@ -5,11 +5,12 @@ import json, os, subprocess, sys, urllib.request
 
 D = "/tmp/opencode/filmcap"
 URLS = {
-    "i1-manual-full2": "c007a43623ca4fe18ffe9582be08a48d2d38794b78142f68a9629084c62d3659",
-    "i2-wizard-full2": "37d821c79b89d776c5b16af5575324ba8b361928e9340b4afc34b487339db590",
+    "i1-manual-full2": "fa844a207ee826cdffce1a76b0b599a5cbe6fe28705e3c669c2a2be854f466b5",
+    "i2-wizard-full2": "cd97f49c315eb3f0c050d98767399c3f41b42541b2c083c0c09951bc2786cebb",
     "tail-payment-admin2": "5c2856066f3e2f6003bb3fcbca72725a5f751fe5851af7808dd5f59690b31f8a",
     "i1-flash-manual": "4d4c687bde6537b33fcfc1e5993927d49d340b0b88c0e975e86cf343000815de",
     "i2-wizard": "02267c51235d9ab8eaf899ecf778d987c8e31693319717ba21645fdef022acce",
+    "rc-fixes": "9b44dbc1d9ddb0bd98a4a32460105148ed4c6e096efd0a861b3562dc16d07bfc",
 }
 VTT = {
     "i1-manual-full2": "1afec0cfee18915d4b5bcd68d3ffb5cc3edf8b911974750e19093cb217668cd6",
@@ -65,7 +66,7 @@ for name in ("i1-manual-full2", "i2-wizard-full2", "tail-payment-admin2"):
     fails += 0 if ok else 1
 
 print("== narration lines never overlap ==")
-for name in ("i1-flash-manual", "i2-wizard-gui", "i2-headless", "tail-payment", "tail-admin2"):
+for name in ("i1-flash-manual", "i2-wizard-gui", "i2-headless", "tail-payment", "tail-admin2", "rc-fixes"):
     p = f"{D}/{name}.narration.json"
     if not os.path.exists(p):
         print(f"  SKIP {name}"); continue
