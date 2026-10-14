@@ -99,24 +99,38 @@ func TestProveRootPasswordSendsNothingToAnUntrustedHost(t *testing.T) {
 	}
 }
 
-// TestRootPasswordProofOffersNoFallbackAuth is the structural half of (2): the
-// proof must not be able to reach the fallbacks sshConnect() carries — an
-// empty-password retry or a default SSH key would report success for a
-// credential the router never adopted. Behaviour is pinned by the test above;
-// this pins the code path so a future "just reuse sshConnect" refactor cannot
-// quietly reintroduce them.
-func TestRootPasswordProofOffersNoFallbackAuth(t *testing.T) {
-	body := goFuncBody(t, "ssh.go", "proveRootPassword")
+// TestIsolatedPasswordDialOffersNoFallbackAuth is the structural half of (2):
+// the isolated dial must not reach the fallbacks sshConnect() carries — an
+// empty-password retry or a default SSH key would authenticate without the
+// candidate. Behaviour is pinned by the tests above; this pins the code path so
+// a future "just reuse sshConnect" refactor cannot quietly reintroduce them.
+func TestIsolatedPasswordDialOffersNoFallbackAuth(t *testing.T) {
+	body := goFuncBody(t, "ssh.go", "isolatedPasswordDial")
 	for _, forbidden := range []string{"sshConnect(", "reconnectSSH(", "tryDefaultKeys", "ssh.PublicKeys", `Password("")`} {
 		if strings.Contains(body, forbidden) {
-			t.Errorf("proveRootPassword must not use %s — that would authenticate without the candidate password\n%s", forbidden, body)
+			t.Errorf("isolatedPasswordDial must not use %s — that would authenticate without the candidate password\n%s", forbidden, body)
 		}
 	}
 	if !strings.Contains(body, "ssh.Password(password)") {
-		t.Errorf("proveRootPassword does not offer the candidate as a password\n%s", body)
+		t.Errorf("isolatedPasswordDial does not offer the candidate as a password\n%s", body)
 	}
 	if !strings.Contains(body, "routerHostKeyCallback(") {
-		t.Errorf("proveRootPassword does not verify the router's host key before offering the credential\n%s", body)
+		t.Errorf("isolatedPasswordDial does not verify the router's host key before offering the credential\n%s", body)
+	}
+}
+
+// TestProveRootPasswordDelegatesToIsolatedDial: the deploy proof must measure
+// the candidate through the same isolated dial the password verdict uses, and
+// carry no auth of its own.
+func TestProveRootPasswordDelegatesToIsolatedDial(t *testing.T) {
+	body := goFuncBody(t, "ssh.go", "proveRootPassword")
+	for _, forbidden := range []string{"sshConnect(", "tryDefaultKeys", "ssh.PublicKeys", "ssh.Password(", `Password("")`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("proveRootPassword must not build its own auth (%s) — it must delegate to isolatedPasswordDial\n%s", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, "isolatedPasswordDial(") {
+		t.Errorf("proveRootPassword does not delegate to isolatedPasswordDial\n%s", body)
 	}
 }
 

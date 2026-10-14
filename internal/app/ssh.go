@@ -189,6 +189,26 @@ func proveRootPassword(ip, password string) bool {
 		// non-empty candidate, and a generated credential is never empty.)
 		return false
 	}
+	return isolatedPasswordDial(ip, password) == nil
+}
+
+// isolatedPasswordDial opens a FRESH SSH session to ip and authenticates as root
+// with EXACTLY the given candidate password and nothing else — no empty-password
+// retry, no default-key fallback, no sshConnect() reuse. It returns nil on a
+// successful authenticate and the dial error otherwise (an untrusted host key
+// aborts the handshake, so the candidate is never sent to a host the operator has
+// not trusted).
+//
+// WHY this exists: sshConnect() carries fallbacks (an empty-password retry,
+// keyboard-interactive, the operator host's default keys). Any of them
+// authenticating reports success for a credential the router never adopted — the
+// false-proof shape both proveRootPassword (the deploy's fresh-login proof) and
+// passwordVerdict (the wizard's password tick) must avoid.
+//
+// An EMPTY candidate is a real dial here (unlike proveRootPassword, which refuses
+// it outright): a router with an empty root hash accepts it, which is exactly how
+// "this router needs no password" is observed.
+func isolatedPasswordDial(ip, password string) error {
 	config := &ssh.ClientConfig{
 		User:              "root",
 		HostKeyCallback:   routerHostKeyCallback(ip),
@@ -201,10 +221,10 @@ func proveRootPassword(ip, password string) bool {
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(ip, sshDialPort), config)
 	if err != nil {
-		return false
+		return err
 	}
 	closeSSHClient(client)
-	return true
+	return nil
 }
 
 // closeSSHClient closes a deploy SSH client, tolerating nil.

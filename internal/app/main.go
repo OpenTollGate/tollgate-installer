@@ -537,10 +537,9 @@ func handleIdentify(w http.ResponseWriter, r *http.Request) {
 	info.Source = sourceManual
 	info.Identified, info.Note = classifyProbed(info)
 	info.Name = friendlyRouterName(info)
-	// The machine-readable verdict for the password field: this handler is the
-	// path the operator's TYPED root password takes, so its connect outcome is
-	// exactly "did the password work".
-	info.PasswordStatus = passwordStatus(req.IP)
+	// PasswordStatus is already set by probeRouterWithPasswordFn (the same
+	// passwordVerdict path the scan uses) — measured in isolation, so a wrong
+	// typed password can never read "accepted" via a fallback connect.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
 }
