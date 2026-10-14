@@ -264,7 +264,7 @@
               style="width:auto; padding:10px 14px; margin-top:0.5rem;"
               onclick="trustHostKey()">Trust this router's SSH host key</button>
     </div>
-    <div class="field">
+    <div class="field" id="password-field">
       <label for="password">Current router password</label>
       <div class="pw-wrap">
         <input type="password" id="password" placeholder="Current router password (leave blank on a fresh reset)" autocomplete="off" oninput="onPasswordChange();onPasswordFieldInput('password', 'password-toggle')">
@@ -277,6 +277,7 @@
       </div>
       <div class="hint" id="password-status" role="status" aria-live="polite" style="margin-top:0.35rem;"></div>
     </div>
+    <div class="hint hidden" id="password-not-required" role="status" aria-live="polite" style="margin-top:0.35rem; color:#4ade80;">&#10003; This router needs no password &mdash; continue.</div>
     <div class="field">
       <label>Upstream connection</label>
       <div class="radio-group">
@@ -607,6 +608,9 @@ function onRouterChange() {
     ssidSelect.disabled = true;
   }
   // Re-identify the newly selected router (password if already typed).
+  // Ask for a password only when the scan found that this router needs one
+  // (a fresh router reads not_required, so the field is not shown at all).
+  applyPasswordRequirement((selectedRouterInfo() || {}).password_status || '');
   refreshRouterName();
   // Start pre-downloading the deploy assets for the new target.
   schedulePreStage();
@@ -1181,6 +1185,7 @@ function showSelectView() {
   setManualAddressVisible(detectedRouters.length === 0);
   // If the password was already typed (e.g. scan re-run), identify now.
   showTrustHint(selectedRouterInfo());
+  applyPasswordRequirement((selectedRouterInfo() || {}).password_status || '');
   if (document.getElementById('password').value) refreshRouterName();
   checkReady();
 }
@@ -1556,9 +1561,11 @@ async function refreshRouterName() {
 // means the router's host key is not trusted (trust it to send the password),
 // and a grey dot means the router is not reachable over SSH yet.
 function renderPasswordStatus(status) {
+  applyPasswordRequirement(status);
   const el = document.getElementById('password-status');
   if (!el) return;
   const map = {
+    not_required: ['\u2713', '#4ade80', 'This router needs no password \u2014 continue.'],
     accepted:    ['\u2713', '#4ade80', 'Router password accepted.'],
     refused:     ['\u2717', '#ff8a80', 'Wrong router password \u2014 the router refused the login.'],
     missing:     ['\u2717', '#ff8a80', 'This router needs a root password (it refused an empty one).'],
@@ -1570,6 +1577,18 @@ function renderPasswordStatus(status) {
   if (!m) { el.textContent = ''; return; }
   el.textContent = m[0] + ' ' + m[2];
   el.style.color = m[1];
+}
+
+// applyPasswordRequirement shows the router-password field ONLY when the router
+// needs a password. status comes from /api/scan (the LAN scan dials
+// passwordless) or /api/identify: `not_required` means the router accepts a
+// passwordless login (a fresh box), so the wizard must not ask for one at all.
+function applyPasswordRequirement(status) {
+  const field = document.getElementById('password-field');
+  const note = document.getElementById('password-not-required');
+  const notRequired = status === 'not_required';
+  if (field) field.classList.toggle('hidden', notRequired);
+  if (note) note.classList.toggle('hidden', !notRequired);
 }
 
 function scanAgain() {

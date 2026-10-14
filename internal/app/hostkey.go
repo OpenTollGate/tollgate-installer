@@ -455,27 +455,65 @@ func describeSSHConnectFailure(ip string) string {
 	}
 }
 
-// passwordStatus derives a MACHINE-READABLE verdict for the wizard's password
-// field from the same evidence describeSSHConnectFailure explains in prose. The
-// UI renders it as a tick beside the field, so the operator knows the moment
-// they type whether the root password was accepted.
+// passwordVerdict derives a MACHINE-READABLE verdict for the wizard's password
+// field by measuring the candidate password IN ISOLATION (isolatedPasswordDial —
+// the candidate only, no fallbacks), never from a connect that might have
+// authenticated by another method. The UI renders it as a tick beside the field,
+// so the operator knows the moment they type whether the root password was
+// accepted.
 //
-//	accepted    — the connect succeeded (the router answered with this password)
-//	refused     — auth refused WITH a password supplied (the password is wrong)
-//	missing     — auth refused with NO password supplied (a protected router)
-//	untrusted   — the host key is not trusted, so no credential was sent
-//	unreachable — the dial failed (no SSH / timeout / no route)
-//	unknown     — a failure we do not map
-func passwordStatus(ip string) string {
+//	not_required — the router accepts a PASSWORDLESS login (a fresh router): no
+//	               password is needed, so the wizard does not ask for one
+//	accepted     — the router required a password and accepted this candidate
+//	refused      — the router required a password and refused this candidate
+//	missing      — the router requires a password but none was supplied
+//	untrusted    — the host key is not trusted, so no credential was sent
+//	unreachable  — the dial failed (no SSH / timeout / no route)
+//	unknown      — a failure we do not map
+//
+// WHY a fresh dial and not the connect outcome: sshConnect() carries an
+// empty-password retry, keyboard-interactive, and the operator host's default
+// keys. On a fresh router (empty root hash) the empty-password retry
+// authenticates, so a connect-outcome verdict reads "accepted" for ANY typed
+// password — a false proof of a credential the router never adopted. Measuring
+// the candidate in isolation is the only sound answer (and it is exactly what
+// proveRootPassword does for the deploy).
+//
+// not_required is decided by dialling with an EMPTY candidate FIRST: a router
+// with a real root hash refuses it (a password is required), a router with an
+// empty root hash accepts it (nothing to ask). The supplied candidate is only
+// measured once a password is actually required.
+func passwordVerdict(ip, password string) string {
+	// A stale refusal from an earlier, unrelated dial must not outlive the
+	// attempt below (routerHostKeyCallback re-sets it if this dial is refused).
+	forgetHostKeyRefusal(ip)
+
+	emptyErr := isolatedPasswordDial(ip, "")
 	if lastHostKeyRefusal(ip) != "" {
 		return "untrusted"
 	}
-	err, passwordSupplied := lastSSHConnectError(ip)
+	if emptyErr == nil {
+		return "not_required"
+	}
+	if password == "" {
+		return classifyPasswordDial(emptyErr, false)
+	}
+
+	err := isolatedPasswordDial(ip, password)
+	if lastHostKeyRefusal(ip) != "" {
+		return "untrusted"
+	}
 	if err == nil {
-		// A successful connect forgets the recorded failure, so nothing recorded
-		// after an attempt means it worked.
 		return "accepted"
 	}
+	return classifyPasswordDial(err, true)
+}
+
+// classifyPasswordDial maps a candidate-dial error to refused/missing/
+// unreachable/unknown. passwordSupplied separates "the password you gave was
+// refused" from "this router needs a password" — the same dial error, two
+// different operator actions.
+func classifyPasswordDial(err error, passwordSupplied bool) string {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "unable to authenticate"):

@@ -1016,6 +1016,11 @@ func probeRouterWithPassword(ip, password string) RouterInfo {
 			info.SSHRefusal = refusal
 			info.SSHFingerprint = lastHostKeyFingerprint(ip)
 		}
+		// The password verdict (isolated), so the operator is asked for a root
+		// password ONLY when the router actually needs one — the scan reports
+		// not_required for a fresh router before the operator types anything.
+		// Bounded to SSH-open hosts so a dead candidate never pays the dial.
+		info.PasswordStatus = passwordVerdict(ip, password)
 	}
 
 	info.Name = friendlyRouterName(info)
