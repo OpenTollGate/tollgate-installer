@@ -1943,7 +1943,16 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	healthOK := false
 	listening := false
 	var healthBody string
-	const healthAttempts = 40 // ~2 min
+	state := merchantUnknown
+	// pendingNote is set when the merchant is still starting at the end of the
+	// wait budget. The install has NOT failed, so we must still walk the tail of
+	// the deploy — above all apply the root credential — before reporting the
+	// non-fatal pending state.
+	var pendingNote string
+	const (
+		healthAttempts   = 40 // ~2 min at 3 s — the advertisement wait
+		startingAttempts = 38 // ~5 min at 8 s — the merchant-starting wait
+	)
 	// A DEAD TRANSPORT IS NOT A SERVICE PROBLEM. Before blaming :2121, prove the
 	// session we are asking is still alive: on a real router this deploy lost the
 	// connection when the router was re-addressed mid-run, then spent 2 minutes
@@ -1954,6 +1963,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		failTransportLost(job, 11, req.IP, err)
 		return
 	}
+	// Phase 1 — wait for the advertisement (the merchant is up): ~2 min at 3 s.
 	for attempt := 1; attempt <= healthAttempts; attempt++ {
 		time.Sleep(3 * time.Second)
 		if err := sshTransportAlive(client); err != nil {
@@ -1962,19 +1972,59 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 			return
 		}
 		listening, healthBody = tollgateHealthProbe(client)
-		if adLooksHealthy(healthBody) {
+		state = merchantState(healthBody)
+		if state == merchantHealthy {
 			healthOK = true
 			job.addLog(fmt.Sprintf("Health check passed on attempt %d", attempt))
 			break
 		}
 		if attempt == 1 || attempt%5 == 0 {
-			job.addLog(fmt.Sprintf("Health check attempt %d/%d: listening=%v ad=%q",
-				attempt, healthAttempts, listening, truncate(healthBody, 40)))
+			job.addLog(fmt.Sprintf("Health check attempt %d/%d: listening=%v state=%s ad=%q",
+				attempt, healthAttempts, listening, state, truncate(healthBody, 40)))
+		}
+	}
+	// Phase 2 — the merchant is EXPLICITLY starting (its own 503 "starting"
+	// refusal): it is building the wallet from the configured mints, which on a
+	// cold boot — and, in the module, unbounded per mint — can run for minutes.
+	// That is not a failure. Wait slowly, honoring the refusal's retry_after
+	// cadence, for up to the merchant budget.
+	if !healthOK && state == merchantStarting {
+		job.addLog("The merchant is starting (loading its wallet + mint health) — waiting up to ~5 minutes...")
+		for attempt := 1; attempt <= startingAttempts; attempt++ {
+			time.Sleep(8 * time.Second)
+			if err := sshTransportAlive(client); err != nil {
+				job.addLog(fmt.Sprintf("Merchant-starting wait %d/%d: SSH TRANSPORT LOST — %v", attempt, startingAttempts, err))
+				failTransportLost(job, 11, req.IP, err)
+				return
+			}
+			listening, healthBody = tollgateHealthProbe(client)
+			state = merchantState(healthBody)
+			if state == merchantHealthy {
+				healthOK = true
+				job.addLog(fmt.Sprintf("Merchant finished starting on attempt %d", attempt))
+				break
+			}
+			if attempt%5 == 0 {
+				job.addLog(fmt.Sprintf("Merchant still starting (%d/%d)...", attempt, startingAttempts))
+			}
 		}
 	}
 	if healthOK {
 		job.addLog("Health check passed — TollGate API responding")
 		job.setStep(11, "done", "API healthy on :2121")
+	} else if state == merchantStarting {
+		// The install has succeeded and the API is up; the merchant is simply not
+		// advertising yet. Do NOT fail — record the non-fatal PENDING state, but
+		// fall through to the credential tail first (below), so the operator can
+		// still log in to the router.
+		diag := tollgateDiagnostics(client, listening, healthBody)
+		job.addLog("Merchant still starting after the wait budget; the install has succeeded.\n" + diag)
+		pendingNote = "TollGate is installed and its API is up on :2121, but the merchant is still loading its wallet\n" +
+			"and mint health, so it is not advertising a price yet.\n\n" +
+			"This is a slow start, NOT a failed install — the package is installed and the service is running.\n" +
+			"The board and the captive portal come up as soon as the merchant finishes: use Re-check, or wait a\n" +
+			"few minutes and reload the board. If it stays pending, trim `accepted_mints` to two or three\n" +
+			"reachable mints and re-run, or check the router's uplink.\n" + diag
 	} else {
 		diag := tollgateDiagnostics(client, listening, healthBody)
 		job.addLog("Health check FAILED. Diagnostics:\n" + diag)
@@ -1985,7 +2035,8 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		// exit that restores the snapshot.
 		if listening {
 			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate API up but no advertisement",
-				"TollGate API is UP on :2121 but returned no pricing advertisement — the merchant is degraded (mint/wallet not ready), not down.\n"+diag)
+				"TollGate API is UP on :2121 but returned neither a pricing advertisement nor a starting\n"+
+					"refusal (an empty or unreadable body — the money path is not answering).\n"+diag)
 		} else {
 			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate service not listening on :2121",
 				"The tollgate-wrt service is NOT listening on :2121 (crash-looping or still initializing).\n"+diag)
@@ -2010,6 +2061,13 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	// credential and leaves the private AP DISABLED until a passphrase exists, so
 	// this is what actually brings the management SSID up.
 	applyPrivateWiFiPassphrase(job, client, req)
+
+	if pendingNote != "" {
+		// Installed, reachable, credential applied — only the merchant is late.
+		job.addLog("Deploy complete — the router is installed and reachable; the merchant is still starting.")
+		jobPending(job, 11, "merchant starting (wallet/mints still loading)", pendingNote)
+		return
+	}
 
 	job.mu.Lock()
 	job.Status = "done"
@@ -2148,6 +2206,32 @@ func jobFail(job *Job, step int, stepDetail, jobErr string) {
 	job.mu.Lock()
 	job.Status = "failed"
 	job.Error = jobErr
+	job.mu.Unlock()
+}
+
+// jobPending ends a job in the NON-fatal "pending" state: the install succeeded
+// and the money path is up, but the merchant is still starting (loading its
+// wallet from the configured mints), so no price is advertised yet. The step is
+// marked "warn" (amber, not red) and a Note carries the operator message. It is
+// deliberately NOT a failure: re-keying the root credential already happened
+// and later steps are simply not reached until the merchant is up.
+func jobPending(job *Job, step int, stepDetail, note string) {
+	if job == nil {
+		return
+	}
+	job.setStep(step, "warn", stepDetail)
+	job.mu.Lock()
+	for i := range job.Steps {
+		if i == step {
+			continue
+		}
+		if job.Steps[i].Status == "pending" || job.Steps[i].Status == "running" {
+			job.Steps[i].Status = "skipped"
+			job.Steps[i].Detail = "not reached — the merchant is still starting"
+		}
+	}
+	job.Status = "pending"
+	job.Note = note
 	job.mu.Unlock()
 }
 
@@ -2328,10 +2412,12 @@ func failTransportLost(job *Job, step int, ip string, err error) {
 }
 
 // tollgateHealthProbe checks the TollGate API from the ROUTER's own shell:
-// whether :2121 is listening, and the first bytes of GET /. It never fails —
-// a closed port yields listening=false and an empty body.
+// whether :2121 is listening, and the first bytes of GET /. It captures the
+// response HEADERS too (wget -S, merged) so a 503 "starting" refusal is visible
+// even when its body is not read. It never fails — a closed port yields
+// listening=false and an empty body.
 func tollgateHealthProbe(client *ssh.Client) (listening bool, body string) {
-	out := sshRun(client, "netstat -ltn 2>/dev/null | grep -q ':2121' && echo LISTEN || echo NOLISTEN; echo '~~'; wget -qO- --timeout=3 http://127.0.0.1:2121/ 2>/dev/null | head -c 400")
+	out := sshRun(client, "netstat -ltn 2>/dev/null | grep -q ':2121' && echo LISTEN || echo NOLISTEN; echo '~~'; wget -S -qO- --timeout=3 http://127.0.0.1:2121/ 2>&1 | head -c 600")
 	listening = strings.Contains(out, "LISTEN") && !strings.Contains(out, "NOLISTEN")
 	if i := strings.Index(out, "~~"); i >= 0 {
 		body = strings.TrimSpace(out[i+2:])
@@ -2344,6 +2430,38 @@ func tollgateHealthProbe(client *ssh.Client) (listening bool, body string) {
 // response.
 func adLooksHealthy(body string) bool {
 	return strings.Contains(body, "kind") || strings.Contains(body, "metric") || strings.Contains(body, "pubkey")
+}
+
+// The three states a listening :2121 can be in, per a single probe.
+const (
+	merchantHealthy  = "healthy"
+	merchantStarting = "starting"
+	merchantUnknown  = "unknown"
+)
+
+// merchantState classifies one GET / probe of the payment API.
+//
+//   - healthy  — the NIP-61 advertisement came back (the merchant is up).
+//   - starting — the module's OWN explicit "starting" refusal: while it builds
+//     the wallet it answers `503 {"code":"starting",...}` (src/startup_gate.go).
+//     This is not a failure — the API is up and the money path will open — so
+//     the gate waits rather than blaming the router. The probe captures the
+//     response headers (`wget -S`), so the 503 status line is matched too: a
+//     body we could not read but a status that says 503 is still "starting",
+//     never "down".
+//   - unknown  — anything else (empty, garbage): the caller keeps the hard
+//     failure for this, because it is what a crash-loop / dead service looks
+//     like.
+func merchantState(body string) string {
+	if adLooksHealthy(body) {
+		return merchantHealthy
+	}
+	low := strings.ToLower(body)
+	if strings.Contains(low, `"starting"`) || strings.Contains(low, "still starting") ||
+		strings.Contains(low, "starting up") || strings.Contains(low, "503 service unavailable") {
+		return merchantStarting
+	}
+	return merchantUnknown
 }
 
 // tollgateDiagnostics gathers router-side state after a failed health check so
