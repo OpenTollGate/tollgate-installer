@@ -98,13 +98,20 @@ func TestResolveFeedTagWithChannel(t *testing.T) {
 		t.Errorf("malformed channel must not call fetch (calls=%d)", calls)
 	}
 
-	// Unset everything -> default, no network.
+	// Nothing pinned -> resolve the DEFAULT channel (alpha = newest release
+	// candidate) over the network, so an out-of-the-box run tracks the newest RC
+	// with no configuration.
 	calls = 0
-	if got := resolveFeedTagWithChannel(func(string) string { return "" }, fetch); got != feedReleaseTagDefault {
-		t.Errorf("unset env: got %q, want default %q", got, feedReleaseTagDefault)
+	if got := resolveFeedTagWithChannel(func(string) string { return "" }, fetch); got != "v0.6.0-alpha2-pre12" {
+		t.Errorf("unset env: got %q, want the resolved default-channel tag v0.6.0-alpha2-pre12", got)
 	}
-	if calls != 0 {
-		t.Errorf("unset env must not call fetch (calls=%d)", calls)
+	if calls != 1 {
+		t.Errorf("unset env must resolve the default channel exactly once (calls=%d)", calls)
+	}
+
+	// ...and a resolution failure (offline) falls back to the compiled default.
+	if got := resolveFeedTagWithChannel(func(string) string { return "" }, func(string) string { return "" }); got != feedReleaseTagDefault {
+		t.Errorf("unset env with a failed resolve: got %q, want default %q", got, feedReleaseTagDefault)
 	}
 
 	// nil getenv is safe.

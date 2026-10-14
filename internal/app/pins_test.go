@@ -54,57 +54,53 @@ var forbiddenDeployIdentifiers = []string{
 	"20-nds-enforce.nft",
 }
 
-// wantFeedReleaseTag is the feed release tag the wizard selects by default:
-// the NEWEST published pre-release of tollgate-module-basic-go's feed build
-// (v0.6.0-rc1-pre26 — module pin 8b9ba86e, PKG_HASH b439a433). Bumping the
-// code's feedReleaseTagDefault without bumping this literal (and the per-arch
-// names in TestFeedAssetURL) fails TestFeedReleaseIdentityIsPinned — that is
-// what makes a repin auditable instead of a silent literal swap. A stale pin is
-// not merely a missed fix: it DOWNGRADES a router already on a newer build.
-const wantFeedReleaseTag = "v0.6.0-rc1-pre26"
+// wantFeedReleaseTag is the COMPILED default feed release tag (the offline
+// fallback) — the newest published release candidate at the last repin. The
+// wizard does NOT rely on this at runtime: by default it resolves the newest
+// release candidate through the feed channel (see resolveFeedTagWithChannel /
+// feedChannelDefault), so a directly-run binary tracks the newest RC with no
+// configuration. Bumping feedReleaseTagDefault without bumping this literal
+// fails TestFeedReleaseIdentityIsPinned — that keeps a repin auditable. A stale
+// pin is not merely a missed fix: it DOWNGRADES a router already on a newer
+// build.
+const wantFeedReleaseTag = "v0.6.0-rc5"
 
 // wantFeedPkgVersion is wantFeedReleaseTag in the feed's PKG_VERSION spelling:
 // leading "v" dropped, hyphens turned into underscores (apk-tools 3.x rejects
 // hyphens in versions). The installed package reports this as
-// "0.6.0_rc1_pre26-r1" — note it is NOT the string the binary reports about
-// itself (see docs/package-provenance.md).
-const wantFeedPkgVersion = "0.6.0_rc1_pre26"
+// "0.6.0_rc5-r1" — note it is NOT the string the binary reports about itself
+// (see docs/package-provenance.md).
+const wantFeedPkgVersion = "0.6.0_rc5"
 
 // wantTollgatePkgURL is the exact release asset pinned by the wizard.
-// The v0.6.0-rc1-pre26 release of FreedomTechFeed/packages ships the
-// tollgate-wrt package for the aarch64_cortex-a53 target (feed-primary).
+// The v0.6.0-rc5 release of FreedomTechFeed/packages ships the tollgate-wrt
+// package for the aarch64_cortex-a53 target (feed-primary).
 // It is DERIVED from feedAssetURL so it can never drift from the generic
 // URL builder — this test pins the derivation, not a literal.
-const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc1-pre26/tollgate-wrt_0.6.0_rc1_pre26_aarch64_cortex-a53.ipk"
+const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc5/tollgate-wrt_0.6.0_rc5_aarch64_cortex-a53.ipk"
 
-// feedReleasePublishedArches is the arch matrix the pinned feed release
-// actually publishes: 7 tuples × {.ipk, .apk} = the 14 assets on
-// v0.6.0-alpha2-pre3. This is a TEST FIXTURE describing one release, not a
-// runtime allowlist — feedAssetURL stays generic on purpose, so an arch the
-// feed adds later works without a code change. It is also deliberately NOT
-// the set of tuples normalizeBareArch can emit: "aarch64_generic" is absent
-// from the feed matrix, so a router reporting that tuple resolves to a URL
-// that 404s rather than silently installing a different arch's package.
+// feedReleasePublishedArches is the arch matrix the current feed RC actually
+// publishes: 2 tuples × {.ipk, .apk} = the 4 tollgate-wrt assets on
+// v0.6.0-rc5. Earlier pre-releases published a wider matrix (7 tuples); the RC
+// line currently builds aarch64_cortex-a53 + mips_24kc. This is a TEST FIXTURE
+// describing one release, not a runtime allowlist — feedAssetURL stays generic
+// on purpose, so an arch the feed adds later works without a code change. It is
+// also deliberately NOT the set of tuples normalizeBareArch can emit: an arch
+// absent from the feed matrix resolves to a URL that 404s rather than silently
+// installing a different arch's package.
 var feedReleasePublishedArches = []string{
 	"aarch64_cortex-a53",
-	"aarch64_cortex-a72",
-	"arm_cortex-a7",
-	"mips64_octeonplus",
-	"mipsel_24kc",
 	"mips_24kc",
-	"x86_64",
 }
 
 // TestTollgatePkgURLPinsExistingAsset pins the package download URL to the
 // exact asset that exists on the currently selected feed release. Any
-// intentional repin (e.g. moving to a newer pre-release) must update this test
-// in the same commit — that is what makes the pin auditable.
+// intentional repin (e.g. moving to a newer release candidate) must update this
+// test in the same commit — that is what makes the pin auditable.
 func TestTollgatePkgURLPinsExistingAsset(t *testing.T) {
-	if tollgatePkgURL != wantTollgatePkgURL {
-		t.Errorf("tollgatePkgURL =\n  %q\nwant\n  %q", tollgatePkgURL, wantTollgatePkgURL)
-	}
 	// The value must be derived from the generic builder, not a hardcoded
-	// literal — otherwise the two sources of truth can drift.
+	// literal — otherwise the two sources of truth can drift. These assertions
+	// hold for whatever tag the wizard resolved, so they never depend on the pin.
 	if tollgatePkgURL != feedAssetURL("aarch64_cortex-a53", ".ipk") {
 		t.Errorf("tollgatePkgURL = %q, want feedAssetURL(aarch64_cortex-a53, .ipk) = %q",
 			tollgatePkgURL, feedAssetURL("aarch64_cortex-a53", ".ipk"))
@@ -113,30 +109,41 @@ func TestTollgatePkgURLPinsExistingAsset(t *testing.T) {
 		t.Errorf("tollgatePkgAPKURL = %q, want feedAssetURL(aarch64_cortex-a53, .apk) = %q",
 			tollgatePkgAPKURL, feedAssetURL("aarch64_cortex-a53", ".apk"))
 	}
+	// The COMPILED pin's asset spelling (the offline fallback) must be the one
+	// this fixture records: tag and PKG_VERSION in the same URL.
+	pinURL := "https://github.com/" + feedRepoSlug + "/releases/download/" + wantFeedReleaseTag +
+		"/tollgate-wrt_" + wantFeedPkgVersion + "_aarch64_cortex-a53.ipk"
+	if pinURL != wantTollgatePkgURL {
+		t.Errorf("pin URL spelling = %q, want %q", pinURL, wantTollgatePkgURL)
+	}
 }
 
-// TestFeedReleaseIdentityIsPinned pins the selected release identity: the tag
-// literal, the derived package version, and the URL prefix. The package
-// version is re-derived two ways — through feedPkgVersionForTag and through an
-// independent inline transformation — so a bump that changes the tag without
-// changing the version spelling cannot pass.
+// TestFeedReleaseIdentityIsPinned pins the COMPILED default pin's identity: the
+// tag literal, the derived package version, and the URL prefix derivation. It
+// audits feedReleaseTagDefault (deterministic) rather than the network-resolved
+// feedReleaseTag, so the suite stays stable while the wizard auto-tracks the
+// newest release candidate. The package version is re-derived two ways — through
+// feedPkgVersionForTag and through an independent inline transformation — so a
+// bump that changes the tag without changing the version spelling cannot pass.
 func TestFeedReleaseIdentityIsPinned(t *testing.T) {
-	if feedReleaseTag != wantFeedReleaseTag {
-		t.Errorf("feedReleaseTag = %q, want %q (the tag the feed published for main tip)", feedReleaseTag, wantFeedReleaseTag)
+	if feedReleaseTagDefault != wantFeedReleaseTag {
+		t.Errorf("feedReleaseTagDefault = %q, want %q (the compiled offline-fallback pin)", feedReleaseTagDefault, wantFeedReleaseTag)
 	}
-	if got := feedPkgVersion(); got != wantFeedPkgVersion {
-		t.Errorf("feedPkgVersion() = %q, want %q (tag %q in PKG_VERSION form)", got, wantFeedPkgVersion, feedReleaseTag)
-	}
-	if got := feedPkgVersionForTag(feedReleaseTag); got != wantFeedPkgVersion {
-		t.Errorf("feedPkgVersionForTag(%q) = %q, want %q", feedReleaseTag, got, wantFeedPkgVersion)
+	if got := feedPkgVersionForTag(feedReleaseTagDefault); got != wantFeedPkgVersion {
+		t.Errorf("feedPkgVersionForTag(%q) = %q, want %q", feedReleaseTagDefault, got, wantFeedPkgVersion)
 	}
 	// Independent re-derivation: if feedPkgVersionForTag were ever changed to
 	// something other than "strip v, hyphen → underscore", this disagrees.
-	wantDerived := strings.ReplaceAll(strings.TrimPrefix(feedReleaseTag, "v"), "-", "_")
+	wantDerived := strings.ReplaceAll(strings.TrimPrefix(feedReleaseTagDefault, "v"), "-", "_")
 	if wantDerived != wantFeedPkgVersion {
-		t.Errorf("independent derivation of %q = %q, want %q", feedReleaseTag, wantDerived, wantFeedPkgVersion)
+		t.Errorf("independent derivation of %q = %q, want %q", feedReleaseTagDefault, wantDerived, wantFeedPkgVersion)
 	}
-	wantPrefix := "https://github.com/" + feedRepoSlug + "/releases/download/" + wantFeedReleaseTag + "/"
+	// The effective (resolved) tag stays self-consistent: its PKG_VERSION
+	// spelling is what feedPkgVersion() returns, and the URL prefix uses it.
+	if got := feedPkgVersionForTag(feedReleaseTag); got != feedPkgVersion() {
+		t.Errorf("feedPkgVersionForTag(%q) = %q, want feedPkgVersion() = %q", feedReleaseTag, got, feedPkgVersion())
+	}
+	wantPrefix := "https://github.com/" + feedRepoSlug + "/releases/download/" + feedReleaseTag + "/"
 	if got := feedReleaseURLPrefix(); got != wantPrefix {
 		t.Errorf("feedReleaseURLPrefix() = %q, want %q", got, wantPrefix)
 	}
