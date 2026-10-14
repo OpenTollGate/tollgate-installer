@@ -30,6 +30,8 @@ GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, [§A.4](#a4-ar300m
 merged manual install, and the post-install board + payment —
 [watch all](https://blossom2.orangesync.tech/f0329daccf09d71413f86ada64bc9abc2ffa88bb0ea3f20fa9365ca24cb43d8e.html).
 
+**Watch (what rc5 + rc28 fix):** [what release candidate `v0.6.0-rc5` + installer `rc28` fix](https://blossom2.orangesync.tech/9b44dbc1d9ddb0bd98a4a32460105148ed4c6e096efd0a861b3562dc16d07bfc.mp4) (2:27 — bounded mint registration under a *hanging* mint, the board as the default face, the private-subnet recheck, and the installer's pending/`password_status` behaviour; real captures from the fleet serial routers on rc5). Then: [manual install — both lanes](https://blossom2.orangesync.tech/fa844a207ee826cdffce1a76b0b599a5cbe6fe28705e3c669c2a2be854f466b5.mp4) (4:47) · [wizard — both lanes](https://blossom2.orangesync.tech/cd97f49c315eb3f0c050d98767399c3f41b42541b2c083c0c09951bc2786cebb.mp4) (3:52).
+
 ---
 
 ## 0. Resolve the release under test (first)

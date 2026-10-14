@@ -38,8 +38,8 @@ installer-specific concrete lane.
 | `PORTAL_URL` | `tail-payment.mjs` | the real captive portal splash |
 | `BOARD_HOST` / `BOARD_IP` | `tail-admin2.mjs` | the board hostname + its address (Chrome `--host-resolver-rules`) |
 
-`tag.txt` / `ver.txt` pin the **release under test** (e.g. `v0.6.0-rc4` /
-`0.6.0_rc4`); the terminal films interpolate them.
+`tag.txt` / `ver.txt` pin the **release under test** (e.g. `v0.6.0-rc5` /
+`0.6.0_rc5`); the terminal films interpolate them.
 
 ## The films
 
@@ -48,6 +48,7 @@ installer-specific concrete lane.
 | `terminal-film.mjs` | the S1–S5 terminal walkthroughs (headless, `.apk`, `.ipk`, offline, flash) | **scripted** — byte-reproducible, no router |
 | `record-wizard.mjs` | the wizard UI walkthrough | needs the wizard UI (`WIZ_URL`) |
 | `i1-film.mjs` | I1 — flash+uplink + merged `.apk`/`.ipk` install | **scripted** content mirroring the real captures in `../real/` |
+| `rc-fixes.mjs` | **What rc5 + rc28 fix** — bounded mint registration under a hanging mint (#940), the board as the default face (`entry_ui`), the private-subnet recheck (#926), the installer's pending/`password_status` (rc28) | **scripted** content mirroring the real fleet-router captures (2026-10-14, rc5 / `cf7cad34`) |
 | `i2-wizard-gui.mjs` | I2 — wizard GUI | needs the wizard UI |
 | `i2-headless.mjs` | I2 — headless | scripted |
 | `tail-payment.mjs` | tail — captive portal (Cashu + Lightning) | **real router** (`PORTAL_URL`) |
