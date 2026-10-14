@@ -55,6 +55,12 @@ type RouterInfo struct {
 	// "unverified host on your LAN — answers :22" style label and sorts after
 	// the identified ones. It is never empty for a scanned candidate.
 	Note string `json:"note,omitempty"`
+	// PasswordStatus is the machine-readable verdict for the wizard's password
+	// field (see passwordStatus): accepted | refused | missing | untrusted |
+	// unreachable | unknown. It is set by /api/identify, which is the path the
+	// operator's typed password takes. The UI shows it as a tick beside the
+	// field. Empty when the request did not carry a password (a plain scan).
+	PasswordStatus string `json:"password_status,omitempty"`
 }
 
 // sshProbePort is the TCP port that decides whether a host answers SSH. It is a

@@ -275,6 +275,7 @@
           <svg class="pw-icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
         </button>
       </div>
+      <div class="hint" id="password-status" role="status" aria-live="polite" style="margin-top:0.35rem;"></div>
     </div>
     <div class="field">
       <label>Upstream connection</label>
@@ -416,6 +417,18 @@
       </div>
       <p class="hint" id="copy-generated-status" role="status"></p>
       <p class="hint" id="generated-credential-file" role="status"></p>
+    </div>
+  </div>
+
+  <!-- Pending View — installed and up, but the merchant is still starting.
+       NON-fatal: the package is installed and the API is running; only the
+       wallet/mint health is still loading, so no price is advertised yet. -->
+  <div id="pending-view" class="card hidden">
+    <div class="error-msg" style="border-left:4px solid #f6ad55; text-align:left;">
+      <h2 style="color:#f6ad55;">TollGate installed — the merchant is still starting</h2>
+      <p id="pending-detail" style="margin-top:0.5rem; white-space:pre-wrap;"></p>
+      <button class="btn" style="margin-top:1rem;" id="recheck-btn" onclick="recheck()">Re-check</button>
+      <p class="hint" id="recheck-status" role="status" style="margin-top:0.6rem;"></p>
     </div>
   </div>
 
@@ -1301,6 +1314,50 @@ function showCredentialFile(path) {
   }
 }
 
+// showPending reveals the NON-fatal pending view: the deploy installed the
+// package and the API is up, but the merchant is still loading its wallet, so
+// no price is advertised yet. Re-check re-probes without re-deploying.
+function showPending(note) {
+  const el = document.getElementById('pending-detail');
+  if (el) el.textContent = note || 'The merchant is still loading its wallet and mint health.';
+  const v = document.getElementById('pending-view');
+  if (v) v.classList.remove('hidden');
+}
+
+// recheck re-probes the deployed router's payment API (read-only). "healthy"
+// means the merchant finished starting — reveal the success view. Anything else
+// keeps the pending view and says what it saw.
+async function recheck() {
+  const btn = document.getElementById('recheck-btn');
+  const st = document.getElementById('recheck-status');
+  if (btn) btn.disabled = true;
+  if (st) { st.textContent = 'Re-checking the router...'; st.style.color = '#8892b0'; }
+  try {
+    const resp = await fetch('/api/recheck', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: selectedRouterIP(), password: document.getElementById('password').value }),
+    });
+    const info = await resp.json().catch(() => ({}));
+    if (info && info.state === 'healthy') {
+      if (st) { st.textContent = 'The merchant is up — the board and the captive portal are live.'; st.style.color = 'var(--tg-green)'; }
+      setTimeout(() => {
+        document.getElementById('pending-view').classList.add('hidden');
+        document.getElementById('success-view').classList.remove('hidden');
+      }, 1200);
+    } else if (info && info.state === 'starting') {
+      if (st) { st.textContent = 'Still starting — give it another minute, then Re-check again.'; st.style.color = '#f6ad55'; }
+    } else if (info && info.error) {
+      if (st) { st.textContent = info.error; st.style.color = '#ff8a80'; }
+    } else {
+      if (st) { st.textContent = 'Could not reach the router — it may still be coming up.'; st.style.color = '#f6ad55'; }
+    }
+  } catch (e) {
+    if (st) { st.textContent = 'Re-check failed: ' + e.message; st.style.color = '#ff8a80'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // ensureRouterHostKeyTrusted folds the host-key decision into whatever action
 // needs the router's password, so trusting is not a separate errand the operator
 // has to notice and perform. It returns false ONLY when the action must not
@@ -1482,6 +1539,7 @@ async function refreshRouterName() {
       }
     }
     showTrustHint(r || info);
+    renderPasswordStatus(info.password_status);
     const opt = Array.from(document.getElementById('router-select').options).find(o => o.value === ip);
     if (opt) {
       opt.textContent = formatRouterLabel(r || info);
@@ -1489,6 +1547,29 @@ async function refreshRouterName() {
       if (meta) opt.title = meta;
     }
   } catch (e) { /* identification is best-effort */ }
+}
+
+// renderPasswordStatus shows, beside the password field, whether the typed root
+// password was ACCEPTED by the router. It is driven by /api/identify's
+// password_status (the same connect outcome describeSSHConnectFailure explains):
+// a green tick means the password works, a red cross means it was refused, amber
+// means the router's host key is not trusted (trust it to send the password),
+// and a grey dot means the router is not reachable over SSH yet.
+function renderPasswordStatus(status) {
+  const el = document.getElementById('password-status');
+  if (!el) return;
+  const map = {
+    accepted:    ['\u2713', '#4ade80', 'Router password accepted.'],
+    refused:     ['\u2717', '#ff8a80', 'Wrong router password \u2014 the router refused the login.'],
+    missing:     ['\u2717', '#ff8a80', 'This router needs a root password (it refused an empty one).'],
+    untrusted:   ['\u26A0', '#f6ad55', 'Router host key not trusted \u2014 trust it, then the password is checked.'],
+    unreachable: ['\u25CF', '#8892b0', 'Router not reachable over SSH yet \u2014 check the address and cable.'],
+    unknown:     ['\u25CF', '#8892b0', 'Could not verify the password yet.'],
+  };
+  const m = map[status];
+  if (!m) { el.textContent = ''; return; }
+  el.textContent = m[0] + ' ' + m[2];
+  el.style.color = m[1];
 }
 
 function scanAgain() {
@@ -1798,6 +1879,12 @@ async function pollStatus(jobId) {
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
       showError(job.error || 'Unknown error. Check the log above.');
+    }, 1500);
+  } else if (job.status === 'pending') {
+    clearInterval(pollTimer);
+    setTimeout(() => {
+      document.getElementById('deploy-view').classList.add('hidden');
+      showPending(job.note);
     }, 1500);
   }
 }

@@ -170,11 +170,16 @@ type LogEntry struct {
 type Job struct {
 	mu     sync.Mutex
 	IP     string     `json:"ip"`
-	Status string     `json:"status"` // running | done | failed
+	Status string     `json:"status"` // running | done | failed | pending
 	Step   int        `json:"step"`
 	Steps  []Step     `json:"steps"`
 	Log    []LogEntry `json:"log"`
 	Error  string     `json:"error,omitempty"`
+	// Note is a NON-fatal operator message for a job that ended in a state other
+	// than a clean done — today only "pending" (the merchant is still loading its
+	// wallet/mints; the install succeeded and the money path will open). Rendered
+	// as an amber banner, never as an error. Guarded by mu.
+	Note string `json:"note,omitempty"`
 	// generatedPassword is set ONLY when the router had no root credential
 	// and none was supplied, so the deploy had to create one (see
 	// ensureRootCredential). It is served to the operator ONCE, on the first
@@ -455,6 +460,49 @@ type identifyRequest struct {
 	Password string `json:"password"`
 }
 
+// recheckRequest is the JSON body for /api/recheck.
+type recheckRequest struct {
+	IP       string `json:"ip"`
+	Password string `json:"password"`
+}
+
+// handleRecheck re-probes the payment API on an ALREADY-DEPLOYED router and says
+// whether the merchant has finished starting. It is the action behind the
+// pending state's Re-check button: the deploy ended "pending" (the install
+// succeeded, the merchant was still loading its wallet), and the operator wants
+// to know whether it is up now WITHOUT re-running the whole deploy. Read-only:
+// one SSH connect and one GET / probe; it never changes the router.
+func handleRecheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var req recheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+	if req.IP == "" {
+		writeError(w, 400, "IP required")
+		return
+	}
+	client := sshConnect(req.IP, req.Password)
+	if client == nil && req.Password != "" {
+		client = sshConnect(req.IP, "")
+	}
+	if client == nil {
+		writeRouterDialFailure(w, req.IP, "", "cannot connect to router via SSH")
+		return
+	}
+	defer client.Close()
+	listening, body := tollgateHealthProbe(client)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"state":     merchantState(body),
+		"listening": listening,
+	})
+}
+
 // handleIdentify re-identifies a router (vendor/model/firmware/name) using the
 // supplied root password. The LAN scan only tries passwordless SSH, so a
 // password-protected router shows as "Router" until the operator types the
@@ -489,6 +537,10 @@ func handleIdentify(w http.ResponseWriter, r *http.Request) {
 	info.Source = sourceManual
 	info.Identified, info.Note = classifyProbed(info)
 	info.Name = friendlyRouterName(info)
+	// The machine-readable verdict for the password field: this handler is the
+	// path the operator's TYPED root password takes, so its connect outcome is
+	// exactly "did the password work".
+	info.PasswordStatus = passwordStatus(req.IP)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
 }
@@ -1860,6 +1912,7 @@ func Main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/scan", handleScan)
 	mux.HandleFunc("/api/identify", handleIdentify)
+	mux.HandleFunc("/api/recheck", handleRecheck)
 	mux.HandleFunc("/api/trust-host-key", handleTrustHostKey)
 	mux.HandleFunc("/api/wifi-scan", handleWifiScan)
 	mux.HandleFunc("/api/wifi-test", handleWifiTest)

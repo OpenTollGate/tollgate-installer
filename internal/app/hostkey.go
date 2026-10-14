@@ -455,6 +455,44 @@ func describeSSHConnectFailure(ip string) string {
 	}
 }
 
+// passwordStatus derives a MACHINE-READABLE verdict for the wizard's password
+// field from the same evidence describeSSHConnectFailure explains in prose. The
+// UI renders it as a tick beside the field, so the operator knows the moment
+// they type whether the root password was accepted.
+//
+//	accepted    — the connect succeeded (the router answered with this password)
+//	refused     — auth refused WITH a password supplied (the password is wrong)
+//	missing     — auth refused with NO password supplied (a protected router)
+//	untrusted   — the host key is not trusted, so no credential was sent
+//	unreachable — the dial failed (no SSH / timeout / no route)
+//	unknown     — a failure we do not map
+func passwordStatus(ip string) string {
+	if lastHostKeyRefusal(ip) != "" {
+		return "untrusted"
+	}
+	err, passwordSupplied := lastSSHConnectError(ip)
+	if err == nil {
+		// A successful connect forgets the recorded failure, so nothing recorded
+		// after an attempt means it worked.
+		return "accepted"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "unable to authenticate"):
+		if passwordSupplied {
+			return "refused"
+		}
+		return "missing"
+	case strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "i/o timeout"),
+		strings.Contains(msg, "no route to host"),
+		strings.Contains(msg, "network is unreachable"):
+		return "unreachable"
+	default:
+		return "unknown"
+	}
+}
+
 // storeDescription names the store in operator-facing text.
 func storeDescription(path string) string {
 	if path == "" {
