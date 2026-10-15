@@ -43,16 +43,26 @@ installer-specific concrete lane.
 
 ## The films
 
+Read the recorder before wiring hardware: if it never does `page.goto(<router>)` it
+is **scripted** — no router, no tunnel, no firewall hole.
+
 | File | Film | Determinism |
 |---|---|---|
 | `terminal-film.mjs` | the S1–S5 terminal walkthroughs (headless, `.apk`, `.ipk`, offline, flash) | **scripted** — byte-reproducible, no router |
 | `record-wizard.mjs` | the wizard UI walkthrough | needs the wizard UI (`WIZ_URL`) |
 | `i1-film.mjs` | I1 — flash+uplink + merged `.apk`/`.ipk` install | **scripted** content mirroring the real captures in `../real/` |
-| `rc-fixes.mjs` | **What rc5 + rc28 fix** — bounded mint registration under a hanging mint (#940), the board as the default face (`entry_ui`), the private-subnet recheck (#926), the installer's pending/`password_status` (rc28) | **scripted** content mirroring the real fleet-router captures (2026-10-14, rc5 / `cf7cad34`) |
+| `rc-fixes.mjs` | **What the rc6 line fixes** — target-qualified asset naming + the widened 8-target matrix (`mipsel_24kc`→`ramips-mt7621`, `arm_cortex-a7`→`arm_cortex-a7_neon-vfpv4`; `aarch64_generic` deliberately parked), bounded mint registration under a hanging mint (#940), the board as the default face (`entry_ui`), the private-subnet recheck (#926), the installer's pending/`password_status` (rc28) | **scripted** content mirroring the real fleet-router captures |
 | `i2-wizard-gui.mjs` | I2 — wizard GUI | needs the wizard UI |
 | `i2-headless.mjs` | I2 — headless | scripted |
-| `tail-payment.mjs` | tail — captive portal (Cashu + Lightning) | **real router** (`PORTAL_URL`) |
-| `tail-admin2.mjs` | tail — admin board (dashboard → wallet → wifi → settings → Drain) | **real router** (`BOARD_HOST`) |
+| `tail-payment.mjs` | tail — captive portal (Cashu + Lightning) | **router-driven** (`PORTAL_URL`) — run on the LAN-side host |
+| `tail-admin2.mjs` | tail — admin board (dashboard → wallet → wifi → settings → Drain) | **router-driven** (`BOARD_HOST`) — run on the LAN-side host |
+
+The **router-driven** films record against the live box, so they must run on a
+host **on the router's LAN/management side** (for the fleet, the gateway
+`cobrador`), addressed via the **management-net IP** — *not* the flashed LAN IP,
+and *not* via an SSH tunnel or a temporary firewall accept. See the PRTA
+[bench-lab runbook](https://github.com/OpenTollGate/physical-router-test-automation/blob/main/docs/RUNBOOK-bench-lab.md#reaching-a-tollgate-installed-box-post-install-address).
+They are documented, not hermetic.
 
 Helpers: `sercap.py` (a robust serial-console transcript for the real flash
 takes), `film-check.py` (validates the published artifacts: URLs, caption
