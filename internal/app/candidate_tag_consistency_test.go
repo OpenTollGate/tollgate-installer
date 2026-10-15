@@ -66,7 +66,7 @@ func TestPkgCandidateURLsNeverCrossTags(t *testing.T) {
 		feedReleaseTag = tag
 		for _, arch := range arches {
 			for _, ext := range []string{".ipk", ".apk"} {
-				got := pkgCandidateURLs(arch, ext)
+				got := pkgCandidateURLs(arch, testTargetFor(arch), ext)
 				if len(got) != 1 {
 					t.Errorf("pkgCandidateURLs(%q, %q) with feedReleaseTag=%s = %v, want exactly the feed URL (the list must not cross tags)",
 						arch, ext, tag, got)
@@ -83,7 +83,7 @@ func TestPkgCandidateURLsNeverCrossTags(t *testing.T) {
 					// The asset name must carry the version derived from the
 					// SAME tag the URL path names, so the two spellings cannot
 					// drift apart within one candidate.
-					if want := "tollgate-wrt_" + feedPkgVersionForTag(tag) + "_" + arch + ext; !strings.HasSuffix(u, want) {
+					if want := "tollgate-wrt_" + feedPkgVersionForTag(tag) + "_" + arch + "-" + testTargetFor(arch) + ext; !strings.HasSuffix(u, want) {
 						t.Errorf("candidate %q does not end with %q", u, want)
 					}
 				}
@@ -94,7 +94,7 @@ func TestPkgCandidateURLsNeverCrossTags(t *testing.T) {
 	// Restoring the tag must restore the derived candidate to the pinned
 	// release (no captured/stale tag anywhere).
 	feedReleaseTag = orig
-	if got := pkgCandidateURLs("aarch64_cortex-a53", ".ipk"); len(got) != 1 || releaseTagFromURL(got[0]) != orig {
+	if got := pkgCandidateURLs("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk"); len(got) != 1 || releaseTagFromURL(got[0]) != orig {
 		t.Errorf("after restoring feedReleaseTag=%s: candidates = %v", orig, got)
 	}
 }
@@ -115,7 +115,7 @@ func TestPkgCandidateURLsWithFallbackOptInIsExplicit(t *testing.T) {
 
 	// Not opted in: the list stays tag-consistent and the refusal explains why,
 	// naming the requested tag, the arch and the version it refuses to install.
-	list, err := pkgCandidateURLsWithFallback(arch, ".ipk", false)
+	list, err := pkgCandidateURLsWithFallback(arch, testTargetFor(arch), ".ipk", false)
 	if err == nil {
 		t.Fatalf("pkgCandidateURLsWithFallback(allowFallback=false) = (%v, nil), want a refusal", list)
 	}
@@ -135,11 +135,11 @@ func TestPkgCandidateURLsWithFallbackOptInIsExplicit(t *testing.T) {
 
 	// Opted in: the fallback is appended, and it is a DIFFERENT release than
 	// the requested tag — that is exactly why the opt-in is required.
-	list, err = pkgCandidateURLsWithFallback(arch, ".ipk", true)
+	list, err = pkgCandidateURLsWithFallback(arch, testTargetFor(arch), ".ipk", true)
 	if err != nil {
 		t.Fatalf("pkgCandidateURLsWithFallback(allowFallback=true) = %v", err)
 	}
-	if len(list) != 2 || list[0] != feedAssetURL(arch, ".ipk") || list[1] != fbIPK {
+	if len(list) != 2 || list[0] != feedAssetURL(arch, testTargetFor(arch), ".ipk") || list[1] != fbIPK {
 		t.Fatalf("opted-in candidates = %v, want [feed, fallback]", list)
 	}
 	if releaseTagFromURL(list[1]) == feedReleaseTag {
@@ -147,7 +147,7 @@ func TestPkgCandidateURLsWithFallbackOptInIsExplicit(t *testing.T) {
 	}
 
 	// Opted in for an arch without a fallback: nothing is added, no error.
-	if l, err := pkgCandidateURLsWithFallback("mipsel_24kc", ".ipk", true); err != nil || len(l) != 1 {
+	if l, err := pkgCandidateURLsWithFallback("mipsel_24kc", testTargetFor("mipsel_24kc"), ".ipk", true); err != nil || len(l) != 1 {
 		t.Errorf("pkgCandidateURLsWithFallback(mipsel_24kc, allow=true) = (%v, %v), want the feed list and nil", l, err)
 	}
 }
@@ -167,7 +167,7 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 
 		// Default (no opt-in): feed assets for the effective tag only.
 		t.Setenv(githubFallbackEnv, "")
-		urls, refusal := stageAssetURLsForArch(arch, false, "", "opkg")
+		urls, refusal := stageAssetURLsForArch(arch, testTargetFor(arch), false, "", "opkg")
 		if len(urls) != 1 {
 			t.Errorf("stageAssetURLsForArch(%q) with tag %s = %v, want only the feed asset", arch, tag, urls)
 		}
@@ -202,7 +202,7 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 			}
 		}
 		// Package manager unknown: both formats, still tag-consistent.
-		both, _ := stageAssetURLsForArch(arch, false, "", "")
+		both, _ := stageAssetURLsForArch(arch, testTargetFor(arch), false, "", "")
 		for _, u := range both {
 			if releaseTagFromURL(u) != tag {
 				t.Errorf("staged URL %q names another release than %s", u, tag)
@@ -214,7 +214,7 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 	// accepted still works from the cache.
 	feedReleaseTag = wantFeedReleaseTag
 	t.Setenv(githubFallbackEnv, "1")
-	urls, _ := stageAssetURLsForArch(arch, false, "", "opkg")
+	urls, _ := stageAssetURLsForArch(arch, testTargetFor(arch), false, "", "opkg")
 	found := false
 	for _, u := range urls {
 		if u == fbIPK {
@@ -227,7 +227,7 @@ func TestStageAssetURLsForArchIsTagConsistent(t *testing.T) {
 
 	// An arch with no pinned fallback suppresses nothing, so there is nothing
 	// to report — only the a53 entry exists in the map.
-	if _, refusal := stageAssetURLsForArch("mipsel_24kc", false, "", "opkg"); refusal != nil {
+	if _, refusal := stageAssetURLsForArch("mipsel_24kc", testTargetFor("mipsel_24kc"), false, "", "opkg"); refusal != nil {
 		t.Errorf("stageAssetURLsForArch(mipsel_24kc) reported a suppression with no fallback: %v", refusal)
 	}
 }
@@ -244,7 +244,7 @@ func TestMissingAssetRefusalNamesTagAndArch(t *testing.T) {
 	const arch = "aarch64_cortex-a53"
 	feedReleaseTag = "v0.6.0-alpha2-pre999" // nonexistent by construction
 
-	list, err := pkgCandidateURLsWithFallback(arch, ".ipk", false)
+	list, err := pkgCandidateURLsWithFallback(arch, testTargetFor(arch), ".ipk", false)
 	if err == nil {
 		t.Fatalf("a missing asset for %s produced no refusal: %v", feedReleaseTag, list)
 	}
@@ -345,7 +345,7 @@ func TestStep6SelectionLogKeepsThePreDownloadWording(t *testing.T) {
 		t.Fatalf("no GitHub fallback pinned for %s/.ipk — fixture is stale", arch)
 	}
 
-	candidates, refusal := pkgCandidateURLsWithFallback(arch, ".ipk", githubFallbackAllowed())
+	candidates, refusal := pkgCandidateURLsWithFallback(arch, testTargetFor(arch), ".ipk", githubFallbackAllowed())
 	if refusal == nil || len(candidates) == 0 {
 		t.Fatalf("pkgCandidateURLsWithFallback(%s, .ipk, no opt-in) = (%v, %v), want the feed list plus a refusal",
 			arch, candidates, refusal)
@@ -384,7 +384,7 @@ func TestStep6SelectionLogKeepsThePreDownloadWording(t *testing.T) {
 
 	// Opted in: the line names the version that WILL be installed instead of
 	// the requested one, and still makes no availability claim.
-	opted, err := pkgCandidateURLsWithFallback(arch, ".ipk", true)
+	opted, err := pkgCandidateURLsWithFallback(arch, testTargetFor(arch), ".ipk", true)
 	if err != nil || len(opted) < 2 {
 		t.Fatalf("opted-in candidates = %v, %v; want the feed asset plus the fallback", opted, err)
 	}
@@ -400,7 +400,7 @@ func TestStep6SelectionLogKeepsThePreDownloadWording(t *testing.T) {
 
 	// An arch with no pinned fallback withholds nothing, so there is nothing to
 	// report — and no line may claim otherwise.
-	plain, plainRefusal := pkgCandidateURLsWithFallback("mipsel_24kc", ".ipk", false)
+	plain, plainRefusal := pkgCandidateURLsWithFallback("mipsel_24kc", testTargetFor("mipsel_24kc"), ".ipk", false)
 	if plainRefusal != nil {
 		t.Fatalf("no-fallback arch produced a refusal: %v", plainRefusal)
 	}

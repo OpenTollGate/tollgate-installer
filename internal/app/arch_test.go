@@ -53,25 +53,25 @@ func TestSelectPkgURL(t *testing.T) {
 	// Every known arch resolves to a FEED URL (FreedomTechFeed/packages),
 	// derived from the tuple — including arches NOT in the original 4-tuple map.
 	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7", "riscv64"} {
-		if url, ext, ok := selectPkgURL(arch, "opkg"); !ok {
+		if url, ext, ok := selectPkgURL(arch, testTargetFor(arch), "opkg"); !ok {
 			t.Errorf("selectPkgURL(%q, opkg): ok=%v, want true", arch, ok)
 		} else if ext != ".ipk" {
 			t.Errorf("selectPkgURL(%q, opkg): ext=%q, want .ipk", arch, ext)
-		} else if url != feedAssetURL(arch, ".ipk") {
-			t.Errorf("selectPkgURL(%q, opkg): url=%q, want %q", arch, url, feedAssetURL(arch, ".ipk"))
+		} else if url != feedAssetURL(arch, testTargetFor(arch), ".ipk") {
+			t.Errorf("selectPkgURL(%q, opkg): url=%q, want %q", arch, url, feedAssetURL(arch, testTargetFor(arch), ".ipk"))
 		}
 
-		if url, ext, ok := selectPkgURL(arch, "apk"); !ok {
+		if url, ext, ok := selectPkgURL(arch, testTargetFor(arch), "apk"); !ok {
 			t.Errorf("selectPkgURL(%q, apk): ok=%v, want true", arch, ok)
 		} else if ext != ".apk" {
 			t.Errorf("selectPkgURL(%q, apk): ext=%q, want .apk", arch, ext)
-		} else if url != feedAssetURL(arch, ".apk") {
-			t.Errorf("selectPkgURL(%q, apk): url=%q, want %q", arch, url, feedAssetURL(arch, ".apk"))
+		} else if url != feedAssetURL(arch, testTargetFor(arch), ".apk") {
+			t.Errorf("selectPkgURL(%q, apk): url=%q, want %q", arch, url, feedAssetURL(arch, testTargetFor(arch), ".apk"))
 		}
 	}
 
 	// Empty/undetectable arch must fail.
-	if _, _, ok := selectPkgURL("", "opkg"); ok {
+	if _, _, ok := selectPkgURL("", testTargetFor(""), "opkg"); ok {
 		t.Errorf("selectPkgURL(\"\", opkg) = ok=true, want false (undetectable arch)")
 	}
 }
@@ -95,8 +95,8 @@ func TestFeedAssetURL(t *testing.T) {
 	for _, arch := range feedReleasePublishedArches {
 		for _, ext := range []string{".ipk", ".apk"} {
 			seen++
-			want := prefix + "tollgate-wrt_" + ver + "_" + arch + ext
-			if got := feedAssetURL(arch, ext); got != want {
+			want := prefix + "tollgate-wrt_" + ver + "_" + arch + "-" + testTargetFor(arch) + ext
+			if got := feedAssetURL(arch, testTargetFor(arch), ext); got != want {
 				t.Errorf("feedAssetURL(%q, %q) = %q, want %q", arch, ext, got, want)
 			}
 		}
@@ -113,17 +113,17 @@ func TestFeedAssetURL(t *testing.T) {
 // pkgCandidateURLsWithFallback and candidate_tag_consistency_test.go.
 func TestPkgCandidateURLs(t *testing.T) {
 	// aarch64 (the arch with a pinned GitHub fallback): feed URL only.
-	got := pkgCandidateURLs("aarch64_cortex-a53", ".ipk")
-	want := []string{feedAssetURL("aarch64_cortex-a53", ".ipk")}
+	got := pkgCandidateURLs("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk")
+	want := []string{feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk")}
 	if len(got) != len(want) || got[0] != want[0] {
 		t.Errorf("pkgCandidateURLs(aarch64, .ipk) = %v, want %v (the pinned GitHub fallback is a different release — opt-in only)", got, want)
 	}
 
 	// Non-aarch64: feed only too.
 	for _, arch := range []string{"mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
-		got := pkgCandidateURLs(arch, ".ipk")
-		if len(got) != 1 || got[0] != feedAssetURL(arch, ".ipk") {
-			t.Errorf("pkgCandidateURLs(%q, .ipk) = %v, want [%q]", arch, got, feedAssetURL(arch, ".ipk"))
+		got := pkgCandidateURLs(arch, testTargetFor(arch), ".ipk")
+		if len(got) != 1 || got[0] != feedAssetURL(arch, testTargetFor(arch), ".ipk") {
+			t.Errorf("pkgCandidateURLs(%q, .ipk) = %v, want [%q]", arch, got, feedAssetURL(arch, testTargetFor(arch), ".ipk"))
 		}
 	}
 }
@@ -135,14 +135,14 @@ func TestPkgCandidateURLs(t *testing.T) {
 func TestArchAssetsMatchDetectedArch(t *testing.T) {
 	// Every canonical tuple must resolve to a feed URL (both formats).
 	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64"} {
-		ipk, _, ok := selectPkgURL(arch, "opkg")
+		ipk, _, ok := selectPkgURL(arch, testTargetFor(arch), "opkg")
 		if !ok || !strings.HasPrefix(ipk, "https://github.com/FreedomTechFeed/packages/") || !strings.HasSuffix(ipk, ".ipk") {
 			t.Errorf("%s .ipk feed URL missing or malformed: %q", arch, ipk)
 		}
 		if !strings.Contains(ipk, "tollgate-wrt") {
 			t.Errorf("%s .ipk must reference tollgate-wrt: %q", arch, ipk)
 		}
-		apk, _, ok := selectPkgURL(arch, "apk")
+		apk, _, ok := selectPkgURL(arch, testTargetFor(arch), "apk")
 		if !ok || !strings.HasPrefix(apk, "https://github.com/FreedomTechFeed/packages/") || !strings.HasSuffix(apk, ".apk") {
 			t.Errorf("%s .apk feed URL missing or malformed: %q", arch, apk)
 		}
@@ -178,10 +178,10 @@ func TestPkgCandidateURLsRejectUnmappedArch(t *testing.T) {
 		"-",                    // punctuation only
 		"aarch64.cortex a53",   // mixed junk
 	} {
-		if got := pkgCandidateURLs(arch, ".ipk"); got != nil {
+		if got := pkgCandidateURLs(arch, testTargetFor(arch), ".ipk"); got != nil {
 			t.Errorf("pkgCandidateURLs(%q, .ipk) = %v, want nil (unmapped arch must yield no candidates)", arch, got)
 		}
-		if got := pkgCandidateURLs(arch, ".apk"); got != nil {
+		if got := pkgCandidateURLs(arch, testTargetFor(arch), ".apk"); got != nil {
 			t.Errorf("pkgCandidateURLs(%q, .apk) = %v, want nil (unmapped arch must yield no candidates)", arch, got)
 		}
 	}
@@ -195,21 +195,21 @@ func TestPkgCandidateURLsRejectUnmappedArch(t *testing.T) {
 func TestPkgCandidateURLsAreWellFormed(t *testing.T) {
 	for _, arch := range []string{"aarch64_cortex-a53", "mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
 		for _, ext := range []string{".ipk", ".apk"} {
-			got := pkgCandidateURLs(arch, ext)
+			got := pkgCandidateURLs(arch, testTargetFor(arch), ext)
 			if len(got) == 0 {
 				t.Errorf("pkgCandidateURLs(%q, %q) returned no candidates", arch, ext)
 				continue
 			}
 			// The FEED URL is always the first candidate.
-			if got[0] != feedAssetURL(arch, ext) {
-				t.Errorf("pkgCandidateURLs(%q, %q)[0] = %q, want the feed URL %q", arch, ext, got[0], feedAssetURL(arch, ext))
+			if got[0] != feedAssetURL(arch, testTargetFor(arch), ext) {
+				t.Errorf("pkgCandidateURLs(%q, %q)[0] = %q, want the feed URL %q", arch, ext, got[0], feedAssetURL(arch, testTargetFor(arch), ext))
 			}
 			for _, u := range got {
 				if !strings.HasPrefix(u, "https://github.com/") {
 					t.Errorf("%s %s candidate %q is not an https://github.com URL", arch, ext, u)
 				}
-				if !strings.HasSuffix(u, "_"+arch+ext) {
-					t.Errorf("%s %s candidate %q must end with %q (malformed asset name or wrong arch)", arch, ext, u, "_"+arch+ext)
+				if !strings.HasSuffix(u, "_"+arch+"-"+testTargetFor(arch)+ext) {
+					t.Errorf("%s %s candidate %q must end with %q (malformed asset name or wrong arch)", arch, ext, u, "_"+arch+"-"+testTargetFor(arch)+ext)
 				}
 				if !strings.Contains(u, "tollgate-wrt_") {
 					t.Errorf("%s %s candidate %q does not name the tollgate-wrt asset", arch, ext, u)
@@ -225,7 +225,7 @@ func TestPkgCandidateURLsAreWellFormed(t *testing.T) {
 	// offered the aarch64 asset as a second chance.
 	for _, arch := range []string{"mipsel_24kc", "mips_24kc", "x86_64", "arm_cortex-a7"} {
 		for _, ext := range []string{".ipk", ".apk"} {
-			for _, u := range pkgCandidateURLs(arch, ext) {
+			for _, u := range pkgCandidateURLs(arch, testTargetFor(arch), ext) {
 				if strings.Contains(u, "aarch64") {
 					t.Errorf("pkgCandidateURLs(%q, %q) offered an aarch64 asset %q — silent arch substitution", arch, ext, u)
 				}
@@ -395,7 +395,7 @@ func TestArchAssetsAreLive(t *testing.T) {
 	// formats) — the test fixture matrix, not a runtime allowlist.
 	for _, arch := range feedReleasePublishedArches {
 		for name, ext := range map[string]string{"IPK": ".ipk", "APK": ".apk"} {
-			url := feedAssetURL(arch, ext)
+			url := feedAssetURL(arch, testTargetFor(arch), ext)
 			t.Run("feed_"+arch+"_"+name, func(t *testing.T) {
 				probe("feed "+arch+" "+name, url)
 			})
@@ -412,4 +412,31 @@ func TestArchAssetsAreLive(t *testing.T) {
 			})
 		}
 	}
+}
+
+// testTargetFor maps a canonical OpenWrt arch to the target the feed pairs it
+// with, so tests can build the TARGET-QUALIFIED asset name
+// (tollgate-wrt_<ver>_<arch>-<target><ext>). An unknown/empty arch maps to ""
+// so the "undetectable" paths keep their empty-arg behaviour.
+func testTargetFor(arch string) string {
+	switch arch {
+	case "aarch64_cortex-a53":
+		return "mediatek-filogic"
+	case "aarch64_cortex-a72":
+		return "bcm27xx-bcm2711"
+	case "arm_cortex-a7":
+		return "bcm27xx-bcm2709"
+	case "mipsel_24kc":
+		return "mt7621"
+	case "mips_24kc":
+		return "ath79-generic"
+	case "mips64_octeonplus":
+		return "octeon-generic"
+	case "x86_64":
+		return "x86-64"
+	}
+	if arch == "" {
+		return ""
+	}
+	return "generic"
 }

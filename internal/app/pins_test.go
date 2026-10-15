@@ -101,13 +101,13 @@ func TestTollgatePkgURLPinsExistingAsset(t *testing.T) {
 	// The value must be derived from the generic builder, not a hardcoded
 	// literal — otherwise the two sources of truth can drift. These assertions
 	// hold for whatever tag the wizard resolved, so they never depend on the pin.
-	if tollgatePkgURL != feedAssetURL("aarch64_cortex-a53", ".ipk") {
+	if tollgatePkgURL != feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk") {
 		t.Errorf("tollgatePkgURL = %q, want feedAssetURL(aarch64_cortex-a53, .ipk) = %q",
-			tollgatePkgURL, feedAssetURL("aarch64_cortex-a53", ".ipk"))
+			tollgatePkgURL, feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk"))
 	}
-	if tollgatePkgAPKURL != feedAssetURL("aarch64_cortex-a53", ".apk") {
+	if tollgatePkgAPKURL != feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".apk") {
 		t.Errorf("tollgatePkgAPKURL = %q, want feedAssetURL(aarch64_cortex-a53, .apk) = %q",
-			tollgatePkgAPKURL, feedAssetURL("aarch64_cortex-a53", ".apk"))
+			tollgatePkgAPKURL, feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".apk"))
 	}
 	// The COMPILED pin's asset spelling (the offline fallback) must be the one
 	// this fixture records: tag and PKG_VERSION in the same URL.
@@ -165,14 +165,14 @@ func TestFeedAssetURLShapeMatchesPinnedRelease(t *testing.T) {
 		{"mips_24kc", ".apk"},
 		{"x86_64", ".ipk"},
 	} {
-		got := feedAssetURL(tc.arch, tc.ext)
-		wantName := "tollgate-wrt_" + wantFeedPkgVersion + "_" + tc.arch + tc.ext
+		got := feedAssetURL(tc.arch, testTargetFor(tc.arch), tc.ext)
+		wantName := "tollgate-wrt_" + wantFeedPkgVersion + "_" + tc.arch + "-" + testTargetFor(tc.arch) + tc.ext
 		want := "https://github.com/" + feedRepoSlug + "/releases/download/" + wantFeedReleaseTag + "/" + wantName
 		if got != want {
 			t.Errorf("feedAssetURL(%q, %q) =\n  %q\nwant\n  %q", tc.arch, tc.ext, got, want)
 		}
-		if !strings.HasSuffix(got, "_"+tc.arch+tc.ext) {
-			t.Errorf("feedAssetURL(%q, %q) = %q: asset name must end with %q", tc.arch, tc.ext, got, "_"+tc.arch+tc.ext)
+		if !strings.HasSuffix(got, "_"+tc.arch+"-"+testTargetFor(tc.arch)+tc.ext) {
+			t.Errorf("feedAssetURL(%q, %q) = %q: asset name must end with %q", tc.arch, tc.ext, got, "_"+tc.arch+"-"+testTargetFor(tc.arch)+tc.ext)
 		}
 		if strings.Contains(got, "__") {
 			t.Errorf("feedAssetURL(%q, %q) = %q: contains an empty URL component", tc.arch, tc.ext, got)
@@ -261,8 +261,8 @@ func TestFeedAssetURLHonoursTagOverride(t *testing.T) {
 	defer func() { feedReleaseTag = orig }()
 
 	feedReleaseTag = "v0.6.0-alpha1"
-	want := "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_x86_64.apk"
-	if got := feedAssetURL("x86_64", ".apk"); got != want {
+	want := "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/tollgate-wrt_0.6.0_alpha1_x86_64-x86-64.apk"
+	if got := feedAssetURL("x86_64", testTargetFor("x86_64"), ".apk"); got != want {
 		t.Errorf("feedAssetURL with overridden tag = %q, want %q", got, want)
 	}
 	if got := feedReleaseURLPrefix(); got != "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-alpha1/" {
@@ -271,7 +271,7 @@ func TestFeedAssetURLHonoursTagOverride(t *testing.T) {
 
 	// Restoring the tag must restore the derived URLs to the pinned release.
 	feedReleaseTag = orig
-	if got := feedAssetURL("x86_64", ".apk"); got != "https://github.com/FreedomTechFeed/packages/releases/download/"+wantFeedReleaseTag+"/tollgate-wrt_"+wantFeedPkgVersion+"_x86_64.apk" {
+	if got := feedAssetURL("x86_64", testTargetFor("x86_64"), ".apk"); got != "https://github.com/FreedomTechFeed/packages/releases/download/"+wantFeedReleaseTag+"/tollgate-wrt_"+wantFeedPkgVersion+"_x86_64-x86-64.apk" {
 		t.Errorf("feedAssetURL after restore = %q, want the pinned release's asset", got)
 	}
 }
@@ -390,7 +390,7 @@ func TestFeedReleasePublishesEachDerivedAssetName(t *testing.T) {
 	wantNames := make(map[string]bool, 2*len(feedReleasePublishedArches))
 	for _, arch := range feedReleasePublishedArches {
 		for _, ext := range []string{".ipk", ".apk"} {
-			name := path.Base(feedAssetURL(arch, ext))
+			name := path.Base(feedAssetURL(arch, testTargetFor(arch), ext))
 			wantNames[name] = true
 			size, ok := published[name]
 			if !ok {

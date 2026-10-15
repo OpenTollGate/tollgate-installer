@@ -80,7 +80,7 @@ func TestTollgatePkgURLAssetName(t *testing.T) {
 // same way as one that fell back to the pinned GitHub asset.
 func TestPkgSourceLabel(t *testing.T) {
 	const arch = "aarch64_cortex-a53"
-	feedIPK := feedAssetURL(arch, ".ipk")
+	feedIPK := feedAssetURL(arch, testTargetFor(arch), ".ipk")
 	ghIPK := githubFallbackURL(arch, ".ipk")
 	if ghIPK == "" {
 		t.Fatal("githubFallbackURL(aarch64_cortex-a53, .ipk) is empty — the fallback pin is missing")
@@ -93,7 +93,7 @@ func TestPkgSourceLabel(t *testing.T) {
 		want      string
 	}{
 		{"feed release (ipk)", arch, ".ipk", feedIPK, pkgSourceFeedRelease},
-		{"feed release (apk)", arch, ".apk", feedAssetURL(arch, ".apk"), pkgSourceFeedRelease},
+		{"feed release (apk)", arch, ".apk", feedAssetURL(arch, testTargetFor(arch), ".apk"), pkgSourceFeedRelease},
 		{"pinned GitHub fallback", arch, ".ipk", ghIPK, pkgSourceGitHubRelease},
 		{"github fallback apk", arch, ".apk", githubFallbackURL(arch, ".apk"), pkgSourceGitHubRelease},
 		{"nothing supplied the package", arch, ".ipk", "", ""},
@@ -107,7 +107,7 @@ func TestPkgSourceLabel(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := pkgSourceLabel(tc.arch, tc.ext, tc.url); got != tc.want {
+			if got := pkgSourceLabel(tc.arch, testTargetFor(tc.arch), tc.ext, tc.url); got != tc.want {
 				t.Errorf("pkgSourceLabel(%q, %q, %q) = %q, want %q", tc.arch, tc.ext, tc.url, got, tc.want)
 			}
 		})

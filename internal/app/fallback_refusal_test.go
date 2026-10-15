@@ -112,7 +112,7 @@ func TestGithubFallbackPkgVersion(t *testing.T) {
 // a fallback install was never compared, so a downgrade passed as success.
 func TestPkgVersionVerdict(t *testing.T) {
 	const arch = pkgFallbackTestArch
-	feedIPK := feedAssetURL(arch, ".ipk")
+	feedIPK := feedAssetURL(arch, testTargetFor(arch), ".ipk")
 	fbIPK := githubFallbackURL(arch, ".ipk")
 	requested := feedPkgVersion()                   // 0.6.0_rc1_pre26
 	fbVer := githubFallbackPkgVersion(arch, ".ipk") // 0.5.0
@@ -169,7 +169,7 @@ func TestPkgVersionVerdict(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fatal, warn := pkgVersionVerdict(tc.installed, tc.sourceURL, arch, ".ipk")
+			fatal, warn := pkgVersionVerdict(tc.installed, tc.sourceURL, arch, testTargetFor(arch), ".ipk")
 			if tc.wantFatalSubstr == "" && fatal != "" {
 				t.Errorf("pkgVersionVerdict(%q, %q) fatal = %q, want no fatal", tc.installed, tc.sourceURL, fatal)
 			}
@@ -212,15 +212,15 @@ func TestPkgVersionVerdictNormalisesTheLeadingV(t *testing.T) {
 		src   string
 		plain string // the version the source names, in the source's own spelling
 	}{
-		{"requested release from the feed", feedAssetURL(arch, ext), feedPkgVersion()},
+		{"requested release from the feed", feedAssetURL(arch, testTargetFor(arch), ext), feedPkgVersion()},
 		{"opted-in fallback downgrade", githubFallbackURL(arch, ext), githubFallbackPkgVersion(arch, ext)},
 	}
 	for _, c := range cases {
 		if c.src == "" || c.plain == "" {
 			t.Fatalf("%s: fixture stale (src=%q plain=%q)", c.name, c.src, c.plain)
 		}
-		fatalPlain, warnPlain := pkgVersionVerdict(c.plain, c.src, arch, ext)
-		fatalV, warnV := pkgVersionVerdict("v"+c.plain, c.src, arch, ext)
+		fatalPlain, warnPlain := pkgVersionVerdict(c.plain, c.src, arch, testTargetFor(arch), ext)
+		fatalV, warnV := pkgVersionVerdict("v"+c.plain, c.src, arch, testTargetFor(arch), ext)
 		if fatalPlain != fatalV {
 			t.Errorf("%s: the spelling changes the FATAL verdict (%q vs %q)", c.name, fatalPlain, fatalV)
 		}

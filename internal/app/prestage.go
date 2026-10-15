@@ -69,12 +69,13 @@ func runPreStageJob(job *Job, req prestageRequest) {
 	job.setStep(0, "done", "")
 
 	job.setStep(1, "running", "")
-	pkgMgr, arch := "", ""
+	pkgMgr, arch, target := "", "", ""
 	if !isStockGL {
 		pkgMgr = strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
 		arch = detectArch(client)
+		target = detectTarget(client)
 	}
-	urls, refusal := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
+	urls, refusal := stageAssetURLsForArch(arch, target, isStockGL, glModel, pkgMgr)
 	if refusal != nil {
 		// Best-effort pre-download: the refusal is not fatal here, but it must
 		// be visible — the reason the older fallback was skipped is the whole

@@ -40,10 +40,10 @@ var (
 	// the PreStage cache (stageAssetURLs) to pre-download the bench arch in both
 	// formats before arch detection runs at install time. They are DERIVED from
 	// feedAssetURL so they can never drift from the generic URL builder.
-	tollgatePkgURL = feedAssetURL("aarch64_cortex-a53", ".ipk")
+	tollgatePkgURL = feedAssetURL("aarch64_cortex-a53", "mediatek-filogic", ".ipk")
 	// tollgate-wrt .apk download URL (OpenWrt 25+ with APK support).
 	// OpenWrt 25.12+ cannot install legacy .ipk (ar archive) packages.
-	tollgatePkgAPKURL = feedAssetURL("aarch64_cortex-a53", ".apk")
+	tollgatePkgAPKURL = feedAssetURL("aarch64_cortex-a53", "mediatek-filogic", ".apk")
 )
 
 // ─── Secret carriers ─────────────────────────────────────────────
@@ -1293,9 +1293,24 @@ func runDeployment(job *Job, req deployRequest) {
 		return
 	}
 
+	// The feed asset name is TARGET-QUALIFIED (tollgate-wrt_<ver>_<arch>-<target>),
+	// and two targets can share one arch (mips_24kc is ath79-generic AND
+	// ath79-nand), so the target must be detected too. FAIL LOUDLY on an
+	// undetectable target for the same reason as the arch: a guessed target
+	// would build a well-formed URL that 404s.
+	routerTarget := detectTarget(client)
+	job.addLog("Detected router target: " + routerTarget)
+	if routerTarget == "" {
+		job.addLog("Could not determine router target")
+		jobFailAfterRestore(job, client, staCommitted, 6,
+			"Could not determine router target",
+			"Could not determine router target")
+		return
+	}
+
 	// Select appropriate package URL based on package manager + arch.
 	// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages.
-	_, pkgExtension, ok := selectPkgURL(routerArch, pkgMgr)
+	_, pkgExtension, ok := selectPkgURL(routerArch, routerTarget, pkgMgr)
 	if !ok {
 		// Undetectable arch — fail, never substitute aarch64. (selectPkgURL is
 		// generic today and only refuses an empty tuple, so this is defensive;
@@ -1313,7 +1328,7 @@ func runDeployment(job *Job, req deployRequest) {
 	// all AND the refusal is held for the fail-loudly check below: a feed
 	// outage must not turn into a silent downgrade reported as success.
 	pkgCandidates, fallbackRefusal := pkgCandidateURLsWithFallback(
-		routerArch, pkgExtension, githubFallbackAllowed())
+		routerArch, routerTarget, pkgExtension, githubFallbackAllowed())
 	// The selection-time report goes through fallbackSelectionLogLine, which
 	// says what was DECIDED, not that the requested release is unavailable:
 	// nothing has been downloaded yet at this point (C2-I-02 follow-up).
@@ -1442,7 +1457,7 @@ func runDeployment(job *Job, req deployRequest) {
 	// provable if the source is reported instead of inferred from a URL in the
 	// log. Never silently substituted: a GitHub-release install says so.
 	if pkgOnRouter {
-		job.addLog("tollgate-wrt source: " + pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL) + " — " + pkgSourceURL)
+		job.addLog("tollgate-wrt source: " + pkgSourceLabel(routerArch, routerTarget, pkgExtension, pkgSourceURL) + " — " + pkgSourceURL)
 	} else {
 		job.addLog("tollgate-wrt source: none — no candidate URL supplied the package (feed and GitHub fallback both failed)")
 	}
@@ -1612,7 +1627,7 @@ func runDeployment(job *Job, req deployRequest) {
 			// the requested release can no longer render as a plain success.
 			if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
 				job.addLog("Installed tollgate-wrt package version: " + pkgVer)
-				fatal, warn := pkgVersionVerdict(pkgVer, pkgSourceURL, routerArch, pkgExtension)
+				fatal, warn := pkgVersionVerdict(pkgVer, pkgSourceURL, routerArch, routerTarget, pkgExtension)
 				if fatal != "" {
 					job.addLog("ERROR: " + fatal)
 					jobFailAfterRestore(job, client, staCommitted, 6, "tollgate-wrt version mismatch", fatal)
@@ -1643,7 +1658,7 @@ func runDeployment(job *Job, req deployRequest) {
 			// The step is GREEN only when both passed; anything else renders
 			// "warn" with the reason in the detail, so neither a downgrade nor
 			// unchecked bytes can look like an unqualified success.
-			detail := installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, pkgExtension, pkgSourceURL))
+			detail := installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, routerTarget, pkgExtension, pkgSourceURL))
 			if installStatus == "warn" {
 				detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
 			}
@@ -1684,7 +1699,7 @@ func runDeployment(job *Job, req deployRequest) {
 		// (cold cross-family review 2026-09-23, finding 1; C2-I-03).
 		if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
 			job.addLog("Installed tollgate-wrt package version: " + pkgVer)
-			if _, warn := pkgVersionVerdict(pkgVer, "", routerArch, pkgExtension); warn != "" {
+			if _, warn := pkgVersionVerdict(pkgVer, "", routerArch, routerTarget, pkgExtension); warn != "" {
 				job.addLog("WARNING: " + warn)
 				installStatus = "warn"
 			}
@@ -4226,7 +4241,7 @@ func fallbackSelectionLogLine(arch, ext string, candidates []string, refusal err
 // fail the deploy, but it must not swallow that reason either — an install that
 // fails later on a cache miss should be able to point the operator at
 // --allow-fallback from the same log.
-func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) ([]string, error) {
+func stageAssetURLsForArch(arch, target string, isStockGL bool, glModel, pkgMgr string) ([]string, error) {
 	urls := []string{}
 	var refusal error
 	pkg := func(ext string) []string {
@@ -4240,7 +4255,7 @@ func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) 
 		// this run opted into it: prefetching a different release's package
 		// that the deploy will refuse to install is wasted bandwidth and a
 		// provenance trap (C2-I-02).
-		candidates, err := pkgCandidateURLsWithFallback(arch, ext, githubFallbackAllowed())
+		candidates, err := pkgCandidateURLsWithFallback(arch, target, ext, githubFallbackAllowed())
 		if err != nil && refusal == nil {
 			refusal = fallbackSuppressedReason(arch, ext)
 		}
@@ -4279,11 +4294,13 @@ func stageAssetURLsForArch(arch string, isStockGL bool, glModel, pkgMgr string) 
 func runPreStage(job *Job, client *ssh.Client, isStockGL bool, glModel string) {
 	pkgMgr := ""
 	arch := ""
+	target := ""
 	if !isStockGL && client != nil {
 		pkgMgr = strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
 		arch = detectArch(client)
+		target = detectTarget(client)
 	}
-	urls, refusal := stageAssetURLsForArch(arch, isStockGL, glModel, pkgMgr)
+	urls, refusal := stageAssetURLsForArch(arch, target, isStockGL, glModel, pkgMgr)
 	if refusal != nil {
 		// The fallback was deliberately not staged; say why here so an install
 		// that fails later on a cache miss points at --allow-fallback in the

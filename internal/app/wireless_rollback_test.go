@@ -284,6 +284,7 @@ func TestRestoreWirelessOnFailureReportsWhatItDid(t *testing.T) {
 // without restoring.
 var postStep5FailureSites = []failureSite{
 	{6, "Could not determine router CPU architecture", "undetectable CPU arch"},
+	{6, "Could not determine router target", "undetectable router target (the target-qualified feed asset name needs it)"},
 	{6, "Unsupported CPU arch ", "arch whose package URL cannot be built (defensive: selectPkgURL is generic today)"},
 	{6, "laptop-side package integrity check failed", "#43: the bytes the LAPTOP downloaded are not the bytes the release published (mismatch / structurally impossible / unverifiable with TOLLGATE_REQUIRE_PACKAGE_DIGEST=1)"},
 	{6, "opkg refused to downgrade tollgate-wrt", "opkg keeps the previous package"},
@@ -675,7 +676,7 @@ func TestJobFailAfterRestoreIsTheExitForEveryPostStep5Failure(t *testing.T) {
 // cannot drift from the feed pin). Only the asset NAME reaches this test: the
 // bytes below fail the structural check, which runs before any digest lookup, so
 // no network is touched.
-var integritySiteURL = feedAssetURL("aarch64_cortex-a53", ".ipk")
+var integritySiteURL = feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk")
 
 // TestIntegrityFailureSitesRestoreWireless pins the two #43 step-6 integrity
 // sites (card t_3fe64c6e) at the level a unit test CAN reach them: the sites live
