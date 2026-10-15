@@ -26,8 +26,11 @@ func TestNormalizeBareArch(t *testing.T) {
 		"Mipsel":      "mipsel_24kc",
 		// canonical tuples pass through unchanged
 		"aarch64_cortex-a53": "aarch64_cortex-a53",
+		"aarch64_cortex-a72": "aarch64_cortex-a72",
+		"arm_cortex-a7":      "arm_cortex-a7",
 		"mipsel_24kc":        "mipsel_24kc",
 		"mips_24kc":          "mips_24kc",
+		"mips64_octeonplus":  "mips64_octeonplus",
 		// unknowns normalize to ""
 		"":        "",
 		"sparc":   "",
