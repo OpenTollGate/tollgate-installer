@@ -245,11 +245,22 @@ The service is **`tollgate-wrt`**, the backend is **`:2121`**; the router has no
 uclient-fetch -q -O- http://127.0.0.1:2121/ 2>/dev/null | head -5   # backend live
 uclient-fetch -q -O- http://127.0.0.1:2121/whoami 2>/dev/null       # answers while the wallet loads
 uclient-fetch -q -O- http://127.0.0.1:2121/identity 2>/dev/null     # 404 unless a merchant key exists
-tollgate version                                                    # confirm it matches $TAG/$VER
+tollgate version                                                    # the MODULE build (see note)
 ps | grep -i tollgate; logread | grep -i tollgate                   # process + clean startup
 ndsctl status; nft list ruleset | grep -i tollgate                  # nodogsplash active, no dup rules
 cat /proc/sys/kernel/hostname                                       # TollGate-… hostname
 ```
+
+> **`tollgate version` is NOT the feed `$TAG`/`$VER`.** It reports the
+> **module** build the package embeds (`version: v0.6.0-rc4-gcf7cad3`, commit
+> `cf7cad34`), which the feed `PKG_SOURCE_TAG` pins and does **not** change per
+> feed RC. Confirm the feed RC landed with the **package manager** instead:
+> ```sh
+> opkg list-installed | grep tollgate-wrt     # opkg lane → "tollgate-wrt - 0.6.0_rc6-r1"
+> apk list -I 2>/dev/null | grep tollgate-wrt # apk lane  → "tollgate-wrt-0.6.0_rc6-r1 …"
+> ```
+> Observed on rc6 (2026-10-15): MT3000 (apk) + MT6000 (opkg) both report the
+> package `0.6.0_rc6-r1` while `tollgate version` stays `v0.6.0-rc4-gcf7cad3`.
 
 Declare **pass** only if all hold. An install that completes but never starts is
 a **fail** — attach `logread | grep -i tollgate`.
