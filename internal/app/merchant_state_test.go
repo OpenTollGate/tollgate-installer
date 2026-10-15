@@ -20,6 +20,11 @@ func TestMerchantState(t *testing.T) {
 		{"503 status line only", "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n", merchantStarting},
 		{"empty", "", merchantUnknown},
 		{"garbage", "not json at all", merchantUnknown},
+		// The uclient-fetch refusal that shipped the "Setup failed" bug: a probe
+		// that passed an unsupported flag captured this usage text instead of the
+		// API body. It must classify as unknown — NEVER as healthy — so the
+		// regression cannot masquerade as a good merchant.
+		{"wget usage error (unsupported flag)", "wget: unrecognized option: S\nUsage: wget [options] <URL>\nOptions:\n\t-4\t\t\t\tUse IPv4 only\n\t-6\t\t\t\tUse IPv6 only\n\t-O <file>\t\t\tRedirect output to file (use \"-\" for stdout)\n", merchantUnknown},
 	}
 	for _, c := range cases {
 		if got := merchantState(c.body); got != c.want {
