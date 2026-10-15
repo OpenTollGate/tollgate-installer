@@ -47,11 +47,20 @@ var bareArchToTuple = map[string]string{
 // resolves to a selectable feed URL. Add a tuple here only when it is a real
 // OpenWrt feed target; an unknown bare name maps to "" (never a guessed
 // default).
+//
+// Kept in step with the feed's RELEASES matrix (FreedomTechFeed/packages
+// release-assets.py): every arch the feed ships must resolve here, or a router
+// reporting that tuple cannot select its package. The bare names above are a
+// best-effort fallback (a bare "aarch64" cannot tell a53 from a72) — the
+// reliable source is the board's canonical Architecture.
 var canonicalArchTuples = map[string]bool{
-	"aarch64_cortex-a53": true,
-	"mipsel_24kc":        true,
-	"mips_24kc":          true,
-	"x86_64":             true,
+	"aarch64_cortex-a53":  true,
+	"aarch64_cortex-a72":  true,
+	"arm_cortex-a7":       true,
+	"mipsel_24kc":         true,
+	"mips_24kc":           true,
+	"mips64_octeonplus":   true,
+	"x86_64":              true,
 }
 
 // normalizeBareArch maps a BARE architecture string to a canonical OpenWrt
