@@ -11,19 +11,19 @@ import (
 
 func TestStageAssetURLsForArch(t *testing.T) {
 	// Unknown arch falls back to the pinned aarch64 assets (historical behaviour).
-	if got, _ := stageAssetURLsForArch("", false, "", "opkg"); len(got) != 1 || got[0] != tollgatePkgURL {
+	if got, _ := stageAssetURLsForArch("", testTargetFor(""), false, "", "opkg"); len(got) != 1 || got[0] != tollgatePkgURL {
 		t.Errorf("unknown arch, opkg = %v, want [tollgatePkgURL]", got)
 	}
-	if got, _ := stageAssetURLsForArch("", false, "", "apk"); len(got) != 1 || got[0] != tollgatePkgAPKURL {
+	if got, _ := stageAssetURLsForArch("", testTargetFor(""), false, "", "apk"); len(got) != 1 || got[0] != tollgatePkgAPKURL {
 		t.Errorf("unknown arch, apk = %v, want [tollgatePkgAPKURL]", got)
 	}
 
 	// A real arch is derived per-arch: the first candidate is the feed URL.
-	if got, _ := stageAssetURLsForArch("aarch64_cortex-a53", false, "", "opkg"); len(got) == 0 || got[0] != tollgatePkgURL {
+	if got, _ := stageAssetURLsForArch("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), false, "", "opkg"); len(got) == 0 || got[0] != tollgatePkgURL {
 		t.Errorf("aarch64 opkg = %v, want first == tollgatePkgURL", got)
 	}
-	x86 := feedAssetURL("x86_64", ".apk")
-	if got, _ := stageAssetURLsForArch("x86_64", false, "", "apk"); len(got) == 0 || got[0] != x86 {
+	x86 := feedAssetURL("x86_64", testTargetFor("x86_64"), ".apk")
+	if got, _ := stageAssetURLsForArch("x86_64", testTargetFor("x86_64"), false, "", "apk"); len(got) == 0 || got[0] != x86 {
 		t.Errorf("x86_64 apk = %v, want first == %s", got, x86)
 	}
 
@@ -32,7 +32,7 @@ func TestStageAssetURLsForArch(t *testing.T) {
 	if !ok {
 		t.Fatal("gl-mt3000 missing from glModelMap")
 	}
-	got, refusal := stageAssetURLsForArch("", true, "gl-mt3000", "")
+	got, refusal := stageAssetURLsForArch("", testTargetFor(""), true, "gl-mt3000", "")
 	if len(got) == 0 || got[0] != img.URL() {
 		t.Errorf("stock gl-mt3000 = %v, want first == image URL %s", got, img.URL())
 	}

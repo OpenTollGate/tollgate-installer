@@ -686,7 +686,7 @@ func TestLivePackageDigestRejectsCorruptedBytes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live package-digest check skipped: -short mode (CI-parity runs without -short)")
 	}
-	assetURL := feedAssetURL("aarch64_cortex-a53", ".ipk")
+	assetURL := feedAssetURL("aarch64_cortex-a53", testTargetFor("aarch64_cortex-a53"), ".ipk")
 
 	pd := publishedDigestForAsset(assetURL, os.Getenv)
 	published, source, independent := pd.Digest, pd.Source, pd.Independent

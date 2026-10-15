@@ -340,12 +340,15 @@ func feedReleaseURLPrefix() string {
 // so this function is never reached with an empty arch (which would otherwise
 // build a malformed "..._tollgate-wrt_0.6.0_alpha2_pre_.ipk" URL).
 //
-// The arch and ext are appended verbatim, which is what the feed's asset names
-// do too (arm_cortex-a7, mipsel_24kc, mips64_octeonplus …). That equality is
+// The arch, target and ext are appended verbatim, which is what the feed's
+// asset names do too (arm_cortex-a7, mipsel_24kc, mips64_octeonplus …). The
+// TARGET is load-bearing, not decoration: mips_24kc is both ath79-generic and
+// ath79-nand, so an arch-only name made those two release rows collide (the
+// feed's Option-A target-qualified naming, 2026-10-15). That equality is
 // asserted against the live release by
 // TestFeedReleasePublishesEachDerivedAssetName.
-func feedAssetURL(arch, ext string) string {
-	return feedReleaseURLPrefix() + "tollgate-wrt_" + feedPkgVersion() + "_" + arch + ext
+func feedAssetURL(arch, target, ext string) string {
+	return feedReleaseURLPrefix() + "tollgate-wrt_" + feedPkgVersion() + "_" + arch + "-" + target + ext
 }
 
 // tollgateGithubFallback is the GitHub tollgate-module-basic-go release assets,
@@ -467,11 +470,11 @@ func githubFallbackSelection(arch, ext string, allowFallback bool) (string, erro
 // the feed asset, the pinned fallback release for the GitHub fallback asset.
 // "" for a URL that is neither — notably the router-feed last-resort path, where
 // nothing was pushed and there is no URL to name.
-func expectedPkgVersionForSource(sourceURL, arch, ext string) string {
+func expectedPkgVersionForSource(sourceURL, arch, target, ext string) string {
 	if sourceURL == "" {
 		return ""
 	}
-	if sourceURL == feedAssetURL(arch, ext) {
+	if sourceURL == feedAssetURL(arch, target, ext) {
 		return feedPkgVersion()
 	}
 	if fb := githubFallbackURL(arch, ext); fb != "" && sourceURL == fb {
@@ -495,15 +498,15 @@ func expectedPkgVersionForSource(sourceURL, arch, ext string) string {
 //
 // Both are "" when there is nothing to assert (no version was read back) or
 // when the installed version is exactly the requested release.
-func pkgVersionVerdict(installed, sourceURL, arch, ext string) (fatal, warn string) {
+func pkgVersionVerdict(installed, sourceURL, arch, target, ext string) (fatal, warn string) {
 	if installed == "" {
 		return "", ""
 	}
 	got := normalizePkgVersionSpelling(installed)
-	if want := expectedPkgVersionForSource(sourceURL, arch, ext); want != "" && !strings.HasPrefix(got, normalizePkgVersionSpelling(want)) {
+	if want := expectedPkgVersionForSource(sourceURL, arch, target, ext); want != "" && !strings.HasPrefix(got, normalizePkgVersionSpelling(want)) {
 		return fmt.Sprintf("installed package is %s but the source that supplied it (%s) provides %s — "+
 			"the upgrade did not take effect (previous package/files still present)",
-			installed, pkgSourceLabel(arch, ext, sourceURL), want), ""
+			installed, pkgSourceLabel(arch, target, ext, sourceURL), want), ""
 	}
 	if !strings.HasPrefix(got, normalizePkgVersionSpelling(feedPkgVersion())) {
 		return "", fmt.Sprintf("installed package is %s, NOT the requested release %s (%s) — "+
@@ -535,6 +538,13 @@ func normalizePkgVersionSpelling(v string) string {
 // interpolated into a download URL.
 var pkgArchTupleRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// pkgTargetRe matches a plausible OpenWrt target NAME (the target half of the
+// tuple, with "/" already normalized to "-"): e.g. mediatek-filogic,
+// ath79-generic, ath79-nand, bcm27xx-bcm2711. Strict about SHAPE for the same
+// reason as pkgArchTupleRe — an empty or injection-bearing target can never be
+// interpolated into a download URL.
+var pkgTargetRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // pkgCandidateURLs returns the ordered download URLs to try for a canonical
 // arch tuple and package extension: the feed URL derived generically from the
 // tuple for the EFFECTIVE tag. The first URL that yields bytes wins.
@@ -552,11 +562,11 @@ var pkgArchTupleRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // "..._tollgate-wrt_0.6.0_alpha2_pre_.ipk" URL that 404s, and it would mask the
 // real problem (arch detection failed). The caller treats an empty list as a
 // hard failure and never substitutes another arch's asset.
-func pkgCandidateURLs(arch, ext string) []string {
-	if !pkgArchTupleRe.MatchString(arch) {
+func pkgCandidateURLs(arch, target, ext string) []string {
+	if !pkgArchTupleRe.MatchString(arch) || !pkgTargetRe.MatchString(target) {
 		return nil
 	}
-	return []string{feedAssetURL(arch, ext)}
+	return []string{feedAssetURL(arch, target, ext)}
 }
 
 // pkgCandidateURLsWithFallback is pkgCandidateURLs plus, ONLY when allowFallback
@@ -576,8 +586,8 @@ func pkgCandidateURLs(arch, ext string) []string {
 // OpenWrt tuple yields (nil, nil): there is no tag-consistent URL to derive for
 // it either, so the caller gets an empty list — not an error — and must treat
 // the emptiness (never a substituted fallback) as the failure.
-func pkgCandidateURLsWithFallback(arch, ext string, allowFallback bool) ([]string, error) {
-	urls := pkgCandidateURLs(arch, ext)
+func pkgCandidateURLsWithFallback(arch, target, ext string, allowFallback bool) ([]string, error) {
+	urls := pkgCandidateURLs(arch, target, ext)
 	if len(urls) == 0 {
 		return nil, nil
 	}
@@ -599,15 +609,15 @@ func pkgCandidateURLsWithFallback(arch, ext string, allowFallback bool) ([]strin
 // any arch the feed publishes resolves. It returns ok=false only for an
 // empty/undetectable arch — the caller must treat that as a hard deploy
 // failure and NEVER silently substitute the aarch64 fallback.
-func selectPkgURL(arch, pkgMgr string) (url, ext string, ok bool) {
-	if arch == "" {
+func selectPkgURL(arch, target, pkgMgr string) (url, ext string, ok bool) {
+	if arch == "" || target == "" {
 		return "", "", false
 	}
 	ext = ".ipk"
 	if pkgMgr == "apk" {
 		ext = ".apk"
 	}
-	return feedAssetURL(arch, ext), ext, true
+	return feedAssetURL(arch, target, ext), ext, true
 }
 
 // distArchRe pulls DISTRIB_ARCH out of /etc/openwrt_release output. The file
@@ -699,6 +709,69 @@ func detectArchFrom(get func(cmd string) string) string {
 	return ""
 }
 
+// distTargetRe pulls DISTRIB_TARGET out of /etc/openwrt_release output. The
+// file format is shell: DISTRIB_TARGET='mediatek/filogic'.
+var distTargetRe = regexp.MustCompile(`(?m)^DISTRIB_TARGET=["']?([^"'\s]+)`)
+
+// detectTarget returns the OpenWrt TARGET for the target router (e.g.
+// "mediatek-filogic", "ath79-nand"), with any "/" normalized to "-". The target
+// names the published feed asset (tollgate-wrt_<ver>_<arch>-<target>), so it is
+// required to build a download URL: two targets can share one arch (mips_24kc
+// is ath79-generic AND ath79-nand), so the arch alone is ambiguous.
+//
+// It returns "" (never a guessed default) when the target cannot be determined.
+//
+// Precedence:
+//  1. DISTRIB_TARGET from /etc/openwrt_release  — authoritative (mediatek/filogic).
+//  2. `ubus call system board` .release.target   — same value, JSON form.
+func detectTarget(client *ssh.Client) string {
+	if client == nil {
+		return ""
+	}
+	return detectTargetFrom(func(cmd string) string {
+		return sshRun(client, cmd)
+	})
+}
+
+// normalizeTarget turns an OpenWrt target ("mediatek/filogic") into the
+// hyphenated form the feed asset name uses ("mediatek-filogic"). An
+// empty/whitespace value yields "".
+func normalizeTarget(t string) string {
+	t = strings.TrimSpace(t)
+	if t == "" {
+		return ""
+	}
+	return strings.ReplaceAll(t, "/", "-")
+}
+
+// detectTargetFrom is the pure, testable core of detectTarget, mirroring
+// detectArchFrom: get runs a remote command and returns its combined output.
+func detectTargetFrom(get func(cmd string) string) string {
+	if get == nil {
+		return ""
+	}
+	if out := get("grep DISTRIB_TARGET /etc/openwrt_release 2>/dev/null; true"); out != "" {
+		if m := distTargetRe.FindStringSubmatch(out); m != nil {
+			if t := normalizeTarget(m[1]); t != "" {
+				return t
+			}
+		}
+	}
+	if out := get("ubus call system board 2>/dev/null; true"); out != "" {
+		var board struct {
+			Release struct {
+				Target string `json:"target"`
+			} `json:"release"`
+		}
+		if err := json.Unmarshal([]byte(out), &board); err == nil && board.Release.Target != "" {
+			if t := normalizeTarget(board.Release.Target); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
 // downloadBaseURL builds the OpenWrt package-repository base URL for an arch
 // tuple. The wizard pins release 24.10.4 (the release it was validated on); the
 // arch tuple is threaded in so nodogsplash/jq installs resolve for ANY router.
@@ -734,11 +807,11 @@ const (
 
 // pkgSourceLabel classifies the download URL that actually supplied the
 // tollgate-wrt bytes. url == "" (nothing supplied the package) returns "".
-func pkgSourceLabel(arch, ext, url string) string {
+func pkgSourceLabel(arch, target, ext, url string) string {
 	if url == "" {
 		return ""
 	}
-	if url == feedAssetURL(arch, ext) {
+	if url == feedAssetURL(arch, target, ext) {
 		return pkgSourceFeedRelease
 	}
 	if fb := githubFallbackURL(arch, ext); fb != "" && url == fb {
