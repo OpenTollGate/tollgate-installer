@@ -23,14 +23,18 @@ password is **`TollGate`** — the board forces a change at first login.
 
 **Lanes:** installer wizard ([§1](#1-path-a--tollgate-installer-start-here)) · manual `.apk` on 25.12 and `.ipk` on 24.10
 ([§2](#2-path-b--manual-install-on-vanilla-openwrt)) · offline bundle when the router has no uplink ([§2.2](#22-direct-file-install-both-lanes)).
-**Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic`);
-GL-AR300M (`mips_24kc`/`ath79-generic` — flash-constrained, [§A.4](#a4-ar300m-flash-space-caveat)).
+**Devices:** GL-MT3000, GL-MT6000 (`aarch64_cortex-a53`/`mediatek-filogic` — the
+**validated** pair, both upgraded in place on `v0.6.0-rc6`); GL-AR300M
+(`mips_24kc`/`ath79-generic` or `mips_24kc`/`ath79-nand` — flash-constrained,
+[§A.4](#a4-ar300m-flash-space-caveat)). `v0.6.0-rc6` widened the matrix to 8
+pairs; see the feed's `TARGETS.md` for the full list and per-device validation
+status.
 
 **Recordings (Review Club):** a narrated reel of every path — the wizard, the
 merged manual install, and the post-install board + payment —
 [watch all](https://blossom2.orangesync.tech/f0329daccf09d71413f86ada64bc9abc2ffa88bb0ea3f20fa9365ca24cb43d8e.html).
 
-**Watch (what rc5 + rc28 fix):** [what release candidate `v0.6.0-rc5` + installer `rc28` fix](https://blossom2.orangesync.tech/9b44dbc1d9ddb0bd98a4a32460105148ed4c6e096efd0a861b3562dc16d07bfc.mp4) (2:27 — bounded mint registration under a *hanging* mint, the board as the default face, the private-subnet recheck, and the installer's pending/`password_status` behaviour; real captures from the fleet serial routers on rc5). Then: [manual install — both lanes](https://blossom2.orangesync.tech/fa844a207ee826cdffce1a76b0b599a5cbe6fe28705e3c669c2a2be854f466b5.mp4) (4:47) · [wizard — both lanes](https://blossom2.orangesync.tech/cd97f49c315eb3f0c050d98767399c3f41b42541b2c083c0c09951bc2786cebb.mp4) (3:52).
+**Watch (what rc6 fixes):** [target-qualified asset names + the widened device matrix](https://blossom2.orangesync.tech/9b44dbc1d9ddb0bd98a4a32460105148ed4c6e096efd0a861b3562dc16d07bfc.mp4) (2:27 — the bounded mint registration the 2026-10 rc line fixes, the board as the default face, the private-subnet recheck, and the installer's pending/`password_status` behaviour; real captures from the fleet serial routers). Then: [manual install — both lanes](https://blossom2.orangesync.tech/fa844a207ee826cdffce1a76b0b599a5cbe6fe28705e3c669c2a2be854f466b5.mp4) (4:47) · [wizard — both lanes](https://blossom2.orangesync.tech/cd97f49c315eb3f0c050d98767399c3f41b42541b2c083c0c09951bc2786cebb.mp4) (3:52). *(The rc-fixes reel is being re-recorded against rc6; links will be refreshed on publish.)*
 
 ---
 
@@ -44,6 +48,11 @@ VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g'); echo "TAG=$TAG VER=$VE
 
 `jq` alternative: `... | jq -r 'max_by(.published_at).tag_name'`. Use `$TAG`/`$VER`
 everywhere below — never paste a stale tag.
+
+From `v0.6.0-rc6` the release assets are named per **`(arch, target)`**
+(`tollgate-wrt_${VER}_${ARCH}-${TARGET}.${EXT}`), not per arch alone. Always
+resolve **both** on the router — `DISTRIB_ARCH` *and* `DISTRIB_TARGET`
+(`/` → `-`) — as §2.2 does. An arch-only name 404s.
 
 ---
 
@@ -80,7 +89,7 @@ channel (`alpha` = newest pre-release). Pin it explicitly if you need a specific
 one, and pin the release under test:
 
 ```sh
-... install-and-test.sh --installer-tag v0.6.0-alpha2-rc23 --tag "$TAG"
+... install-and-test.sh --installer-tag v0.6.0-alpha2-rc32 --tag "$TAG"
 ```
 
 A pass with no `--tag "$TAG"` is not evidence about `$TAG`.
@@ -128,9 +137,13 @@ as the wizard does.
 VER=$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-/_/g')
 BASE="https://github.com/FreedomTechFeed/packages/releases/download/$TAG"
 ARCH=$(sed -n 's/^DISTRIB_ARCH=//p' /etc/openwrt_release | tr -d "\"'")
+# The asset name is TARGET-QUALIFIED: <arch>-<target>. mips_24kc ships both
+# ath79-generic and ath79-nand, so the arch alone selects the wrong asset.
+TARGET=$(sed -n 's/^DISTRIB_TARGET=//p' /etc/openwrt_release | tr -d "\"'" | tr / -)
+[ -n "$ARCH" ] && [ -n "$TARGET" ] || { echo "ERROR: cannot read DISTRIB_ARCH/DISTRIB_TARGET" >&2; exit 1; }
 if command -v apk >/dev/null 2>&1; then EXT=apk; PM="apk add --allow-untrusted --force-overwrite"; apk update
 else EXT=ipk; PM="opkg install"; opkg update; fi
-FILE="tollgate-wrt_${VER}_${ARCH}.${EXT}"; cd /tmp
+FILE="tollgate-wrt_${VER}_${ARCH}-${TARGET}.${EXT}"; cd /tmp
 
 # A fresh image has no clock/ca-bundle, so HTTPS fails ("SSL verify error"). The
 # SHA256SUMS gate below carries integrity, so skip TLS for the FETCH only.
@@ -148,7 +161,7 @@ above *is* the integrity gate. The wizard also passes the opkg force flags
 vanilla router **try it plain first** and add flags one at a time.
 
 **No uplink on the router?** Use the release's **offline bundle**: on a machine
-with internet, `curl -fsSL <release>/tollgate-wrt_${VER}_${ARCH}-offline.tar.gz |
+with internet, `curl -fsSL <release>/tollgate-wrt-${VER}-${ARCH}-${TARGET}-offline.tar.gz |
 tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
 directory. It stages the package plus its full dependency closure and installs
 offline.
