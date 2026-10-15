@@ -99,3 +99,82 @@ func TestHealthProbeCmdWouldBreakWithDashS(t *testing.T) {
 		t.Fatalf("expected the uclient-fetch usage error in the -S variant body, got %q", body)
 	}
 }
+
+// TestMerchantStateReadsTheStartingRefusal pins the module's own explicit
+// startup-gate refusal (src/startup_gate.go) to merchantStarting: this is what
+// tells a slow-but-fine install apart from a dead one.
+func TestMerchantStateReadsTheStartingRefusal(t *testing.T) {
+	body := `{"code":"starting","status":"error","error":"tollgate is starting up"}`
+	if got := merchantState(body); got != merchantStarting {
+		t.Fatalf("merchantState(starting refusal) = %q, want starting; body=%q", got, body)
+	}
+}
+
+// TestMerchantStateReadsTheRateLimitRefusal pins the module's rate limiter body
+// (src/main.go RateLimitMiddleware: `429 {"error":"rate limit exceeded"}`) to
+// merchantRateLimited. The installer's own 3 s poll exceeds the API's default
+// 10 req/min for 127.0.0.1, so this body is EXPECTED during a health check and
+// must never be read as "the money path is not answering".
+func TestMerchantStateReadsTheRateLimitRefusal(t *testing.T) {
+	body := `{"error":"rate limit exceeded"}`
+	if got := merchantState(body); got != merchantRateLimited {
+		t.Fatalf("merchantState(rate-limit refusal) = %q, want rate-limited; body=%q", got, body)
+	}
+	// The phrase the API actually logs/answers must also classify, so a future
+	// wording change to "Too Many Requests" does not silently regress.
+	if got := merchantState("Too Many Requests"); got != merchantRateLimited {
+		t.Fatalf("merchantState('Too Many Requests') = %q, want rate-limited", got)
+	}
+}
+
+// TestMerchantStateEmptyIsUnknownNotStarting keeps the crash-loop discriminator
+// intact: a genuinely empty body (a dead/hung service) is neither healthy nor
+// starting nor rate-limited. Whether that becomes a hard failure is the CALLER's
+// decision — and only when the merchant was never once seen starting.
+func TestMerchantStateEmptyIsUnknownNotStarting(t *testing.T) {
+	if got := merchantState(""); got != merchantUnknown {
+		t.Fatalf("merchantState(empty) = %q, want unknown", got)
+	}
+}
+
+// TestMerchantStartVerdictSlowStartIsPendingNotFailed is the heart of the fix:
+// the exact router incident (2026-10-16) in a table.
+func TestMerchantStartVerdictSlowStartIsPendingNotFailed(t *testing.T) {
+	cases := []struct {
+		name        string
+		state       string
+		sawStarting bool
+		listening   bool
+		noInternet  bool
+		want        string
+	}{
+		{"healthy beats everything", merchantHealthy, false, true, false, "healthy"},
+		{"last probe empty but starting was seen -> pending (the bug)", merchantUnknown, true, true, false, "pending"},
+		{"last probe empty, no internet -> pending", merchantUnknown, false, true, true, "pending"},
+		{"last probe rate-limited -> pending", merchantRateLimited, false, true, false, "pending"},
+		{"last probe starting -> pending", merchantStarting, false, true, false, "pending"},
+		{"never started, empty, has internet -> fail (crash-loop)", merchantUnknown, false, true, false, "fail"},
+		{"not listening, never started -> fail", merchantUnknown, false, false, false, "fail"},
+		{"not listening but no internet -> fail (nothing to wait on)", merchantUnknown, false, false, true, "fail"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := merchantStartVerdict(c.state, c.sawStarting, c.listening, c.noInternet); got != c.want {
+				t.Fatalf("merchantStartVerdict(%q, saw=%v, listening=%v, noInternet=%v) = %q, want %q",
+					c.state, c.sawStarting, c.listening, c.noInternet, got, c.want)
+			}
+		})
+	}
+}
+
+// TestRouterInternetProbeCmdContract pins the shared no-internet probe to the
+// exact body the diagnostics block prints, so the classifier and the printed
+// evidence cannot drift apart.
+func TestRouterInternetProbeCmdContract(t *testing.T) {
+	if !strings.Contains(routerInternetProbeCmd, "no internet") {
+		t.Fatalf("routerInternetProbeCmd must emit the literal 'no internet' on failure: %q", routerInternetProbeCmd)
+	}
+	if !strings.Contains(routerInternetProbeCmd, "online") {
+		t.Fatalf("routerInternetProbeCmd must emit 'online' on success: %q", routerInternetProbeCmd)
+	}
+}

@@ -1959,6 +1959,14 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	listening := false
 	var healthBody string
 	state := merchantUnknown
+	// sawStarting records whether the merchant was EVER seen in its explicit
+	// "starting" state (or throttling the probe) during the wait. A single probe
+	// that comes back empty or rate-limited at the END must not flip a slow-but-
+	// fine install to a hard failure: if the merchant was starting at any point,
+	// it is a slow start, and the honest result is PENDING, never "Setup failed".
+	// Only a merchant we NEVER saw starting (and never saw healthy) is treated as
+	// a crash-loop / dead service.
+	sawStarting := false
 	// pendingNote is set when the merchant is still starting at the end of the
 	// wait budget. The install has NOT failed, so we must still walk the tail of
 	// the deploy — above all apply the root credential — before reporting the
@@ -1988,6 +1996,9 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		}
 		listening, healthBody = tollgateHealthProbe(client)
 		state = merchantState(healthBody)
+		if state == merchantStarting || state == merchantRateLimited {
+			sawStarting = true
+		}
 		if state == merchantHealthy {
 			healthOK = true
 			job.addLog(fmt.Sprintf("Health check passed on attempt %d", attempt))
@@ -1999,11 +2010,12 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		}
 	}
 	// Phase 2 — the merchant is EXPLICITLY starting (its own 503 "starting"
-	// refusal): it is building the wallet from the configured mints, which on a
-	// cold boot — and, in the module, unbounded per mint — can run for minutes.
-	// That is not a failure. Wait slowly, honoring the refusal's retry_after
-	// cadence, for up to the merchant budget.
-	if !healthOK && state == merchantStarting {
+	// refusal), or it is throttling our own poll (429 rate-limit): either way it
+	// is building the wallet from the configured mints, which on a cold boot —
+	// and, in the module, unbounded per mint — can run for minutes. That is not a
+	// failure. Wait slowly, honoring the refusal's retry_after cadence, for up to
+	// the merchant budget.
+	if !healthOK && (state == merchantStarting || state == merchantRateLimited || sawStarting) {
 		job.addLog("The merchant is starting (loading its wallet + mint health) — waiting up to ~5 minutes...")
 		for attempt := 1; attempt <= startingAttempts; attempt++ {
 			time.Sleep(8 * time.Second)
@@ -2014,6 +2026,9 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 			}
 			listening, healthBody = tollgateHealthProbe(client)
 			state = merchantState(healthBody)
+			if state == merchantStarting || state == merchantRateLimited {
+				sawStarting = true
+			}
 			if state == merchantHealthy {
 				healthOK = true
 				job.addLog(fmt.Sprintf("Merchant finished starting on attempt %d", attempt))
@@ -2027,36 +2042,51 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	if healthOK {
 		job.addLog("Health check passed — TollGate API responding")
 		job.setStep(11, "done", "API healthy on :2121")
-	} else if state == merchantStarting {
-		// The install has succeeded and the API is up; the merchant is simply not
-		// advertising yet. Do NOT fail — record the non-fatal PENDING state, but
-		// fall through to the credential tail first (below), so the operator can
-		// still log in to the router.
-		diag := tollgateDiagnostics(client, listening, healthBody)
-		job.addLog("Merchant still starting after the wait budget; the install has succeeded.\n" + diag)
-		pendingNote = "TollGate is installed and its API is up on :2121, but the merchant is still loading its wallet\n" +
-			"and mint health, so it is not advertising a price yet.\n\n" +
-			"This is a slow start, NOT a failed install — the package is installed and the service is running.\n" +
-			"The board and the captive portal come up as soon as the merchant finishes: use Re-check, or wait a\n" +
-			"few minutes and reload the board. If it stays pending, trim `accepted_mints` to two or three\n" +
-			"reachable mints and re-run, or check the router's uplink.\n" + diag
 	} else {
-		diag := tollgateDiagnostics(client, listening, healthBody)
-		job.addLog("Health check FAILED. Diagnostics:\n" + diag)
-		// Roll back wireless config so the router's radios are usable for
-		// re-scanning after a failed deploy (e.g. old binary crashed with
-		// new config, leaving radio0 stuck in STA mode). Both branches below
-		// are terminal failures of this step, so both go through the shared
-		// exit that restores the snapshot.
-		if listening {
-			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate API up but no advertisement",
-				"TollGate API is UP on :2121 but returned neither a pricing advertisement nor a starting\n"+
-					"refusal (an empty or unreadable body — the money path is not answering).\n"+diag)
-		} else {
-			jobFailAfterRestore(job, client, staCommitted, 11, "tollgate service not listening on :2121",
-				"The tollgate-wrt service is NOT listening on :2121 (crash-looping or still initializing).\n"+diag)
+		noInternet := routerHasNoInternet(client)
+		switch merchantStartVerdict(state, sawStarting, listening, noInternet) {
+		case "pending":
+			// The install has succeeded and the API is up; the merchant is simply
+			// not advertising yet — still loading its wallet/mints, throttling our
+			// own poll, or with no uplink to finish starting. Do NOT fail: record
+			// the non-fatal PENDING state, but fall through to the credential tail
+			// first (below), so the operator can still log in to the router.
+			diag := tollgateDiagnostics(client, listening, healthBody)
+			job.addLog("Merchant still starting after the wait budget; the install has succeeded.\n" + diag)
+			if noInternet {
+				// The common real-world shape: the router's upstream was down at
+				// install time, so its mint probes and wallet build cannot finish.
+				pendingNote = "TollGate is installed and its API is up on :2121, but the router has NO INTERNET uplink,\n" +
+					"so the merchant cannot probe its mints or finish building its wallet — it is not advertising a price yet.\n\n" +
+					"This is NOT a failed install: the package is installed and the service is running. Bring the router's\n" +
+					"uplink up, then use Re-check (or wait a few minutes and reload the board): the merchant finishes\n" +
+					"starting and the captive portal opens as soon as it can reach its mints.\n" + diag
+			} else {
+				pendingNote = "TollGate is installed and its API is up on :2121, but the merchant is still loading its wallet\n" +
+					"and mint health, so it is not advertising a price yet.\n\n" +
+					"This is a slow start, NOT a failed install — the package is installed and the service is running.\n" +
+					"The board and the captive portal come up as soon as the merchant finishes: use Re-check, or wait a\n" +
+					"few minutes and reload the board. If it stays pending, trim `accepted_mints` to two or three\n" +
+					"reachable mints and re-run, or check the router's uplink.\n" + diag
+			}
+		default: // "fail" — a merchant never once seen starting, with a live API, is a real crash-loop.
+			diag := tollgateDiagnostics(client, listening, healthBody)
+			job.addLog("Health check FAILED. Diagnostics:\n" + diag)
+			// Roll back wireless config so the router's radios are usable for
+			// re-scanning after a failed deploy (e.g. old binary crashed with
+			// new config, leaving radio0 stuck in STA mode). Both branches below
+			// are terminal failures of this step, so both go through the shared
+			// exit that restores the snapshot.
+			if listening {
+				jobFailAfterRestore(job, client, staCommitted, 11, "tollgate API up but no advertisement",
+					"TollGate API is UP on :2121 but returned neither a pricing advertisement nor a starting\n"+
+						"refusal (an empty or unreadable body — the money path is not answering).\n"+diag)
+			} else {
+				jobFailAfterRestore(job, client, staCommitted, 11, "tollgate service not listening on :2121",
+					"The tollgate-wrt service is NOT listening on :2121 (crash-looping or still initializing).\n"+diag)
+			}
+			return
 		}
-		return
 	}
 
 	// The health check was the last gate, so the install has succeeded: this is
@@ -2466,25 +2496,32 @@ func adLooksHealthy(body string) bool {
 	return strings.Contains(body, "kind") || strings.Contains(body, "metric") || strings.Contains(body, "pubkey")
 }
 
-// The three states a listening :2121 can be in, per a single probe.
+// The states a listening :2121 can be in, per a single probe.
 const (
-	merchantHealthy  = "healthy"
-	merchantStarting = "starting"
-	merchantUnknown  = "unknown"
+	merchantHealthy     = "healthy"
+	merchantStarting    = "starting"
+	merchantRateLimited = "rate-limited"
+	merchantUnknown     = "unknown"
 )
 
 // merchantState classifies one GET / probe of the payment API.
 //
-//   - healthy  — the NIP-61 advertisement came back (the merchant is up).
-//   - starting — the module's OWN explicit "starting" refusal: while it builds
+//   - healthy     — the NIP-61 advertisement came back (the merchant is up).
+//   - starting    — the module's OWN explicit "starting" refusal: while it builds
 //     the wallet it answers `503 {"code":"starting", …}` (src/startup_gate.go),
 //     whose BODY names the state, so a readable body is enough to tell
 //     "starting" from "down". The probe deliberately does NOT rely on the HTTP
 //     status line (it cannot: uclient-fetch has no header flag — see
 //     healthProbeCmd), which is why a 503 with an unreadable body is "unknown".
-//   - unknown  — anything else (empty, garbage): the caller keeps the hard
+//   - rate-limited — the module's own rate limiter answered
+//     `429 {"error":"rate limit exceeded"}` (src/main.go RateLimitMiddleware). This
+//     happens when the installer's OWN poll cadence (3 s) exceeds the API's
+//     default 10 req/min for 127.0.0.1: the merchant is up and working; the probe
+//     is simply knocking too fast. It must be retried, never read as "down".
+//   - unknown     — anything else (empty, garbage): the caller keeps the hard
 //     failure for this, because it is what a crash-loop / dead service looks
-//     like.
+//     like. (A probe that is unknown at the END is still only a hard failure if
+//     we never once saw the merchant starting — see the caller.)
 func merchantState(body string) string {
 	if adLooksHealthy(body) {
 		return merchantHealthy
@@ -2494,7 +2531,50 @@ func merchantState(body string) string {
 		strings.Contains(low, "starting up") || strings.Contains(low, "503 service unavailable") {
 		return merchantStarting
 	}
+	if strings.Contains(low, "rate limit exceeded") || strings.Contains(low, "too many requests") {
+		return merchantRateLimited
+	}
 	return merchantUnknown
+}
+
+// merchantStartVerdict is the single, pure decision at the end of the health
+// wait: given the LAST probe's state, whether the merchant was ever seen
+// starting, whether the API is listening, and whether the router has no uplink,
+// should the deploy report healthy, pending, or fail?
+//
+//   - A merchant seen starting (or throttling our poll) at ANY point is a SLOW
+//     START, never "Setup failed" — one empty or rate-limited final probe must
+//     not flip it. This is rc28's promise, made robust to the last-probe race.
+//   - A listening API with no uplink is ALSO a slow start: the merchant cannot
+//     probe mints or build its wallet offline, so PENDING with the cause named is
+//     the honest result, not a "no advertisement" failure.
+//   - Only a merchant we NEVER saw starting, with a state that is not healthy,
+//     starting, or rate-limited, is a genuine failure (a crash-loop / dead
+//     service on a live API, or a service not listening at all).
+func merchantStartVerdict(state string, sawStarting, listening, noInternet bool) string {
+	if state == merchantHealthy {
+		return "healthy"
+	}
+	if sawStarting || state == merchantStarting || state == merchantRateLimited {
+		return "pending"
+	}
+	if listening && noInternet {
+		return "pending"
+	}
+	return "fail"
+}
+
+// routerInternetProbeCmd answers "online" or "no internet" for the router's
+// uplink. Shared by the diagnostics block and by the no-internet classifier so
+// the two can never disagree about what "no uplink" means.
+const routerInternetProbeCmd = "(wget -q -T4 -O /dev/null https://1.1.1.1 2>/dev/null && echo online) || echo 'no internet'"
+
+// routerHasNoInternet reports whether the router's uplink is down, per the same
+// probe the diagnostics print. A merchant that cannot reach the internet cannot
+// finish starting (its boot probes the configured mints and builds the wallet),
+// so a no-uplink box is a PENDING start, never a failed install.
+func routerHasNoInternet(client *ssh.Client) bool {
+	return strings.Contains(sshRun(client, routerInternetProbeCmd), "no internet")
 }
 
 // tollgateDiagnostics gathers router-side state after a failed health check so
@@ -2514,7 +2594,7 @@ func tollgateDiagnostics(client *ssh.Client, listening bool, body string) string
 		diagField("proc", sshRun(client, "pgrep -af tollgate-wrt 2>/dev/null | head -1"), 200),
 		diagField("date", sshRun(client, "date -u 2>/dev/null"), 80),
 		diagField("mints", sshRun(client, "jq -r '.accepted_mints[]?.url' /etc/tollgate/config.json 2>/dev/null | tr '\\n' ' '"), 200),
-		diagField("internet", sshRun(client, "(wget -q -T4 -O /dev/null https://1.1.1.1 2>/dev/null && echo online) || echo 'no internet'"), 40),
+		diagField("internet", sshRun(client, routerInternetProbeCmd), 40),
 		diagField("dns", sshRun(client, "nslookup github.com 2>&1 | tail -2"), 160),
 		diagField("log", sshRun(client, "logread 2>/dev/null | grep -iE 'tollgate|merchant|mint|wallet' | tail -12"), 1500),
 		diagField("debug", sshRun(client, "tail -15 /tmp/tollgate-debug.log 2>/dev/null"), 1500),
