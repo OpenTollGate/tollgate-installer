@@ -63,34 +63,43 @@ var forbiddenDeployIdentifiers = []string{
 // fails TestFeedReleaseIdentityIsPinned — that keeps a repin auditable. A stale
 // pin is not merely a missed fix: it DOWNGRADES a router already on a newer
 // build.
-const wantFeedReleaseTag = "v0.6.0-rc5"
+const wantFeedReleaseTag = "v0.6.0-rc6"
 
 // wantFeedPkgVersion is wantFeedReleaseTag in the feed's PKG_VERSION spelling:
 // leading "v" dropped, hyphens turned into underscores (apk-tools 3.x rejects
 // hyphens in versions). The installed package reports this as
 // "0.6.0_rc5-r1" — note it is NOT the string the binary reports about itself
 // (see docs/package-provenance.md).
-const wantFeedPkgVersion = "0.6.0_rc5"
+const wantFeedPkgVersion = "0.6.0_rc6"
 
 // wantTollgatePkgURL is the exact release asset pinned by the wizard.
 // The v0.6.0-rc5 release of FreedomTechFeed/packages ships the tollgate-wrt
 // package for the aarch64_cortex-a53 target (feed-primary).
 // It is DERIVED from feedAssetURL so it can never drift from the generic
 // URL builder — this test pins the derivation, not a literal.
-const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc5/tollgate-wrt_0.6.0_rc5_aarch64_cortex-a53.ipk"
+const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc6/tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.ipk"
 
-// feedReleasePublishedArches is the arch matrix the current feed RC actually
-// publishes: 2 tuples × {.ipk, .apk} = the 4 tollgate-wrt assets on
-// v0.6.0-rc5. Earlier pre-releases published a wider matrix (7 tuples); the RC
-// line currently builds aarch64_cortex-a53 + mips_24kc. This is a TEST FIXTURE
-// describing one release, not a runtime allowlist — feedAssetURL stays generic
-// on purpose, so an arch the feed adds later works without a code change. It is
-// also deliberately NOT the set of tuples normalizeBareArch can emit: an arch
-// absent from the feed matrix resolves to a URL that 404s rather than silently
-// installing a different arch's package.
-var feedReleasePublishedArches = []string{
-	"aarch64_cortex-a53",
-	"mips_24kc",
+// feedReleasePublishedArches is the arch/target matrix the current feed RC
+// actually publishes: 8 pairs × {.ipk, .apk} = the 16 tollgate-wrt assets on
+// v0.6.0-rc6. (rc5 carried only the 2 club rows, arch-only named; rc6 widened
+// the matrix to every historically-supported arch AND target-qualified the
+// names, so mips_24kc appears twice — ath79-generic and ath79-nand.) This is a
+// TEST FIXTURE describing one release, not a runtime allowlist — feedAssetURL
+// stays generic on purpose, so an arch/target the feed adds later works without
+// a code change. It is also deliberately NOT the set of tuples normalizeBareArch
+// can emit: a pair absent from the feed matrix resolves to a URL that 404s
+// rather than silently installing a different target's package.
+type archTarget struct{ arch, target string }
+
+var feedReleasePublishedArches = []archTarget{
+	{"aarch64_cortex-a53", "mediatek-filogic"},
+	{"mips_24kc", "ath79-generic"},
+	{"mips_24kc", "ath79-nand"},
+	{"aarch64_cortex-a72", "bcm27xx-bcm2711"},
+	{"arm_cortex-a7_neon-vfpv4", "bcm27xx-bcm2709"},
+	{"mipsel_24kc", "ramips-mt7621"},
+	{"mips64_octeonplus", "octeon-generic"},
+	{"x86_64", "x86-64"},
 }
 
 // TestTollgatePkgURLPinsExistingAsset pins the package download URL to the
@@ -112,7 +121,7 @@ func TestTollgatePkgURLPinsExistingAsset(t *testing.T) {
 	// The COMPILED pin's asset spelling (the offline fallback) must be the one
 	// this fixture records: tag and PKG_VERSION in the same URL.
 	pinURL := "https://github.com/" + feedRepoSlug + "/releases/download/" + wantFeedReleaseTag +
-		"/tollgate-wrt_" + wantFeedPkgVersion + "_aarch64_cortex-a53.ipk"
+		"/tollgate-wrt_" + wantFeedPkgVersion + "_aarch64_cortex-a53-mediatek-filogic.ipk"
 	if pinURL != wantTollgatePkgURL {
 		t.Errorf("pin URL spelling = %q, want %q", pinURL, wantTollgatePkgURL)
 	}
@@ -388,14 +397,14 @@ func TestFeedReleasePublishesEachDerivedAssetName(t *testing.T) {
 	}
 
 	wantNames := make(map[string]bool, 2*len(feedReleasePublishedArches))
-	for _, arch := range feedReleasePublishedArches {
+	for _, at := range feedReleasePublishedArches {
 		for _, ext := range []string{".ipk", ".apk"} {
-			name := path.Base(feedAssetURL(arch, testTargetFor(arch), ext))
+			name := path.Base(feedAssetURL(at.arch, at.target, ext))
 			wantNames[name] = true
 			size, ok := published[name]
 			if !ok {
-				t.Errorf("derived asset %q (arch %q, %s) is NOT published on release %q — that arch cannot install",
-					name, arch, ext, feedReleaseTag)
+				t.Errorf("derived asset %q (arch %q, target %q, %s) is NOT published on release %q — that arch cannot install",
+					name, at.arch, at.target, ext, feedReleaseTag)
 				continue
 			}
 			if size <= 0 {

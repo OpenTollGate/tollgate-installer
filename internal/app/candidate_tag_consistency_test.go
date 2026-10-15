@@ -48,7 +48,7 @@ func TestPkgCandidateURLsNeverCrossTags(t *testing.T) {
 	orig := feedReleaseTag
 	defer func() { feedReleaseTag = orig }()
 
-	arches := append([]string{"aarch64_cortex-a53"}, feedReleasePublishedArches...)
+	arches := []string{"aarch64_cortex-a53", "mipsel_24kc", "x86_64"}
 	tags := []string{
 		wantFeedReleaseTag,          // the pinned release
 		"v0.6.0-alpha2-pre9",        // a previous release of the same feed

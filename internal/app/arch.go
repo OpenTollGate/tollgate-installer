@@ -116,7 +116,7 @@ const (
 	//
 	// By default the wizard does NOT use this pin — it auto-resolves the newest
 	// release candidate (feedChannelDefault). The pin is the offline fallback.
-	feedReleaseTagDefault = "v0.6.0-rc5"
+	feedReleaseTagDefault = "v0.6.0-rc6"
 	// feedReleaseTagEnv is the environment variable that overrides the resolved
 	// tag. Set it to select a specific published release tag (e.g. an older tag
 	// to reproduce an old build, or an exact pre-release) without a rebuild:

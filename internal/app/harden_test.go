@@ -80,13 +80,13 @@ func TestFeedPkgVersionPrefixMatchesInstalled(t *testing.T) {
 	if want == "" {
 		t.Fatal("feedPkgVersion() returned empty")
 	}
-	if !strings.HasPrefix("0.6.0_rc5-r1", want) {
+	if !strings.HasPrefix("0.6.0_rc6-r1", want) {
 		t.Errorf("installed version does not start with %q", want)
 	}
 	// The IMMEDIATELY PREVIOUS release must not match. An adjacent version is
 	// the case an off-by-one in the prefix rule actually gets wrong, so this is
 	// a stronger assertion than reaching for a far-away older tag.
-	if strings.HasPrefix("0.6.0_rc4-r1", want) {
-		t.Errorf("the previous release (rc4) must NOT match the prefix %q", want)
+	if strings.HasPrefix("0.6.0_rc5-r1", want) {
+		t.Errorf("the previous release (rc5) must NOT match the prefix %q", want)
 	}
 }

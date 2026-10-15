@@ -92,12 +92,12 @@ func TestFeedAssetURL(t *testing.T) {
 	ver := strings.ReplaceAll(strings.TrimPrefix(tag, "v"), "-", "_")
 
 	seen := 0
-	for _, arch := range feedReleasePublishedArches {
+	for _, at := range feedReleasePublishedArches {
 		for _, ext := range []string{".ipk", ".apk"} {
 			seen++
-			want := prefix + "tollgate-wrt_" + ver + "_" + arch + "-" + testTargetFor(arch) + ext
-			if got := feedAssetURL(arch, testTargetFor(arch), ext); got != want {
-				t.Errorf("feedAssetURL(%q, %q) = %q, want %q", arch, ext, got, want)
+			want := prefix + "tollgate-wrt_" + ver + "_" + at.arch + "-" + at.target + ext
+			if got := feedAssetURL(at.arch, at.target, ext); got != want {
+				t.Errorf("feedAssetURL(%q, %q) = %q, want %q", at.arch, ext, got, want)
 			}
 		}
 	}
@@ -393,11 +393,11 @@ func TestArchAssetsAreLive(t *testing.T) {
 
 	// Feed URLs for every canonical tuple the pinned release publishes (both
 	// formats) — the test fixture matrix, not a runtime allowlist.
-	for _, arch := range feedReleasePublishedArches {
+	for _, at := range feedReleasePublishedArches {
 		for name, ext := range map[string]string{"IPK": ".ipk", "APK": ".apk"} {
-			url := feedAssetURL(arch, testTargetFor(arch), ext)
-			t.Run("feed_"+arch+"_"+name, func(t *testing.T) {
-				probe("feed "+arch+" "+name, url)
+			url := feedAssetURL(at.arch, at.target, ext)
+			t.Run("feed_"+at.arch+"-"+at.target+"_"+name, func(t *testing.T) {
+				probe("feed "+at.arch+"-"+at.target+" "+name, url)
 			})
 		}
 	}
