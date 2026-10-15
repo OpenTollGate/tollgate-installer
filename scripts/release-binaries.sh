@@ -44,6 +44,7 @@ TARGETS="${TARGETS:-linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/am
 TAG=""
 PUBLISH=0
 REPRO_CHECK=0
+SKIP_TESTS=0
 REPO=""
 RELEASE_NOTES=""
 
@@ -61,6 +62,7 @@ Options:
   --out <dir>       Output directory (default: <repo>/dist).
   --notes <text>    Release notes to use when the release is created.
   --repro-check     Build every target twice and compare the SHA-256 sums.
+  --skip-tests      Do NOT run the go vet/test gate first (not recommended).
   -h, --help        Show this help.
 USAGE
 }
@@ -73,6 +75,7 @@ while [ $# -gt 0 ]; do
         --out)         OUT="${2:-}"; shift 2 ;;
         --notes)       RELEASE_NOTES="${2:-}"; shift 2 ;;
         --repro-check) REPRO_CHECK=1; shift ;;
+        --skip-tests)  SKIP_TESTS=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "ERROR: unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -118,6 +121,20 @@ if [ "${PUBLISH}" = 1 ]; then
             | sed -e 's#^git@github.com:##' -e 's#^https://github.com/##' -e 's#\.git$##')"
         [ -n "${REPO}" ] || die "could not derive the release repo from the origin remote; pass --repo <owner/name>"
     fi
+fi
+
+# --- test gate --------------------------------------------------------------
+# A release must not ship code the suite rejects. The rc28-rc30 health-probe bug
+# (a `wget -S` the router's uclient-fetch rejects) reached an operator because
+# nothing ran the tests before publishing. Refuse to build unless vet+test pass;
+# --skip-tests is the deliberate escape hatch.
+if [ "${SKIP_TESTS}" = 1 ]; then
+    echo "WARNING: skipping the go vet/test gate (--skip-tests)" >&2
+else
+    echo ">> go vet ./..." >&2
+    ( cd "${ROOT}" && go vet ./... ) || die "go vet failed — refusing to release"
+    echo ">> go test ./..." >&2
+    ( cd "${ROOT}" && go test ./... ) || die "go test failed — refusing to release"
 fi
 
 # Version stamped into the binary: --tag when given, else the newest reachable
