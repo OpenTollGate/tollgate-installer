@@ -2411,13 +2411,32 @@ func failTransportLost(job *Job, step int, ip string, err error) {
 			"a different port. Try the router's OTHER ethernet port, or find it on its new LAN address, then retry.")
 }
 
+// healthProbeCmd is the shell one-liner the health probe runs ON THE ROUTER: it
+// reports whether :2121 listens, then the first bytes of GET /.
+//
+// It uses `wget -qO-` and NOT `wget -S`. OpenWrt's `wget` is uclient-fetch
+// (/usr/bin/wget → /bin/uclient-fetch), which has NO `-S`: it rejects it with
+// "unrecognized option: S" and prints its usage. A probe that passed `-S`
+// therefore captured the usage text instead of the API body, classified a
+// HEALTHY merchant as unknown, and made every install report "Setup failed"
+// (rc28–rc30, #134). The body alone carries everything merchantState needs: a
+// healthy merchant returns the NIP-61 advertisement, and a still-starting one
+// returns the module's own 503 {"code":"starting", …} refusal. `-qO-` is
+// understood by uclient-fetch, busybox wget, and GNU wget alike.
+const healthProbeCmd = "netstat -ltn 2>/dev/null | grep -q ':2121' && echo LISTEN || echo NOLISTEN; echo '~~'; wget -qO- --timeout=3 http://127.0.0.1:2121/ 2>&1 | head -c 600"
+
 // tollgateHealthProbe checks the TollGate API from the ROUTER's own shell:
-// whether :2121 is listening, and the first bytes of GET /. It captures the
-// response HEADERS too (wget -S, merged) so a 503 "starting" refusal is visible
-// even when its body is not read. It never fails — a closed port yields
-// listening=false and an empty body.
+// whether :2121 is listening, and the first bytes of GET /. It never fails — a
+// closed port yields listening=false and an empty body. See healthProbeCmd for
+// why it does not use `wget -S`.
 func tollgateHealthProbe(client *ssh.Client) (listening bool, body string) {
-	out := sshRun(client, "netstat -ltn 2>/dev/null | grep -q ':2121' && echo LISTEN || echo NOLISTEN; echo '~~'; wget -S -qO- --timeout=3 http://127.0.0.1:2121/ 2>&1 | head -c 600")
+	return parseHealthProbe(sshRun(client, healthProbeCmd))
+}
+
+// parseHealthProbe splits the healthProbeCmd output into the listening flag and
+// the API body. Pure, so the probe command and its parse can be tested together
+// (see health_probe_test.go).
+func parseHealthProbe(out string) (listening bool, body string) {
 	listening = strings.Contains(out, "LISTEN") && !strings.Contains(out, "NOLISTEN")
 	if i := strings.Index(out, "~~"); i >= 0 {
 		body = strings.TrimSpace(out[i+2:])
@@ -2443,12 +2462,11 @@ const (
 //
 //   - healthy  — the NIP-61 advertisement came back (the merchant is up).
 //   - starting — the module's OWN explicit "starting" refusal: while it builds
-//     the wallet it answers `503 {"code":"starting",...}` (src/startup_gate.go).
-//     This is not a failure — the API is up and the money path will open — so
-//     the gate waits rather than blaming the router. The probe captures the
-//     response headers (`wget -S`), so the 503 status line is matched too: a
-//     body we could not read but a status that says 503 is still "starting",
-//     never "down".
+//     the wallet it answers `503 {"code":"starting", …}` (src/startup_gate.go),
+//     whose BODY names the state, so a readable body is enough to tell
+//     "starting" from "down". The probe deliberately does NOT rely on the HTTP
+//     status line (it cannot: uclient-fetch has no header flag — see
+//     healthProbeCmd), which is why a 503 with an unreadable body is "unknown".
 //   - unknown  — anything else (empty, garbage): the caller keeps the hard
 //     failure for this, because it is what a crash-loop / dead service looks
 //     like.
