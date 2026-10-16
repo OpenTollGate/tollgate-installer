@@ -34,8 +34,126 @@ func TestCleanSlateImageURLForEachRelease(t *testing.T) {
 }
 
 func TestCleanSlateRejectsUnmappedBoardBeforeFlash(t *testing.T) {
-	if _, err := cleanSlateImage("gl-not-a-real-board", "25.12.5"); err == nil || !strings.Contains(err.Error(), "Unknown GL.iNet model") {
+	if _, err := cleanSlateImage("gl-not-a-real-board", "25.12.5"); err == nil || !strings.Contains(err.Error(), "Unsupported router model") {
 		t.Fatalf("error = %v, want unknown-model refusal", err)
+	}
+}
+
+// A supported router that has no image on the REQUESTED release must be refused
+// by name, not handed a URL that 404s mid-deploy. CF-WR632AX is such a board:
+// the feed publishes tollgate-wrt for it and it flashes fine on 25.12.5, but
+// downloads.openwrt.org has NO 24.10.8 sysupgrade image (verified HTTP 404
+// 2026-10-16 — the device was added to OpenWrt after the 24.10 branch), while
+// glinet_gl-mt3000 controls 200 on both.
+func TestCleanSlateRefusesReleaseThatHasNoImageForTheBoard(t *testing.T) {
+	// Positive control: the release the board DOES ship on must still work.
+	ok, err := cleanSlateImage("comfast,cf-wr632ax", "25.12.5")
+	if err != nil {
+		t.Fatalf("25.12.5 must resolve for CF-WR632AX: %v", err)
+	}
+	if !strings.Contains(ok.URL(), "comfast_cf-wr632ax") || !strings.Contains(ok.URL(), "/releases/25.12.5/") {
+		t.Fatalf("25.12.5 URL = %q", ok.URL())
+	}
+
+	// Control for the OTHER branch: a GL.iNet board still ships on 24.10.8, so
+	// the refusal must be board-specific, not "24.10.8 is dead".
+	if _, err := cleanSlateImage("gl-mt3000", "24.10.8"); err != nil {
+		t.Fatalf("gl-mt3000 on 24.10.8 must still resolve: %v", err)
+	}
+
+	img, err := cleanSlateImage("comfast,cf-wr632ax", "24.10.8")
+	if err == nil {
+		t.Fatalf("24.10.8 for CF-WR632AX was accepted and produced %q — that URL 404s mid-deploy", img.URL())
+	}
+	msg := err.Error()
+	// The failure mode must be a CLEAR error: it names the release and the
+	// router, and tells the operator what to do instead.
+	for _, want := range []string{"24.10.8", "cf-wr632ax", "flash"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal %q does not mention %q", msg, want)
+		}
+	}
+	// No usable image may escape: the zero value's URL() is the malformed
+	// "…/releases//targets///…" placeholder, so a caller that ignored the error
+	// could not accidentally download a CF-WR632AX image for 24.10.8. Assert the
+	// distinguishing parts are absent rather than that the string is empty.
+	if got := img.URL(); strings.Contains(got, "comfast") || strings.Contains(got, "24.10.8") {
+		t.Errorf("refusal returned a usable image URL: %q", got)
+	}
+	// It must be the board-shaped refusal, not the generic bad-release one.
+	if strings.Contains(msg, "unsupported OpenWrt release") {
+		t.Errorf("refusal fell through to the generic release gate: %q", msg)
+	}
+}
+
+// The operator-facing contract: the release gate is enforced in the INSPECT
+// endpoint, so the flash button never unlocks for a board/release pair whose
+// image does not exist. A 200 with a URL here is the defect.
+func TestCleanSlateInfoRefusesBoardWithoutImageOnRequestedRelease(t *testing.T) {
+	knownHostsStore(t) // isolate the trust store, no ambient pin
+	router := startCannedRouter(t, func(cmd string) string {
+		if strings.Contains(cmd, "/tmp/sysinfo/board_name") {
+			return "comfast,cf-wr632ax\n"
+		}
+		return ""
+	})
+	withTrustedFingerprint(t, ssh.FingerprintSHA256(router.hostKey.PublicKey()))
+	_, port, err := net.SplitHostPort(router.ln.Addr().String())
+	if err != nil {
+		t.Fatalf("canned router address: %v", err)
+	}
+	oldPort := sshDialPort
+	sshDialPort = port
+	t.Cleanup(func() { sshDialPort = oldPort })
+
+	// Any download at all means the gate leaked past inspect.
+	oldDownload := cleanSlateDownload
+	cleanSlateDownload = func(url string) ([]byte, error) {
+		t.Errorf("inspect fetched %s — the release gate must refuse before any download", url)
+		return nil, nil
+	}
+	t.Cleanup(func() { cleanSlateDownload = oldDownload })
+
+	body, _ := json.Marshal(cleanSlateRequest{IP: "127.0.0.1", Version: "24.10.8"})
+	w := httptest.NewRecorder()
+	cleanSlateInfo(w, httptest.NewRequest(http.MethodPost, "/api/clean-slate-info", bytes.NewReader(body)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/clean-slate-info = HTTP %d: %s (want 400 with a clear refusal)", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if !strings.Contains(got["error"], "24.10.8") || !strings.Contains(got["error"], "cf-wr632ax") {
+		t.Errorf("error = %q, want the release and the board named", got["error"])
+	}
+	if got["image_url"] != "" {
+		t.Errorf("image_url = %q, want none — the button must not unlock", got["image_url"])
+	}
+}
+
+// Every row of the table that carries an explicit release allowlist must be
+// internally consistent: the pinned Version is in the list, and a release
+// outside it is refused rather than silently URL-building. This keeps the data
+// honest as rows are added.
+func TestGlModelMapVersionAllowlistsAreSelfConsistent(t *testing.T) {
+	for model, img := range glModelMap {
+		if _, gated := glModelReleases[model]; !gated {
+			continue // inherits every supported release
+		}
+		if !modelSupportsRelease(model, img.Version) {
+			t.Errorf("%s: pinned Version %q is not in its own allowlist %v", model, img.Version, glModelReleases[model])
+		}
+		if _, err := cleanSlateImage(model, img.Version); err != nil {
+			t.Errorf("%s: its own pinned release %q is refused: %v", model, img.Version, err)
+		}
+		for _, version := range []string{"25.12.5", "24.10.8"} {
+			if modelSupportsRelease(model, version) {
+				continue
+			}
+			if _, err := cleanSlateImage(model, version); err == nil {
+				t.Errorf("%s: release %s is outside the allowlist %v but resolved anyway", model, version, glModelReleases[model])
+			}
+		}
 	}
 }
 
@@ -133,7 +251,14 @@ func TestCleanSlateFlashVerdictUsesSharedSysupgradePredicate(t *testing.T) {
 // Every row of the model table must survive the round trip the wizard performs:
 // the board name the table publishes is the string the router reports and the
 // string the operator is asked to type, so it must resolve back to its own row
-// for both supported releases — not just the models we happened to try by hand.
+// on every release the model actually ships on — not just the models we happened
+// to try by hand.
+//
+// "Every release the model ships on" is not always BOTH: CF-WR632AX has no
+// 24.10.8 image (added to OpenWrt after the 24.10 branch), and that is data in
+// glModelReleases, not a defect in the round trip — so the expected refusals are
+// derived from the same allowlist rather than assumed away, and a refusal for a
+// release the model DOES ship on still fails the test.
 func TestCleanSlateInspectResolvesEverySupportedRouter(t *testing.T) {
 	if len(glModelMap) == 0 {
 		t.Fatal("model table is empty")
@@ -141,6 +266,13 @@ func TestCleanSlateInspectResolvesEverySupportedRouter(t *testing.T) {
 	for model, want := range glModelMap {
 		for _, version := range []string{"25.12.5", "24.10.8"} {
 			got, err := cleanSlateImage(want.Board, version)
+			if !modelSupportsRelease(model, version) {
+				if err == nil {
+					t.Errorf("model %s: board %q resolved on %s, which has no image for it (%v) — that URL 404s mid-deploy",
+						model, want.Board, version, glModelReleases[model])
+				}
+				continue
+			}
 			if err != nil {
 				t.Errorf("model %s: inspect would refuse board %q on %s: %v", model, want.Board, version, err)
 				continue
