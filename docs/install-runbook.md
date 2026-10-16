@@ -34,7 +34,7 @@ status.
 merged manual install, and the post-install board + payment —
 [watch all](https://blossom2.orangesync.tech/f0329daccf09d71413f86ada64bc9abc2ffa88bb0ea3f20fa9365ca24cb43d8e.html).
 
-**Watch (what rc6 fixes):** [target-qualified asset names + the widened device matrix](https://blossom2.orangesync.tech/9b44dbc1d9ddb0bd98a4a32460105148ed4c6e096efd0a861b3562dc16d07bfc.mp4) (2:27 — the bounded mint registration the 2026-10 rc line fixes, the board as the default face, the private-subnet recheck, and the installer's pending/`password_status` behaviour; real captures from the fleet serial routers). Then: [manual install — both lanes](https://blossom2.orangesync.tech/fa844a207ee826cdffce1a76b0b599a5cbe6fe28705e3c669c2a2be854f466b5.mp4) (4:47) · [wizard — both lanes](https://blossom2.orangesync.tech/cd97f49c315eb3f0c050d98767399c3f41b42541b2c083c0c09951bc2786cebb.mp4) (3:52). *(The rc-fixes reel is being re-recorded against rc6; links will be refreshed on publish.)*
+**Watch (what rc6 fixes):** [target-qualified asset names + the widened device matrix](https://blossom2.orangesync.tech/06a8735d3b61c5701d4c8f94307d0fde7fddf2a270e4d3f0df740f28a03b59d4.mp4) (3:27 — rc6 re-tags the assets per `(arch, target)`, ships the 8 validated targets, and fixes the two rows that would not build; carried from the rc line: the bounded mint registration, the board as the default face, the private-subnet recheck, and the installer's pending/`password_status` behaviour — real captures from the fleet serial routers). Then: [manual install — both lanes](https://blossom2.orangesync.tech/4ff002c003a3e21c80fd401bb8dd226abbb04826de174717d87f084fe73a65aa.mp4) (2:07) · [wizard — real deploy](https://blossom2.orangesync.tech/e793ea38c1eb98fbfd073f6e055f6026a5c04551473e23e8fa9b3997ef1bf4c8.mp4) (1:23).
 
 ---
 
@@ -207,7 +207,7 @@ A **guest** on `br-lan` pays and gets internet but cannot reach the admin UIs;
 **you**, on the wire or the private SSID (`br-private`), can. Your management
 address is `uci get network.private.ipaddr`.
 
-> **Watch (160 s, narrated):** the board + payment — [the captive portal (Cashu + Lightning) and the admin board (dashboard → wallet → wifi → settings → Drain)](https://blossom2.orangesync.tech/5c2856066f3e2f6003bb3fcbca72725a5f751fe5851af7808dd5f59690b31f8a.mp4) · [captions](https://blossom2.orangesync.tech/0fef5e40ef971b1d1d07282e9c8d9a54b3d344a6ca5d57c13e5c0da4a3c060a1.vtt). The board is the **default face** at `https://tollgate-<4hex>.lan/`; LuCI is one **button** away.
+> **Watch (121 s, narrated):** the board + payment — [the captive portal (Cashu + Lightning) and the admin board (dashboard → wallet → wifi → settings → Drain)](https://blossom2.orangesync.tech/6ba0e05deec297f79e95bb9bc780622f5f285870e722f9079f7af29559175728.mp4). The portal segment pays with a **real testnet e-cash token** from a real guest on the box. The board is the **default face** at `https://tollgate-<4hex>.lan/`; LuCI is one **button** away.
 
 ### The password
 
