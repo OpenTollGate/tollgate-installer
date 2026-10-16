@@ -1062,13 +1062,15 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(2, "running", "")
 	if isStockGL || req.ForceFlash {
 		if glModel == "" {
-			jobFail(job, 2, "Cannot determine GL.iNet model", "Force-flash requested but the router's GL.iNet board could not be determined (no /etc/gl-inet-release and no glinet board_name). Refusing to guess an image — flash manually.")
+			s, d := flashModelUnknownError()
+			jobFail(job, 2, s, d)
 			return
 		}
 
 		img, ok := glModelMap[glModel]
 		if !ok {
-			jobFail(job, 2, "Unknown GL.iNet model: "+glModel, "Unknown GL.iNet model "+glModel+". Please update the model table in images.go or flash manually.")
+			s, d := flashModelUnsupportedError(glModel)
+			jobFail(job, 2, s, d)
 			return
 		}
 
@@ -3139,15 +3141,26 @@ func reconnectSSH(ip, password string, attempts int, delay time.Duration) *ssh.C
 }
 
 // glModelFromBoard normalizes an OpenWrt board_name into a glModelMap key.
-// OpenWrt reports GL.iNet boards as "vendor,model" (e.g. "glinet,gl-mt6000"),
-// while glModelMap is keyed by the bare lowercase model ("gl-mt6000"). Returns
-// "" for an empty or non-GL.iNet board so callers never guess an image.
+// OpenWrt reports a router's board as "vendor,model" (e.g. "glinet,gl-mt6000"
+// or "comfast,cf-wr632ax"), while glModelMap is keyed by the bare lowercase
+// model ("gl-mt6000", "cf-wr632ax"). Returns "" for an empty board or for any
+// model glModelMap does not carry, so callers never guess an image.
+//
+// The guard is the TABLE, not a "gl-" prefix. It used to be
+// `strings.HasPrefix(board, "gl-")`, which meant a GL.iNet-shaped board name
+// from a router we have no image for (or from a foreign device that happens to
+// begin with "gl-") was handed back as flashable and only stopped later, at the
+// glModelMap lookup. Resolving the model segment against glModelMap here makes
+// the table the single source of truth and keeps the guard self-maintaining:
+// adding a row is what makes a device flashable, and an unknown board — however
+// it is spelled — still yields "".
 func glModelFromBoard(board string) string {
 	board = strings.ToLower(strings.TrimSpace(board))
 	if board == "" {
 		return ""
 	}
-	// Take the model segment after the vendor comma (glinet,gl-mt6000 → gl-mt6000).
+	// Take the model segment after the vendor comma (glinet,gl-mt6000 → gl-mt6000,
+	// comfast,cf-wr632ax → cf-wr632ax).
 	if i := strings.LastIndex(board, ","); i >= 0 {
 		board = strings.TrimSpace(board[i+1:])
 	}
@@ -3155,17 +3168,37 @@ func glModelFromBoard(board string) string {
 	// (glinet_gl-mt6000): no comma, and the whole string does not start with
 	// "gl-". Flashing vanilla OpenWrt onto a ROUTER STILL ON STOCK FIRMWARE is
 	// a first-class use case (the clean-slate button), so accept that spelling
-	// too — but only when the segment after the last "_" really is a gl- model,
-	// so a foreign board name can never be mistaken for one.
-	if i := strings.LastIndex(board, "_"); i >= 0 {
-		if model := strings.TrimSpace(board[i+1:]); strings.HasPrefix(model, "gl-") {
-			board = model
+	// too — by retrying the segment after the last "_" against the table, so a
+	// foreign board name can never be mistaken for one.
+	if _, ok := glModelMap[board]; !ok {
+		if i := strings.LastIndex(board, "_"); i >= 0 {
+			if model := strings.TrimSpace(board[i+1:]); model != "" {
+				board = model
+			}
 		}
 	}
-	if !strings.HasPrefix(board, "gl-") {
+	if _, ok := glModelMap[board]; !ok {
 		return ""
 	}
 	return board
+}
+
+// flashModelUnknownError is the refusal for a forced reflash when the router's
+// board could not be read at all, so no model can be named. Split out of
+// runDeployment so the operator-facing wording is testable without a router.
+func flashModelUnknownError() (summary, detail string) {
+	return "Cannot determine router model",
+		"Force-flash requested but the router's board could not be determined (no /etc/gl-inet-release and no recognised board_name). Refusing to guess an image — flash manually."
+}
+
+// flashModelUnsupportedError is the refusal for a force-flash when the board was
+// read but is not a model the image table carries. It reports the model the
+// router actually reported: an earlier shape interpolated the variable AFTER it
+// had been emptied by the mapping, so the operator saw a message with no model
+// in it and nothing to act on.
+func flashModelUnsupportedError(model string) (summary, detail string) {
+	return "Unsupported router model: " + model,
+		"Unsupported router model " + model + ". Please update the model table in images.go or flash manually."
 }
 
 // waitForRouterAfterFlash polls for the router to come back after sysupgrade.
@@ -4224,8 +4257,8 @@ func httpGetFileOrEmpty(url string) []byte {
 //     package manager (apk vs opkg). An empty/unknown pkgMgr stages both so
 //     the deploy still works offline.
 //
-// Unknown GL models contribute no image URL (the flash step reports its own
-// actionable "unknown model" error); the package formats are still staged so
+// Unknown models contribute no image URL (the flash step reports its own
+// actionable "unsupported model" error); the package formats are still staged so
 // an operator can fix the model table and re-deploy offline.
 func stageAssetURLs(isStockGL bool, glModel, pkgMgr string) []string {
 	urls := []string{}
