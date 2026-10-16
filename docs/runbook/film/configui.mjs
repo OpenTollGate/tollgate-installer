@@ -3,15 +3,15 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Tail (admin) v2 — the REAL TollGate board at its hostname entry
-// (https://tollgate-52be.lan/), i.e. the default face. First-run password set,
-// then dashboard -> wallet -> wifi -> settings (dev split) -> wallet Drain, and
-// the LuCI cross-link button called out.
+// ConfigUI — the REAL TollGate board (the default face) at its hostname entry.
+// dashboard -> wallet (balance earned from the portal payment) -> Drain ->
+// wifi -> settings -> the LuCI cross-link button.
 const OUT = process.env.FILM_DIR || '/tmp/opencode/filmcap';
 const VOICE = process.env.FILM_VOICE || 'af_heart';
 const TTS = process.env.KOKORO_BIN || '/tmp/opencode/bin/kokoro-tts';
-const HOST = process.env.BOARD_HOST || 'tollgate-52be.lan';
-const IP = process.env.BOARD_IP || '192.168.2.4';
+const HOST = process.env.BOARD_HOST || 'tollgate-9bd4.lan';
+const IP = process.env.BOARD_IP || '10.110.223.1';
+const PW = process.env.BOARD_PW || 'TollGate';
 fs.mkdirSync(OUT, { recursive: true });
 
 function voiceMs(text) {
@@ -26,16 +26,18 @@ function voiceMs(text) {
 const S = [
   ['This is the TollGate board — the default face of the router. Open the router hostname, tollgate dash four digits dot L A N, and this is what answers; not LuCI.',
    async () => { await hover('body'); }],
-  ['Log in as root. The install-time admin password is generated and never printed, so the board has you choose your own on first use; from then on you sign in with it.',
-   async () => { await typeSel('#password', 'TollGate'); await clickText('Sign In'); await page.waitForTimeout(2800); }],
+  ['Log in as root. On first use the board has you choose your own password; from then on you sign in with it.',
+   async () => { await loginBoard(); }],
   ['The dashboard is the router at a glance: system, network, and the live session.',
    async () => { await route('dashboard'); }],
-  ['The Wallet holds what the router earns — the balance in sats and the Cashu mint it accepts. Drain withdraws the balance as a Cashu token.',
-   async () => { await route('wallet'); await hover('button:has-text("Drain")'); }],
+  ['The Wallet holds what the router earns. This balance is the e-cash a guest just paid through the captive portal — it is held as sats against the accepted mint.',
+   async () => { await route('wallet'); await hover('body'); }],
+  ['Drain withdraws the balance as a Cashu token you can spend or move elsewhere.',
+   async () => { await clickText('Drain All Funds'); await page.waitForTimeout(900); await clickText('Confirm Drain'); await page.waitForTimeout(3000); }],
   ['Wi-Fi shows the guest and private networks.',
    async () => { await route('wifi'); }],
   ['Settings holds the pricing and the profit split — the margin factor, the price per step, and the accepted mints. Change these to your own defaults.',
-   async () => { await route('settings'); await hover('#field-margin'); }],
+   async () => { await route('settings'); await hover('body'); }],
   ['And if you need the full OpenWrt options, the board has a button for LuCI right in the header.',
    async () => { await hover('a:has-text("LuCI")'); await hover('button:has-text("LuCI")'); }],
 ];
@@ -44,15 +46,16 @@ const DURS = S.map(([say]) => voiceMs(say));
 console.log('measured lines (ms):', DURS.join(', '));
 const CAPTIONS = [
   'https://tollgate-<4hex>.lan/ — the board, the default face.',
-  'Log in as root (password chosen on first run).',
+  'Log in as root.',
   'Dashboard — system, network, session.',
-  'Wallet — earned sats, the mint, and Drain.',
+  'Wallet — the sats the guest just paid.',
+  'Drain — withdraw the balance as e-cash.',
   'Wi-Fi — guest and private networks.',
   'Settings — pricing + profit split.',
   'Need more? The board links to LuCI.',
 ];
 
-const videoDir = path.join(OUT, 'video', 'tail-admin2');
+const videoDir = path.join(OUT, 'video', 'configui');
 fs.rmSync(videoDir, { recursive: true, force: true });
 fs.mkdirSync(videoDir, { recursive: true });
 const timeline = [];
@@ -83,6 +86,38 @@ async function moveTo(x, y, steps = 18) { const sx = cx, sy = cy; for (let i = 1
 async function center(sel) { const el = page.locator(sel).first(); const box = await el.boundingBox({ timeout: 1200 }).catch(() => null); return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : null; }
 async function hover(sel) { const c = await center(sel); if (c) await moveTo(c.x, c.y); }
 async function clickText(txt) { await page.locator(`button:has-text("${txt}")`).first().click({ timeout: 4000 }).catch(() => {}); }
+async function fillNative(sel, text) {
+  await page.evaluate(({ sel, text }) => {
+    const el = document.querySelector(sel); if (!el) return;
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, text);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, { sel, text }).catch(() => {});
+  await page.waitForTimeout(300);
+}
+// loginBoard: the board is a React app; a Playwright .fill() on the controlled
+// password input left it EMPTY on camera ("the router password is required").
+// Set the value via the native setter + an input event so React sees it. A
+// freshly-installed router also shows a FIRST-RUN "choose your own admin
+// password" screen (#new-password) which must be completed before login.
+async function loginBoard() {
+  await page.waitForTimeout(1500);
+  if (await page.locator('#new-password').count()) {
+    await fillNative('#new-password', boardPassword());
+    await fillNative('#confirm-password', boardPassword());
+    await page.waitForTimeout(400);
+    await page.locator('button[type="submit"], button:has-text("Set password and continue")').first()
+      .click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+  }
+  // now the normal login view
+  if (await page.locator('#username').count()) await fillNative('#username', 'root');
+  if (await page.locator('#password').count()) await fillNative('#password', boardPassword());
+  await page.waitForTimeout(400);
+  await page.locator('button[type="submit"], button:has-text("Sign In")').first().click({ timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(2500);
+}
+function boardPassword() { return process.env.BOARD_PW_NEW || 'TollGate2'; }
 async function typeSel(sel, text) { const c = await center(sel); if (c) await moveTo(c.x, c.y); await page.locator(sel).first().fill('').catch(() => {}); await page.locator(sel).first().type(text, { delay: 55 }).catch(() => {}); await page.waitForTimeout(250); }
 async function route(r) { await page.evaluate((h) => { location.hash = '#/' + h; }, r).catch(() => {}); await page.waitForTimeout(1100); await inject(); }
 
@@ -103,11 +138,11 @@ async function scene(say, shown, action, ms) {
 }
 for (let i = 0; i < S.length; i++) await scene(S[i][0], CAPTIONS[i], S[i][1], DURS[i]);
 
-await page.screenshot({ path: path.join(OUT, 'tail-admin2.png') });
-await page.evaluate(() => { const f = document.createElement('div'); f.style.cssText = 'position:fixed;inset:0;background:#000;z-index:2147483647;opacity:0;transition:opacity 1s'; document.body.appendChild(f); requestAnimationFrame(() => { f.style.opacity = '1'; }); }).catch(() => {});
+await page.screenshot({ path: path.join(OUT, 'configui.png') });
+// No closing fade-to-black (reads as a blank film + trips blackdetect).
 await page.waitForTimeout(1000);
-fs.writeFileSync(path.join(OUT, 'tail-admin2.narration.json'), JSON.stringify({ entries: timeline }, null, 1));
+fs.writeFileSync(path.join(OUT, 'configui.narration.json'), JSON.stringify({ entries: timeline }, null, 1));
 await ctx.close(); await browser.close();
 const files = fs.readdirSync(videoDir).filter((f) => f.endsWith('.webm'));
-if (files.length) fs.renameSync(path.join(videoDir, files[0]), path.join(OUT, 'tail-admin2.webm'));
-console.log('entries', timeline.length, 'video', fs.existsSync(path.join(OUT, 'tail-admin2.webm')));
+if (files.length) fs.renameSync(path.join(videoDir, files[0]), path.join(OUT, 'configui.webm'));
+console.log('entries', timeline.length, 'video', fs.existsSync(path.join(OUT, 'configui.webm')));
