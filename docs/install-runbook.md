@@ -30,11 +30,16 @@ password is **`TollGate`** — the board forces a change at first login.
 pairs; see the feed's `TARGETS.md` for the full list and per-device validation
 status.
 
-**Recordings (Review Club):** a narrated reel of every path — the wizard, the
-merged manual install, and the post-install board + payment —
-[watch all](https://blossom2.orangesync.tech/f0329daccf09d71413f86ada64bc9abc2ffa88bb0ea3f20fa9365ca24cb43d8e.html).
+**Recordings (Review Club):** three narrated happy-path films — install,
+captive portal, and the config UI. Each runs against a real router.
 
-**Watch (what rc6 fixes):** [target-qualified asset names + the widened device matrix](https://blossom2.orangesync.tech/06a8735d3b61c5701d4c8f94307d0fde7fddf2a270e4d3f0df740f28a03b59d4.mp4) (3:27 — rc6 re-tags the assets per `(arch, target)`, ships the 8 validated targets, and fixes the two rows that would not build; carried from the rc line: the bounded mint registration, the board as the default face, the private-subnet recheck, and the installer's pending/`password_status` behaviour — real captures from the fleet serial routers). Then: [manual install — both lanes](https://blossom2.orangesync.tech/4ff002c003a3e21c80fd401bb8dd226abbb04826de174717d87f084fe73a65aa.mp4) (2:07) · [wizard — real deploy](https://blossom2.orangesync.tech/e793ea38c1eb98fbfd073f6e055f6026a5c04551473e23e8fa9b3997ef1bf4c8.mp4) (1:23).
+**Watch:**
+- **Install** — the wizard driving a real deploy (router picked from the list,
+  your Lightning address, wired uplink): [video](https://blossom2.orangesync.tech/b685203b9744d67e175ed36093482a64ded2669721e90847555522b17ff49698.mp4) (1:21)
+- **Captive portal** — a guest pays with e-cash and the gate opens:
+  [video](https://blossom2.orangesync.tech/1961106d3a4e525b64c3155a9bc9062f5bd5f04239f90ff5ad45642fb736061f.mp4) (0:49)
+- **Config UI** — the board: log in, the wallet holding the guest's payment, and
+  Drain: [video](https://blossom2.orangesync.tech/b03c4017e19cc592d9d71de1d62877820b9b6947b8767df6f1c801ad227a692d.mp4) (1:09)
 
 ---
 
@@ -62,9 +67,7 @@ resolve **both** on the router — `DISTRIB_ARCH` *and* `DISTRIB_TARGET`
 serves a setup wizard at `:8099` and drives the whole install over SSH: flash →
 root password → uplink → install → brand → portal → LNURL → health.
 
-> **Watch (55 s, narrated):** the wizard walkthrough — [video](https://blossom2.orangesync.tech/f202527b2ab8909b89c20ce0014059d0d0b7d994661d4c3a1617bb1b1ca3ae27.mp4) · [captions](https://blossom2.orangesync.tech/133d3cf07954935e893197e4446784e96004d787ae69fe39d4edf4371b0f3f52.vtt) · [still](https://blossom2.orangesync.tech/95d129ee3028d94c4d6174eccd0cf8399d5cb6a8008ed49cc939b89b7353f14d.png). It shows the real wizard with a visible cursor, and names the mandatory fields (router, upstream, Lightning address).
-
-> **Watch (94 s, narrated):** the wizard end-to-end — the real UI (mandatory fields named) plus the headless one-liner and the shared board + payment ending: [video](https://blossom2.orangesync.tech/37d821c79b89d776c5b16af5575324ba8b361928e9340b4afc34b487339db590.mp4) · [captions](https://blossom2.orangesync.tech/1ee12203c639fef974066a04d72c68902155df50a1069c2d41de889f580e5bc4.vtt).
+> **Watch (1:21, narrated):** the wizard driving a **real deploy** — [video](https://blossom2.orangesync.tech/b685203b9744d67e175ed36093482a64ded2669721e90847555522b17ff49698.mp4). It picks the router from the dropdown, names the mandatory fields (router, upstream, Lightning address), and runs the install to a healthy merchant.
 
 **Interactive** (opens the wizard in your browser):
 
@@ -78,7 +81,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-instal
 bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER_IP> '<ROUTER_PASSWORD>' <LIGHTNING_ADDRESS>
 ```
 
-> **Watch (20 s, narrated):** the [headless install walkthrough](https://blossom2.orangesync.tech/b7f9c8a4cb9aeb4f477d4924c39ee250a82e918f7aba43ead389414ce3ff2105.mp4) · [captions](https://blossom2.orangesync.tech/8bba32cb270b77e012907abccd14f3b6be331d82ff831e18dd38c7e45e3ddd3f.vtt).
+> _(No recording for the headless path — install via the wizard above or the commands in this section.)_
 
 The wizard detects OS+arch, scans the LAN, and installs. The admin and
 management-WiFi password fields are **optional** (under *advanced*) — leave them
@@ -121,9 +124,8 @@ There is **no feed to add** — `FreedomTechFeed/packages` publishes release ass
 only (no `APKINDEX`/`Packages.gz`). Install the release **file by path**, exactly
 as the wizard does.
 
-> **Watch:** [manual install — `.apk` on OpenWrt 25.12](https://blossom2.orangesync.tech/ac19249bc124f46dcb9e494d7303e5c12d2493c1c2dac240468d5dd95a66f014.mp4) · [captions](https://blossom2.orangesync.tech/335ddc34ef9ebca253d81633e8945cb45404c3606696f162c0d6b90128a3e43e.vtt) · [`.ipk` on OpenWrt 24.10](https://blossom2.orangesync.tech/f8fdb4b6e589241bf9a28f41e8631dbd5e00d5cd5b587f289502d28f04619257.mp4) · [captions](https://blossom2.orangesync.tech/a5e976cfd6cb59a95c4aba93b302d6fadf7aeec990f6ac85e5b6416a732a02db.vtt).
+> _(No recording for the manual path — the wizard film above covers the happy path; the commands are below.)_
 
-> **Watch (287 s, narrated):** the full manual path — flash + uplink, the merged `.apk`/`.ipk` install, and the shared board + payment ending: [video](https://blossom2.orangesync.tech/c007a43623ca4fe18ffe9582be08a48d2d38794b78142f68a9629084c62d3659.mp4) · [captions](https://blossom2.orangesync.tech/1afec0cfee18915d4b5bcd68d3ffb5cc3edf8b911974750e19093cb217668cd6.vtt).
 
 > ⚠️ **The install drops your SSH session.** The `postinst` restarts the network
 > and **moves the wired LAN port off `br-lan` onto `br-private`** (§3). Reconnect
@@ -166,7 +168,7 @@ tar -xz`, then `./install-offline.sh <ROUTER_IP> '<ROUTER_PASSWORD>'` from that
 directory. It stages the package plus its full dependency closure and installs
 offline.
 
-> **Watch (20 s, narrated):** the [offline-bundle walkthrough](https://blossom2.orangesync.tech/75800809a3be1911431a98795a16b72411fde5479b35ecfc1b31012838179942.mp4) · [captions](https://blossom2.orangesync.tech/b8459fc70f7156278dff0aaddb66467e04e10b850a39e67149a755e4b4a149ff.vtt).
+> _(No recording for the offline-bundle path; the commands are below.)_
 
 ### 2.3 Names you can use
 
@@ -207,7 +209,7 @@ A **guest** on `br-lan` pays and gets internet but cannot reach the admin UIs;
 **you**, on the wire or the private SSID (`br-private`), can. Your management
 address is `uci get network.private.ipaddr`.
 
-> **Watch (121 s, narrated):** the board + payment — [the captive portal (Cashu + Lightning) and the admin board (dashboard → wallet → wifi → settings → Drain)](https://blossom2.orangesync.tech/6ba0e05deec297f79e95bb9bc780622f5f285870e722f9079f7af29559175728.mp4). The portal segment pays with a **real testnet e-cash token** from a real guest on the box. The board is the **default face** at `https://tollgate-<4hex>.lan/`; LuCI is one **button** away.
+> **Watch (0:49 + 1:09, narrated):** the **captive portal** — a guest pays with e-cash and the gate opens: [video](https://blossom2.orangesync.tech/1961106d3a4e525b64c3155a9bc9062f5bd5f04239f90ff5ad45642fb736061f.mp4) — and the **config UI** (board): log in, the wallet holding the guest's payment, and Drain: [video](https://blossom2.orangesync.tech/b03c4017e19cc592d9d71de1d62877820b9b6947b8767df6f1c801ad227a692d.mp4). The board is the **default face** at `https://tollgate-<4hex>.lan/`; LuCI is one **button** away.
 
 ### The password
 
@@ -325,7 +327,7 @@ you deliberately want to.
 The manual install runs `apk`/`opkg update`, so the router needs an uplink. Join
 an upstream AP as a client and route it through the WAN zone:
 
-> **Watch (36 s, narrated):** the [flash vanilla + WiFi uplink walkthrough](https://blossom2.orangesync.tech/afc2576f0be3091e5db6cbf37fa22ea9ce68be7ec7788763aa04ac18a948caec.mp4) · [captions](https://blossom2.orangesync.tech/613a3805dd2a54938192a9b5ec934512bc3cb26c263765aa3c63c2759411519a.vtt).
+> _(No recording for the vanilla-flash path; the commands are below.)_
 
 ```sh
 # radio0 = 2.4 GHz, radio1 = 5 GHz on MT3000/MT6000 — use the one your AP is on.

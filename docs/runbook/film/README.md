@@ -1,90 +1,67 @@
 # Installer runbook films — recording kit
 
 The recorders and helpers behind the narrated films linked from the **install
-run book** (`docs/install-runbook.md`). Everything here is deterministic and
-offline where it can be; the two router-driven films need the bench routers and
-are marked below.
+run book** (`docs/install-runbook.md`). Three films, all happy-path, all
+**router-driven** (they run against a real box on its management net).
 
 ## Pipeline
 
 ```
 record (Playwright/Chrome -> silent .webm + narration.json)
+  -> [optional] compress-windows.py (speed up a long wait, remap the timeline)
   -> narrate (Kokoro TTS, mixed over the video)   -> .mp4
+  -> verify (film-verify.py: blackdetect + OCR)   -> pass/fail
   -> publish (Blossom)                            -> URL
 ```
 
-The narration + publish tooling is the shared **film lane** (not duplicated
-here): `tools/film/narrate-film.sh`, `tools/film/kokoro-tts.py`,
-`scripts/film-narrate.py`, `scripts/publish-film.py` — see
-`docs/film-lane.md` in `physical-router-test-automation` (PRTA). This kit is the
-installer-specific concrete lane.
+## The three films
 
-## Dependencies
-
-| Tool | Why | Notes |
+| File | Film | Needs |
 |---|---|---|
-| `ffmpeg` | mux + `narrate-film.sh` | any recent build |
-| `node` + Playwright | the `.mjs` recorders | this kit drives **system Chrome** (`CHROME_EXE`); a bundled headless shell also works |
-| `kokoro-tts` | the voice | `kokoro-onnx`, pin `kokoro-v1.0.onnx` sha256 `7d5df8…a6c5`, `voices-v1.0.bin` sha256 `bca610…bf7d` |
+| `i2-wizard-live.mjs` | **install** — the real installer wizard driving a **real deploy** (router picked from the dropdown, LNURL `tollgate@coinos.io`, wired uplink) | the installer binary (`:8099`) + a router on its management net |
+| `portal-pay.mjs` | **captive portal** — Cashu-only payment with a real e-cash token; the gate opens | a real guest client (on `br-lan`, so NoDogSplash has a session) |
+| `configui.mjs` | **configUI** — board login → dashboard → **wallet (balance)** → **Drain** → wifi → settings → LuCI | the board (`https://<mgmt-ip>/`) |
+
+Helpers: `sercap.py` (serial-console transcript), `compress-windows.py`
+(time-compress a long segment and remap `narration.json`), `film-verify.py`
+(content gate: no black frames, no error strings on screen, required evidence
+present), `reel/index.html` (the narrated index).
 
 ## Environment knobs
 
 | Var | Used by | Meaning |
 |---|---|---|
-| `FILM_DIR` | all | where `tag.txt`/`ver.txt` and outputs live (default `/tmp/opencode/filmcap`) |
-| `KOKORO_BIN` / `FILM_VOICE` | all | the TTS binary / voice id (default `af_heart`) |
-| `CHROME_EXE` | the browser recorders | e.g. `/usr/bin/google-chrome` |
-| `WIZ_URL` | `record-wizard.mjs`, `i2-wizard-gui.mjs` | the installer wizard UI (default `http://127.0.0.1:8799/`) |
-| `PORTAL_URL` | `tail-payment.mjs` | the real captive portal splash |
-| `BOARD_HOST` / `BOARD_IP` | `tail-admin2.mjs` | the board hostname + its address (Chrome `--host-resolver-rules`) |
+| `FILM_DIR` | all | where outputs live |
+| `KOKORO_BIN` / `FILM_VOICE` | all | TTS binary / voice (default `af_heart`) |
+| `CHROME_EXE` | all | system Chrome path (e.g. `/usr/bin/google-chrome`) |
+| `WIZ_URL` | `i2-wizard-live.mjs` | the installer wizard UI (default `http://127.0.0.1:8099/`) |
+| `ROUTER_IP` / `ROUTER_PW` | `i2-wizard-live.mjs` | the target router's management address + current root password |
+| `LNURL` | `i2-wizard-live.mjs` | the Lightning address to enter |
+| `PORTAL_URL` | `portal-pay.mjs` | the captive portal splash (e.g. `http://<mgmt-ip>:2051/splash.html`) |
+| `BOARD_HOST` / `BOARD_IP` / `BOARD_PW_NEW` | `configui.mjs` | the board hostname, its address, and the first-run password to set |
 
-`tag.txt` / `ver.txt` pin the **release under test** (e.g. `v0.6.0-rc5` /
-`0.6.0_rc5`); the terminal films interpolate them.
+## Rules (learned the hard way)
 
-## The films
+- **Read the recorder before wiring hardware.** If it never does
+  `page.goto(<router>)` it needs no router.
+- **Run router-driven films on a host on the router's LAN/management side**
+  (for the fleet, the gateway). Never SSH-tunnel ports to a WAN-side laptop and
+  never add temporary firewall accepts. See the PRTA
+  [bench-lab runbook](https://github.com/OpenTollGate/physical-router-test-automation/blob/main/docs/RUNBOOK-bench-lab.md#reaching-a-tollgate-installed-box-post-install-address).
+- **Never record a fade-to-black ending** and never concat two clips (the seam
+  is black) — both trip `film-verify.py` and read as a broken film.
+- **React controlled inputs** (`#password` on the board, the token box on the
+  portal) must be set with the **native setter + an input event**, or a
+  `.fill()`/`.type()` leaves them empty on camera.
+- **The captive portal needs a real guest session.** Register the client with
+  NoDogSplash first (load the gateway port), or the purchase is refused with
+  `#CU107`.
+- **Run `film-verify.py` before publishing.** It is the gate that would have
+  caught a film showing `#LN004`, a black stretch, or a placeholder address.
 
-Read the recorder before wiring hardware: if it never does `page.goto(<router>)` it
-is **scripted** — no router, no tunnel, no firewall hole.
-
-| File | Film | Determinism |
-|---|---|---|
-| `terminal-film.mjs` | the S1–S5 terminal walkthroughs (headless, `.apk`, `.ipk`, offline, flash) | **scripted** — byte-reproducible, no router |
-| `record-wizard.mjs` | the wizard UI walkthrough | needs the wizard UI (`WIZ_URL`) |
-| `i1-film.mjs` | I1 — flash+uplink + merged `.apk`/`.ipk` install | **scripted** content mirroring the real captures in `../real/` |
-| `rc-fixes.mjs` | **What the rc6 line fixes** — target-qualified asset naming + the widened 8-target matrix (`mipsel_24kc`→`ramips-mt7621`, `arm_cortex-a7`→`arm_cortex-a7_neon-vfpv4`; `aarch64_generic` deliberately parked), bounded mint registration under a hanging mint (#940), the board as the default face (`entry_ui`), the private-subnet recheck (#926), the installer's pending/`password_status` (rc28) | **scripted** content mirroring the real fleet-router captures |
-| `i2-wizard-gui.mjs` | I2 — wizard GUI | needs the wizard UI |
-| `i2-headless.mjs` | I2 — headless | scripted |
-| `tail-payment.mjs` | tail — captive portal (Cashu + Lightning) | **router-driven** (`PORTAL_URL`) — run on the LAN-side host |
-| `tail-admin2.mjs` | tail — admin board (dashboard → wallet → wifi → settings → Drain) | **router-driven** (`BOARD_HOST`) — run on the LAN-side host |
-
-The **router-driven** films record against the live box, so they must run on a
-host **on the router's LAN/management side** (for the fleet, the gateway
-`cobrador`), addressed via the **management-net IP** — *not* the flashed LAN IP,
-and *not* via an SSH tunnel or a temporary firewall accept. See the PRTA
-[bench-lab runbook](https://github.com/OpenTollGate/physical-router-test-automation/blob/main/docs/RUNBOOK-bench-lab.md#reaching-a-tollgate-installed-box-post-install-address).
-They are documented, not hermetic.
-
-Helpers: `sercap.py` (a robust serial-console transcript for the real flash
-takes), `film-check.py` (validates the published artifacts: URLs, caption
-coverage, narration overlap), `mock2121.mjs` (a stand-in for the portal API when
-no router is available).
-
-### Reproduce a scripted film, start to finish
+## Verify
 
 ```sh
-export FILM_DIR=$PWD KOKORO_BIN=$(command -v kokoro-tts) CHROME_EXE=/usr/bin/google-chrome
-node i1-film.mjs                                   # -> i1-flash-manual.webm + .narration.json
-TTS_ENGINE=kokoro narrate-film.sh \
-  i1-flash-manual.webm i1-flash-manual.narration.json i1-flash-manual.mp4 af_heart
-python3 <PRTA>/scripts/publish-film.py --run . --server https://blossom2.orangesync.tech --glob '*.mp4' --glob '*.vtt'
+python3 docs/runbook/film/film-verify.py <film.mp4> [...]
+# or: make -C docs/runbook/film film-verify FILMS="a.mp4 b.mp4"
 ```
-
-The scripted films need **no router and no network** and reproduce byte-for-byte
-given the same `tag.txt`/`ver.txt`. The two **real-router** films need the bench
-routers reachable (the portal + the board) and are reproducible given that
-hardware; they are documented, not hermetic.
-
-## The reel
-
-`reel/index.html` is the narrated index of every path; edit the URLs and publish
-it with the film lane.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TollGate — Review Club films (Round 2)</title>
+<title>TollGate — install films (happy path)</title>
 <style>
   :root { --bg:#0b0f14; --card:#131a23; --ink:#e6edf3; --dim:#93a1b1; --accent:#f97316; --ok:#3fb950; }
   * { box-sizing: border-box; }
@@ -17,72 +17,40 @@
   .film .meta { color:var(--dim); font-size:14px; margin:0 0 12px; }
   .film .meta b { color:#c8d3df; }
   video { width:100%; border-radius:10px; background:#000; }
-  .caps { white-space:pre-wrap; background:#0e141c; border:1px solid #1e2733; border-radius:8px; padding:10px 12px; margin-top:12px; color:#b9c6d4; font-size:14px; }
   .links { margin-top:8px; font-size:13px; }
   .links a { color:var(--accent); text-decoration:none; margin-right:14px; word-break:break-all; }
   .pill { display:inline-block; background:#1b2634; color:#cbd6e2; border-radius:999px; padding:2px 10px; font-size:12px; margin-left:6px; }
-  .ok { color:var(--ok); }
   code { background:#0e141c; padding:1px 6px; border-radius:6px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>TollGate — Review Club films</h1>
-  <p>Round 2 (+ RC-fixes) — install (merged manual + wizard), payment, and admin. All takes recorded
-  against real routers on 2026-10-14; narrated with Kokoro-82M; published to
-  <code>blossom2.orangesync.tech</code>.</p>
+  <h1>TollGate — install films</h1>
+  <p>Three happy-path films — install, captive portal, config UI. Recorded against a real
+  router (GL-MT3000) on 2026-10-16; narrated with Kokoro-82M; published to
+  <code>blossom2.orangesync.tech</code>. Content-verified (no black frames, no error states).</p>
 </header>
 <main>
 
   <div class="film">
-    <h2>I1 — Manual install (merged) <span class="pill">final = film + tail</span></h2>
-    <p class="meta"><b>4:29</b> · flash+uplink prerequisite + <code>.apk</code> on OpenWrt <b>25.12.5</b> (GL-MT3000) and <code>.ipk</code> on <b>24.10.2</b> (GL-MT6000), then the payment+admin tail.</p>
-    <video controls preload="metadata" src="https://blossom2.orangesync.tech/4ff002c003a3e21c80fd401bb8dd226abbb04826de174717d87f084fe73a65aa.mp4"></video>
-    <div class="links">
-      <a href="https://blossom2.orangesync.tech/4ff002c003a3e21c80fd401bb8dd226abbb04826de174717d87f084fe73a65aa.mp4">mp4</a>
-      <a href="https://blossom2.orangesync.tech/1afec0cfee18915d4b5bcd68d3ffb5cc3edf8b911974750e19093cb217668cd6.vtt">captions (vtt)</a>
-      <span class="ok">· install-only: <a href="https://blossom2.orangesync.tech/4ff002c003a3e21c80fd401bb8dd226abbb04826de174717d87f084fe73a65aa.mp4">mp4</a></span>
-    </div>
+    <h2>1 — Install <span class="pill">wizard · real deploy</span></h2>
+    <p class="meta"><b>1:21</b> · the installer wizard: pick your router from the list, enter your Lightning address, deploy over the wired uplink, and it finishes with a healthy merchant.</p>
+    <video controls preload="metadata" src="https://blossom2.orangesync.tech/b685203b9744d67e175ed36093482a64ded2669721e90847555522b17ff49698.mp4"></video>
+    <p class="links"><a href="https://blossom2.orangesync.tech/b685203b9744d67e175ed36093482a64ded2669721e90847555522b17ff49698.mp4">download</a></p>
   </div>
 
   <div class="film">
-    <h2>I2 — Wizard (GUI + headless) <span class="pill">final = film + tail</span></h2>
-    <p class="meta"><b>3:56</b> · the installer wizard UI (rc28) with a visible cursor, then the headless one-liner, then the payment+admin tail.</p>
-    <video controls preload="metadata" src="https://blossom2.orangesync.tech/e793ea38c1eb98fbfd073f6e055f6026a5c04551473e23e8fa9b3997ef1bf4c8.mp4"></video>
-    <div class="links">
-      <a href="https://blossom2.orangesync.tech/e793ea38c1eb98fbfd073f6e055f6026a5c04551473e23e8fa9b3997ef1bf4c8.mp4">mp4</a>
-      <a href="https://blossom2.orangesync.tech/1ee12203c639fef974066a04d72c68902155df50a1069c2d41de889f580e5bc4.vtt">captions (vtt)</a>
-      <span class="ok">· wizard-only: <a href="https://blossom2.orangesync.tech/e793ea38c1eb98fbfd073f6e055f6026a5c04551473e23e8fa9b3997ef1bf4c8.mp4">mp4</a></span>
-    </div>
+    <h2>2 — Captive portal <span class="pill">guest pays with e-cash</span></h2>
+    <p class="meta"><b>0:49</b> · a guest opens the portal, pastes a Cashu token, presses Purchase — the gate opens and the balance page shows the data they bought.</p>
+    <video controls preload="metadata" src="https://blossom2.orangesync.tech/1961106d3a4e525b64c3155a9bc9062f5bd5f04239f90ff5ad45642fb736061f.mp4"></video>
+    <p class="links"><a href="https://blossom2.orangesync.tech/1961106d3a4e525b64c3155a9bc9062f5bd5f04239f90ff5ad45642fb736061f.mp4">download</a></p>
   </div>
 
   <div class="film">
-    <h2>Tail — Payment + Admin <span class="pill">shared ending</span></h2>
-    <p class="meta">Board is the <b>default face</b> at <code>https://tollgate-&lt;4hex&gt;.lan/</code>; LuCI is one <b>button</b> away. Recorded on tollgate-52BE. <b>2:23</b> · the real captive portal (Cashu + Lightning, mint list, token, balance) and the real admin board (dashboard → wallet → wifi → settings → <b>Drain All Funds</b>).</p>
-    <video controls preload="metadata" src="https://blossom2.orangesync.tech/6ba0e05deec297f79e95bb9bc780622f5f285870e722f9079f7af29559175728.mp4"></video>
-    <div class="links">
-      <a href="https://blossom2.orangesync.tech/6ba0e05deec297f79e95bb9bc780622f5f285870e722f9079f7af29559175728.mp4">mp4</a>
-      <a href="https://blossom2.orangesync.tech/0fef5e40ef971b1d1d07282e9c8d9a54b3d344a6ca5d57c13e5c0da4a3c060a1.vtt">captions (vtt)</a>
-    </div>
-  </div>
-
-  <div class="film">
-    <h2>RC — What v0.6.0-rc5 + rc28 fix <span class="pill">new</span></h2>
-    <p class="meta"><b>2:27</b> · the four release-candidate fixes, shown with <b>real</b> captures from the fleet serial routers on rc5 (module <code>cf7cad34</code>): bounded mint registration under a <b>hanging</b> mint (#940), the board as the default face (<code>entry_ui</code>), the private-subnet recheck (#926), and the installer's <b>pending</b>/<code>password_status</code> behaviour (rc28).</p>
-    <video controls preload="metadata" src="https://blossom2.orangesync.tech/06a8735d3b61c5701d4c8f94307d0fde7fddf2a270e4d3f0df740f28a03b59d4.mp4"></video>
-    <div class="links">
-      <a href="https://blossom2.orangesync.tech/06a8735d3b61c5701d4c8f94307d0fde7fddf2a270e4d3f0df740f28a03b59d4.mp4">mp4</a>
-    </div>
-  </div>
-
-  <div class="film">
-    <h2>Narration (I1+tail)</h2>
-    <div class="caps">Both manual paths start from vanilla OpenWrt with an internet uplink. First pick the profile for your device from the official index — never from memory.
-Download the image and its checksum, and verify it before you flash. A wrong image is a brick.
-Then sysupgrade with dash-n for a clean slate…
-Now the manual install. Both lanes are the same shape: resolve the release, fetch the package, verify it, then install it by path — apk on 25.12, opkg on 24.10.
-…the post-install restarts networking and moves the wired LAN ports onto the private bridge, so your SSH session drops; reconnect at the new address.
-This is the TollGate captive portal… the Wallet holds what the router earned… and with Drain, the owner withdraws the whole balance as a Cashu token.</div>
+    <h2>3 — Config UI <span class="pill">the board</span></h2>
+    <p class="meta"><b>1:09</b> · log in to the board at the router hostname, see the wallet holding the guest's payment, Drain it, and browse Wi-Fi and settings. LuCI is one button away.</p>
+    <video controls preload="metadata" src="https://blossom2.orangesync.tech/b03c4017e19cc592d9d71de1d62877820b9b6947b8767df6f1c801ad227a692d.mp4"></video>
+    <p class="links"><a href="https://blossom2.orangesync.tech/b03c4017e19cc592d9d71de1d62877820b9b6947b8767df6f1c801ad227a692d.mp4">download</a></p>
   </div>
 
 </main>
