@@ -78,3 +78,33 @@ printf '%s\n' "$out" | grep -Fqx "Asset URL: https://github.com/OpenTollGate/tol
 ok "explicit --installer-tag wins"
 
 echo "PASS: launcher platform detection"
+
+# busybox tr (OpenWrt, Alpine busybox variants) does NOT support character classes:
+# `tr '[:upper:]' '[:lower:]'` maps the literal char SETS pairwise (u->l, p->o, e->w…),
+# mangling "Linux" into "Linlx" — observed on a stock OpenWrt 24.10.2 GL-MT6000, where
+# the launcher then 404s on tollgate-installer-Linlx-arm64 from every release source.
+# Emulate that behaviour and assert the platform string survives it.
+BUSYBOX_TR="$TMP/busybox-tr"
+cat >"$BUSYBOX_TR" <<'EOF'
+#!/bin/sh
+# busybox shape: '[:upper:]'/'[:lower:]' treated as literal sets, mapped pairwise
+if [ "$1" = "[:upper:]" ] && [ "$2" = "[:lower:]" ]; then
+    sed -e 's/u/l/g' -e 's/p/o/g' -e 's/e/w/g' -e 's/r/r/g' -e 's/U/L/g'
+else
+    exec /usr/bin/tr "$@"
+fi
+EOF
+chmod +x "$BUSYBOX_TR"
+
+out="$(FAKE_UNAME_S=Linux FAKE_UNAME_M=aarch64 PATH="$TMP" TR_SHIM="$BUSYBOX_TR" \
+    TOLLGATE_TEST_PLATFORM_ONLY=1 bash -c 'tr() { "$TR_SHIM" "$@"; }; export -f tr 2>/dev/null; source_code=1; bash "$0"' "$SCRIPT" 2>&1)" || true
+# simpler and shell-agnostic: run with a PATH whose tr IS the busybox shim
+BBIN="$(mktemp -d "$TMP/bb.XXXXXX")"
+for tool in bash env grep mkdir rm awk sed; do ln -s "$(command -v "$tool")" "$BBIN/$tool"; done
+cp "$TMP/uname" "$BBIN/uname"
+ln -s "$BUSYBOX_TR" "$BBIN/tr"
+out="$(FAKE_UNAME_S=Linux FAKE_UNAME_M=aarch64 PATH="$BBIN" \
+    TOLLGATE_TEST_PLATFORM_ONLY=1 bash "$SCRIPT" 2>&1)" || fail "busybox-tr run exited nonzero: $out"
+printf '%s\n' "$out" | grep -Fqx "Detected platform: linux-arm64" \
+    || fail "busybox tr platform mismatch (asset would 404): $out"
+ok "busybox tr (Linux aarch64) => linux-arm64"

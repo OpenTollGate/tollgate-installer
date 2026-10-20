@@ -367,7 +367,11 @@ installer_download_url() {
 # --- 1. detect platform ---------------------------------------------------
 detect_platform() {
     local os arch
-    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    # Portable lowercase: busybox tr does NOT support character classes — it maps the
+    # literal SETS '[:upper:]'/'[:lower:]' pairwise (u->l, p->o, e->w…), mangling
+    # "Linux" into "Linlx" so every release-asset URL 404s on OpenWrt. Observed on
+    # stock OpenWrt 24.10.2 (GL-MT6000); coreutils users never see it.
+    os="$(uname -s | tr 'A-Z' 'a-z')"
     case "$os" in
         mingw64_nt-*|msys_nt-*|cygwin_nt-*) os="windows" ;;
     esac
