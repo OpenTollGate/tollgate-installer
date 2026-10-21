@@ -1,0 +1,98 @@
+name: Frozen v0.6.0 launcher
+
+# install-and-test.sh is served LIVE from `main`:
+#     https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh
+# That URL was handed out with the v0.6.0 release, so `main` IS the distribution
+# channel for it. Any merge to `main` silently changes what every future
+# `curl | bash` user executes — including the v0.6.0 audience, who never agreed
+# to run post-release code.
+#
+# This gate makes that boundary mechanical instead of conventional. Post-0.6.0
+# changes belong in install-and-test-v0.6.1.sh.
+#
+# To intentionally change the frozen file, add the label
+# `unfreeze-launcher` to the PR and say why in the description.
+
+on:
+  pull_request:
+    paths:
+      - 'install-and-test.sh'
+  push:
+    branches: [main]
+    paths:
+      - 'install-and-test.sh'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  frozen:
+    name: install-and-test.sh is frozen at v0.6.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refuse edits to the frozen launcher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          # On push to main we cannot inspect a diff against the PR base, so
+          # compare against the v0.6.0 tag: the file must still match it.
+          if [ "$EVENT_NAME" = "push" ]; then
+            if ! git rev-parse -q --verify "refs/tags/v0.6.0" >/dev/null; then
+              git fetch --tags --depth=1 origin v0.6.0 || true
+            fi
+            if git rev-parse -q --verify "refs/tags/v0.6.0" >/dev/null; then
+              if ! git diff --quiet v0.6.0 -- install-and-test.sh; then
+                echo "::error::install-and-test.sh diverged from v0.6.0 on main."
+                git --no-pager diff --stat v0.6.0 -- install-and-test.sh
+                exit 1
+              fi
+              echo "OK: install-and-test.sh still matches v0.6.0."
+              exit 0
+            fi
+            echo "::warning::v0.6.0 tag unavailable; cannot verify the freeze on push."
+            exit 0
+          fi
+
+          case ",$PR_LABELS," in
+            *,unfreeze-launcher,*)
+              echo "::warning::install-and-test.sh edited WITH the 'unfreeze-launcher' label."
+              echo "This changes what existing v0.6.0 users run on their next curl|bash."
+              git --no-pager diff --stat "origin/${GITHUB_BASE_REF}" -- install-and-test.sh || true
+              exit 0
+              ;;
+          esac
+
+          echo "::error::This PR edits install-and-test.sh, which is FROZEN at v0.6.0."
+          cat <<'MSG'
+
+          install-and-test.sh is served live from main:
+
+            https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh
+
+          That URL shipped with the v0.6.0 release, so editing this file changes
+          what every existing user executes on their next run — with no version
+          boundary and no way for them to opt out.
+
+          INSTEAD: put post-0.6.0 changes in
+
+            install-and-test-v0.6.1.sh
+
+          That file is the post-release channel. Users who want the fixes fetch
+          it explicitly; users on v0.6.0 keep running what they were given.
+
+          If you genuinely must change the frozen file (e.g. a security fix that
+          cannot wait for a release), add the `unfreeze-launcher` label and
+          explain in the PR description why the v0.6.0 audience must be affected.
+
+          MSG
+          git --no-pager diff --stat "origin/${GITHUB_BASE_REF}" -- install-and-test.sh || true
+          exit 1
