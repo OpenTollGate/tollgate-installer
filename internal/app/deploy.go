@@ -856,9 +856,24 @@ func brandingCommands(id deviceIdentity, routerIP string) []string {
 		"uci -q set network.lan.domain='lan'",
 		// NoDogSplash config
 		"uci -q set nodogsplash.@nodogsplash[0].gatewayname='" + id.SSID + "'",
-		// Rebrand gateway domain to tollgate.lan so the captive portal serves
-		// on tollgate.lan (DNS already resolves it).
-		"uci -q set nodogsplash.@nodogsplash[0].gatewaydomainname='tollgate.lan'",
+		// `gatewaydomainname` is deliberately NOT set here — and must never be
+		// set again. nodogsplash 5.0.2 redirects every splash request carrying a
+		// `redir` parameter back to the splash when this option is configured,
+		// so an unauthenticated client loops forever: the browser aborts with
+		// ERR_TOO_MANY_REDIRECTS and the customer never reaches the payment
+		// page (tollgate-module-basic-go issue #428). The module's uci-defaults
+		// (99-tollgate-setup → setup_nodogsplash) therefore not only leaves it
+		// unset but actively DELETES it on upgrade — and the installer runs
+		// AFTER those uci-defaults, so a `set` here silently re-armed the loop
+		// on every single deploy. The friendly name keeps working without it:
+		// dnsmasq serves the system hostname in the `lan` zone, which is why
+		// the dnsmasq domain/local options are set above. The old line was also
+		// un-branded — it hardcoded 'tollgate.lan', a hostname that does not
+		// exist under a whitelabel brand whose router is <brand>-<code>.lan.
+		// Guarded by TestBrandingCommandsNeverSetGatewayDomainName.
+		// The installer does NOT delete it either: the module owns the repair
+		// path, and a second writer for one key is the bug class this change
+		// set is about.
 		"uci -q set nodogsplash.@nodogsplash[0].enabled='1'",
 		"uci -q set nodogsplash.@nodogsplash[0].clientid='mac'",
 		// Customer-journey ports: the captive check, the portal, the backend
