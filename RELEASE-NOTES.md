@@ -2,7 +2,7 @@
 
 **Released**: 2026-10-21
 **Installs**: `FreedomTechFeed/packages` `v0.6.0` (`tollgate-wrt` 0.6.0,
-module `cf7cad3`; the module release commit `cc846d6` adds version metadata
+module `cf7cad3`; the module release commit `9364f2e` adds version metadata
 only)
 **Platforms**: Linux amd64/arm64, macOS amd64/arm64, Windows amd64
 

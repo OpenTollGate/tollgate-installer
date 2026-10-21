@@ -190,7 +190,7 @@ cat /proc/sys/kernel/hostname                                       # TollGate-â
 
 > **`tollgate version` is NOT the feed `$TAG`/`$VER`.** It reports the
 > **module** build the package embeds. Since the feed pins
-> `PKG_SOURCE_TAG:=v0.6.0`, `v0.6.0` reports `v0.6.0-gcc846d6` (the release
+> `PKG_SOURCE_TAG:=v0.6.0`, `v0.6.0` reports `v0.6.0-g9364f2e` (the release
 > commit; runtime code is still `cf7cad3`). Confirm the feed release with the
 > **package manager** instead:
 > ```sh
