@@ -28,6 +28,14 @@ flashing and selects the package by package manager.
 in the `v0.6.0-alpha2-rc33` tag. Restoration is tracked at
 [OpenTollGate/tollgate-installer#155](https://github.com/OpenTollGate/tollgate-installer/issues/155).
 
+## Installer behaviour
+
+- A wired install over an existing OpenWrt router moves the wired port to
+  `br-private`. The wizard captures the management address before the postinst
+  restart and, if it cannot re-acquire the router, ends **pending** with that
+  address and reconnect instructions. It no longer reports a false
+  “Setup failed” for a healthy install.
+
 ## Known issues
 
 - Manual install deferred: the fresh-install default-credential write, the

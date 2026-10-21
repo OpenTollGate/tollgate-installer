@@ -1554,6 +1554,17 @@ func runDeployment(job *Job, req deployRequest) {
 			// existing-file conflicts on reinstall.
 			installCmd = "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
 		}
+		// Capture the destination BEFORE the postinst runs. The postinst's
+		// network restart moves the wired port to br-private; a fresh LAN scan
+		// after the move cannot see that subnet if the host has not re-leased.
+		// network.private exists on a reinstall; on a first install the LAN's
+		// /24 neighbours are the candidates.
+		preInstallPrivate := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null"))
+		preInstallLan := strings.TrimSpace(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null"))
+		restartCandidates := installRestartCandidates(preInstallPrivate, preInstallLan, req.IP)
+		if preInstallPrivate != "" {
+			job.addLog("Management address before the install restart: " + preInstallPrivate)
+		}
 		installOut := sshRun(client, installCmd)
 		job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
 		// The package postinst runs `/etc/init.d/network restart` on the router we
@@ -1568,9 +1579,17 @@ func runDeployment(job *Job, req deployRequest) {
 		if aliveErr := transportAliveFn(client); aliveErr != nil {
 			job.addLog("The package's postinst restarted networking on the router (expected — it derives br-private and moves the wired port): " + aliveErr.Error())
 			transportCloseFn(client)
-			nc, newIP := reacquireAfterInstallRestart(job, req.IP, req.Password)
+			nc, newIP := reacquireAfterInstallRestart(job, req.IP, req.Password, restartCandidates...)
 			if nc == nil {
-				failTransportLost(job, 6, req.IP, aliveErr)
+				// The install command ran; only the transport moved. Calling this
+				// a failed setup is the false alarm the operator saw on 2026-10-21:
+				// the router was healthy on br-private, but the host had not
+				// re-leased and the wizard could not verify it. End pending with
+				// the known management address and the reconnect instructions.
+				note := installMovePendingNote(preInstallPrivate, preInstallLan, req.IP)
+				job.addLog("The install ran but the router could not be re-acquired after its network restart; ending pending (installed, not verified).")
+				jobPending(job, 6, "installed; router moved to its management network", note,
+					"not reached — the router moved to its management network")
 				return
 			}
 			client = nc
@@ -2254,15 +2273,49 @@ func jobFail(job *Job, step int, stepDetail, jobErr string) {
 	job.mu.Unlock()
 }
 
+// installMovePendingNote is the operator-facing message when the install ran but
+// the router moved to br-private and could not be re-acquired. It is explicitly
+// not a failure: the install command completed; only the wizard's transport
+// moved. The captured management address is the fastest way back.
+func installMovePendingNote(privateCIDR, lanCIDR, oldIP string) string {
+	mgmt := strings.TrimSpace(privateCIDR)
+	if i := strings.IndexByte(mgmt, '/'); i >= 0 {
+		mgmt = mgmt[:i]
+	}
+	if mgmt == "" {
+		lan := strings.TrimSpace(lanCIDR)
+		if lan != "" {
+			mgmt = "the /24 next to the LAN (" + lan + "), usually 192.168.2.1 or a 10.x if it collides with the upstream"
+		} else {
+			mgmt = "the router's management address (usually 192.168.2.1, or a 10.x if it collides with the upstream)"
+		}
+	}
+	note := "TollGate was installed, but the package's post-install network restart moved the wired LAN port from br-lan onto br-private. The wizard could not reach the router afterwards, so it could not run the verification.\n\n" +
+		"This is NOT a failed install.\n\n" +
+		"Reconnect on the management side:\n" +
+		"- join the private WiFi (the management SSID; password TollGate unless you chose one), or\n" +
+		"- renew DHCP on the wired interface, or move the cable to the port now on br-private.\n\n" +
+		"Then use Re-check, or re-run the wizard against the management address.\n\n" +
+		"Known management address before the move: " + mgmt
+	if oldIP != "" {
+		note += "\nOld address: " + oldIP
+	}
+	return note
+}
+
 // jobPending ends a job in the NON-fatal "pending" state: the install succeeded
 // and the money path is up, but the merchant is still starting (loading its
 // wallet from the configured mints), so no price is advertised yet. The step is
 // marked "warn" (amber, not red) and a Note carries the operator message. It is
 // deliberately NOT a failure: re-keying the root credential already happened
 // and later steps are simply not reached until the merchant is up.
-func jobPending(job *Job, step int, stepDetail, note string) {
+func jobPending(job *Job, step int, stepDetail, note string, skippedDetail ...string) {
 	if job == nil {
 		return
+	}
+	detail := "not reached — the merchant is still starting"
+	if len(skippedDetail) > 0 && strings.TrimSpace(skippedDetail[0]) != "" {
+		detail = skippedDetail[0]
 	}
 	job.setStep(step, "warn", stepDetail)
 	job.mu.Lock()
@@ -2272,7 +2325,7 @@ func jobPending(job *Job, step int, stepDetail, note string) {
 		}
 		if job.Steps[i].Status == "pending" || job.Steps[i].Status == "running" {
 			job.Steps[i].Status = "skipped"
-			job.Steps[i].Detail = "not reached — the merchant is still starting"
+			job.Steps[i].Detail = detail
 		}
 	}
 	job.Status = "pending"

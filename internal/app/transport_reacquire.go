@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -117,6 +119,44 @@ var routerCandidatesFn = func() []string {
 	return out
 }
 
+// installRestartCandidates builds the addresses to try after the postinst moves
+// the wired port. The private address captured before the restart is the exact
+// destination; lan/24 ±1 covers a first install whose network.private did not
+// exist yet; the old address is the last resort.
+func installRestartCandidates(privateCIDR, lanCIDR, oldIP string) []string {
+	out := make([]string, 0, 4)
+	seen := map[string]bool{}
+	add := func(raw string) {
+		ip := strings.TrimSpace(raw)
+		if i := strings.IndexByte(ip, '/'); i >= 0 {
+			ip = ip[:i]
+		}
+		if ip == "" || net.ParseIP(ip) == nil || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		out = append(out, ip)
+	}
+	add(privateCIDR)
+	if lan := strings.TrimSpace(lanCIDR); lan != "" {
+		if i := strings.IndexByte(lan, '/'); i >= 0 {
+			lan = lan[:i]
+		}
+		if v4 := net.ParseIP(lan).To4(); v4 != nil {
+			base := int64(v4[0])<<24 | int64(v4[1])<<16 | int64(v4[2])<<8 | int64(v4[3])
+			for _, delta := range []int64{1, -1} {
+				n := base + delta*256 // the /24 next to the LAN
+				if n < 0 || n > 0xffffffff {
+					continue
+				}
+				add(net.IPv4(byte(n>>24), byte(n>>16), byte(n>>8), byte(n)).String())
+			}
+		}
+	}
+	add(oldIP)
+	return out
+}
+
 // reacquireAfterInstallRestart finds the router after the package INSTALL
 // restarted its networking. The postinst runs /etc/init.d/network restart and
 // 99-tollgate-setup derives network.private (lan/24 ±1), moving the wired port
@@ -130,9 +170,14 @@ var routerCandidatesFn = func() []string {
 // ~2-minute reconnect keeps feeding the stall watchdog instead of being read as
 // a hang. Returns the live client and the address it answered on, or (nil, "")
 // when the router never came back within the bounded window.
-func reacquireAfterInstallRestart(job *Job, oldIP, password string) (*ssh.Client, string) {
+func reacquireAfterInstallRestart(job *Job, oldIP, password string, extra ...string) (*ssh.Client, string) {
 	job.addLog("The install moved the router: re-acquiring the SSH transport at its new address...")
-	cands := routerCandidatesFn()
+	// The captured management address comes FIRST: a fresh LAN scan cannot see a
+	// br-private address the host has not leased onto, but the installer can read
+	// network.private before the postinst moves the port.
+	cands := make([]string, 0, len(extra)+4)
+	cands = append(cands, extra...)
+	cands = append(cands, routerCandidatesFn()...)
 	if oldIP != "" {
 		cands = append(cands, oldIP)
 	}

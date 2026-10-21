@@ -92,6 +92,13 @@ On a router that is **already running OpenWrt**, the wizard skips the flash step
 and installs the package matching the router's package manager: `.apk` on
 25.12+, `.ipk` on 24.10. That is how one wizard run covers both lanes.
 
+A wired install over an existing OpenWrt router moves the wired LAN port from
+`br-lan` to `br-private` during the package postinst. The wizard captures the
+management address before that move and, if it cannot reach the router
+afterwards, ends **pending** — not failed — with the address and reconnect
+instructions. Join the private WiFi (management SSID) or renew DHCP on the wired
+interface, then use **Re-check**.
+
 **Get the current build.** The launcher resolves the newest installer for its
 channel. Since `v0.6.0` the stable channel is the default; pin both the
 installer build and the release under test when you need an exact pairing:
