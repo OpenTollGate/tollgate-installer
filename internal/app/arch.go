@@ -54,13 +54,13 @@ var bareArchToTuple = map[string]string{
 // best-effort fallback (a bare "aarch64" cannot tell a53 from a72) — the
 // reliable source is the board's canonical Architecture.
 var canonicalArchTuples = map[string]bool{
-	"aarch64_cortex-a53":  true,
-	"aarch64_cortex-a72":  true,
-	"arm_cortex-a7":       true,
-	"mipsel_24kc":         true,
-	"mips_24kc":           true,
-	"mips64_octeonplus":   true,
-	"x86_64":              true,
+	"aarch64_cortex-a53": true,
+	"aarch64_cortex-a72": true,
+	"arm_cortex-a7":      true,
+	"mipsel_24kc":        true,
+	"mips_24kc":          true,
+	"mips64_octeonplus":  true,
+	"x86_64":             true,
 }
 
 // normalizeBareArch maps a BARE architecture string to a canonical OpenWrt
@@ -116,7 +116,7 @@ const (
 	//
 	// By default the wizard does NOT use this pin — it auto-resolves the newest
 	// release candidate (feedChannelDefault). The pin is the offline fallback.
-	feedReleaseTagDefault = "v0.6.0-rc6"
+	feedReleaseTagDefault = "v0.6.0"
 	// feedReleaseTagEnv is the environment variable that overrides the resolved
 	// tag. Set it to select a specific published release tag (e.g. an older tag
 	// to reproduce an old build, or an exact pre-release) without a rebuild:
@@ -128,21 +128,20 @@ const (
 	feedReleaseTagEnv = "TOLLGATE_FEED_RELEASE_TAG"
 	// feedChannelEnv selects the newest feed release in a CHANNEL. It is
 	// consulted only when feedReleaseTagEnv is unset; unset it defaults to
-	// feedChannelDefault, so an out-of-the-box run follows the newest release
-	// candidate with no configuration:
+	// feedChannelDefault, so an out-of-the-box run installs the stable release:
 	//
-	//	TOLLGATE_FEED_CHANNEL=stable ./tollgate-installer  # newest non-pre-release
+	//	TOLLGATE_FEED_CHANNEL=alpha ./tollgate-installer  # newest release candidate
 	//
 	// alpha = newest tag matching (pre|alpha|beta|rc); beta = (beta|rc);
 	// stable = no pre-release marker; any/latest = newest overall. Resolution is
 	// best-effort: if GitHub cannot be reached the compiled feedReleaseTagDefault
 	// applies, so a wizard still works offline.
 	feedChannelEnv = "TOLLGATE_FEED_CHANNEL"
-	// feedChannelDefault is the channel resolved when nothing is pinned: alpha =
-	// the newest release candidate (a tag matching pre|alpha|beta|rc). This is
-	// what makes a directly-run binary track the newest RC automatically, the
-	// same channel install-and-test.sh selects by default.
-	feedChannelDefault = "alpha"
+	// feedChannelDefault is the channel resolved when nothing is pinned. Since
+	// v0.6.0 the stable channel is the default: an out-of-the-box run installs
+	// the stable release, the same channel install-and-test.sh selects. Pass
+	// TOLLGATE_FEED_CHANNEL=alpha to follow the newest release candidate.
+	feedChannelDefault = "stable"
 )
 
 // feedReleaseTagRe matches a plausible GitHub release tag (v0.6.0-alpha2-pre3,
@@ -503,12 +502,12 @@ func pkgVersionVerdict(installed, sourceURL, arch, target, ext string) (fatal, w
 		return "", ""
 	}
 	got := normalizePkgVersionSpelling(installed)
-	if want := expectedPkgVersionForSource(sourceURL, arch, target, ext); want != "" && !strings.HasPrefix(got, normalizePkgVersionSpelling(want)) {
+	if want := expectedPkgVersionForSource(sourceURL, arch, target, ext); want != "" && !pkgVersionMatches(got, want) {
 		return fmt.Sprintf("installed package is %s but the source that supplied it (%s) provides %s — "+
 			"the upgrade did not take effect (previous package/files still present)",
 			installed, pkgSourceLabel(arch, target, ext, sourceURL), want), ""
 	}
-	if !strings.HasPrefix(got, normalizePkgVersionSpelling(feedPkgVersion())) {
+	if !pkgVersionMatches(got, feedPkgVersion()) {
 		return "", fmt.Sprintf("installed package is %s, NOT the requested release %s (%s) — "+
 			"the router is running a different, older build than the one this deploy asked for",
 			installed, feedReleaseTag, feedPkgVersion())
@@ -528,6 +527,20 @@ func pkgVersionVerdict(installed, sourceURL, arch, target, ext string) (fatal, w
 // reported as "the upgrade did not take effect" on a downgrade that succeeded.
 func normalizePkgVersionSpelling(v string) string {
 	return strings.TrimPrefix(strings.TrimSpace(v), "v")
+}
+
+// pkgVersionMatches reports whether an installed package version belongs to the
+// requested feed PKG_VERSION. The installed version carries an OpenWrt release
+// suffix (`0.6.0-r1`, `0.6.0_rc6-r1`), so a plain prefix is not enough: on the
+// stable `0.6.0` line it would also match the previous `0.6.0_rc6-r1` package.
+// The version must therefore be equal or followed by the `-rN` separator.
+func pkgVersionMatches(installed, want string) bool {
+	installed = normalizePkgVersionSpelling(installed)
+	want = normalizePkgVersionSpelling(want)
+	if installed == "" || want == "" {
+		return false
+	}
+	return installed == want || strings.HasPrefix(installed, want+"-")
 }
 
 // pkgArchTupleRe matches a plausible canonical OpenWrt arch tuple: at least one

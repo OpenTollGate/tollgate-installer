@@ -61,13 +61,14 @@ PORT="${PORT:-8099}"
 # felixfelix-bot fork pre-merge build.
 GH_REPO="OpenTollGate/tollgate-installer"
 FORK_REPO="felixfelix-bot/tollgate-installer"
-# Feed release selection. Default: the newest pre-release (alpha channel), so
-# the launcher never lags behind the packages repo the way a compiled pin does.
-# Override with --tag / --channel, or TOLLGATE_FEED_RELEASE_TAG. The chosen tag
-# is exported as TOLLGATE_FEED_RELEASE_TAG, which the installer binary resolves
-# at startup, so the whole run targets that exact release.
+# Feed release selection. Default: the stable channel, so an out-of-the-box run
+# installs the stable release. Pass --channel alpha (or TOLLGATE_FEED_CHANNEL=alpha)
+# to follow the newest release candidate during an RC cycle. Override with
+# --tag / --channel, or TOLLGATE_FEED_RELEASE_TAG. The chosen tag is exported as
+# TOLLGATE_FEED_RELEASE_TAG, which the installer binary resolves at startup, so
+# the whole run targets that exact release.
 FEED_REPO="FreedomTechFeed/packages"
-FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-alpha}"
+FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-stable}"
 FEED_TAG_OVERRIDE="${TOLLGATE_FEED_RELEASE_TAG:-}"
 # Installer BINARY selection. The launcher used to download the binary from
 # GitHub's `releases/latest`, which pins the newest NON-pre-release — so an
@@ -118,16 +119,16 @@ router IP — deploys TollGate to that OpenWrt router and verifies the result.
 Options:
   --tag <tag>        Install an exact feed release tag (e.g. v0.6.0-alpha2-pre12).
                      Same as TOLLGATE_FEED_RELEASE_TAG=<tag>.
-  --channel <name>   Newest feed release in a channel: alpha (default, newest
-                     pre-release), beta, stable, or any. Also selects the
+  --channel <name>   Newest feed release in a channel: stable (default), alpha
+                     (newest pre-release), beta, or any. Also selects the
                      installer BINARY unless --installer-channel overrides it.
   --installer-tag <tag>
                      Run this exact installer build (e.g. v0.6.0-alpha2-rc23).
                      Same as TOLLGATE_INSTALLER_TAG=<tag>.
   --installer-channel <name>
                      Newest installer build in a channel (defaults to
-                     --channel). alpha follows the newest pre-release, so the
-                     launcher serves the current build, not `releases/latest`.
+                     --channel). stable serves the stable installer; alpha
+                     follows the newest pre-release during an RC cycle.
   --list             List recent feed releases (newest first) and exit.
   --bin <path>       Run this installer binary instead of downloading one
                      (e.g. a locally built ./tollgate-installer).
