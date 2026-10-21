@@ -63,25 +63,25 @@ var forbiddenDeployIdentifiers = []string{
 // fails TestFeedReleaseIdentityIsPinned — that keeps a repin auditable. A stale
 // pin is not merely a missed fix: it DOWNGRADES a router already on a newer
 // build.
-const wantFeedReleaseTag = "v0.6.0-rc6"
+const wantFeedReleaseTag = "v0.6.0"
 
 // wantFeedPkgVersion is wantFeedReleaseTag in the feed's PKG_VERSION spelling:
 // leading "v" dropped, hyphens turned into underscores (apk-tools 3.x rejects
 // hyphens in versions). The installed package reports this as
 // "0.6.0_rc5-r1" — note it is NOT the string the binary reports about itself
 // (see docs/package-provenance.md).
-const wantFeedPkgVersion = "0.6.0_rc6"
+const wantFeedPkgVersion = "0.6.0"
 
 // wantTollgatePkgURL is the exact release asset pinned by the wizard.
 // The v0.6.0-rc5 release of FreedomTechFeed/packages ships the tollgate-wrt
 // package for the aarch64_cortex-a53 target (feed-primary).
 // It is DERIVED from feedAssetURL so it can never drift from the generic
 // URL builder — this test pins the derivation, not a literal.
-const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc6/tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.ipk"
+const wantTollgatePkgURL = "https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0/tollgate-wrt_0.6.0_aarch64_cortex-a53-mediatek-filogic.ipk"
 
 // feedReleasePublishedArches is the arch/target matrix the current feed RC
 // actually publishes: 8 pairs × {.ipk, .apk} = the 16 tollgate-wrt assets on
-// v0.6.0-rc6. (rc5 carried only the 2 club rows, arch-only named; rc6 widened
+// v0.6.0. (rc5 carried only the 2 club rows, arch-only named; rc6 widened
 // the matrix to every historically-supported arch AND target-qualified the
 // names, so mips_24kc appears twice — ath79-generic and ath79-nand.) This is a
 // TEST FIXTURE describing one release, not a runtime allowlist — feedAssetURL

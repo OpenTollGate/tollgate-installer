@@ -19,19 +19,20 @@ routers on your LAN and deploys the tollgate-wrt backend over SSH.
 │  tollgate-wrt      (:2121) backend  │
 │  nodogsplash       (:2050) portal   │
 │  uhttpd :2051      captive portal   │
-│  LuCI :8080        OpenWrt admin    │
+│  board :8080       TollGate admin   │
+│  LuCI :8090        OpenWrt admin    │
 └─────────────────────────────────────┘
 ```
 
 ## Quick start
 
 1. **Start from vanilla OpenWrt.** The wizard can flash supported GL.iNet
-   routers during deployment; for a clean-slate/manual-package test, use the
-   [install run book](docs/install-runbook.md), which always targets the latest
-   pre-release and covers both wizard deployment and direct `.apk`/`.ipk`
-   installation on vanilla OpenWrt.
+   routers during deployment; it installs `.apk` on 25.12+ and `.ipk` on 24.10,
+   and skips flashing on a router already running OpenWrt. See the
+   [install run book](docs/install-runbook.md). Manual install is temporarily
+   unsupported for v0.6.0.
 
-   Alternatively, SSH in and sysupgrade manually:
+   To start from a clean slate, SSH in and sysupgrade manually:
    ```sh
    # GL-MT3000 on OpenWrt 25.12.5 (clean install, no config kept)
    curl -O https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-25.12.5-mediatek-filogic-glinet_gl-mt3000-squashfs-sysupgrade.bin
@@ -422,8 +423,8 @@ still works.
 ## Prerequisites
 
 - **Router** running OpenWrt (24.10.x or 25.x). The wizard flashes supported
-  GL.iNet stock routers during deployment; see [the install run book](docs/install-runbook.md)
-  for clean-slate and manual package-install paths.
+  GL.iNet stock routers during deployment; see [the install run book](docs/install-runbook.md).
+  It installs `.apk` on 25.12+ and `.ipk` on 24.10.
 - **SSH access** — port 22 open, root password set (empty on a fresh reset).
 - **Upstream internet** — either Ethernet cable into the WAN port, or WiFi
   credentials for the router to join an existing network.

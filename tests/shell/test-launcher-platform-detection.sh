@@ -55,8 +55,23 @@ tag_check() {
     ok "$name => $want_tag/"
 }
 
-# alpha = newest pre-release, so a freshly cut rc beats an older rc.
-tag_check "installer alpha picks the newest pre-release" '[
+# stable is the default since v0.6.0: a stable tag beats an rc even when the
+# rc is newer by published_at.
+tag_check "default stable picks the stable installer" '[
+  {
+    "tag_name": "v0.6.0-alpha2-rc23",
+    "created_at": "2026-10-13T10:10:53Z",
+    "published_at": "2026-10-13T10:11:00Z"
+  },
+  {
+    "tag_name": "v0.6.0",
+    "created_at": "2026-10-21T08:00:00Z",
+    "published_at": "2026-10-21T08:00:00Z"
+  }
+]' v0.6.0 tollgate-installer-linux-amd64
+
+# alpha is opt-in: a freshly cut rc beats an older rc.
+TOLLGATE_FEED_CHANNEL=alpha tag_check "installer alpha picks the newest pre-release" '[
   {
     "tag_name": "v0.6.0-alpha2-rc19",
     "created_at": "2026-10-11T14:33:01Z",
