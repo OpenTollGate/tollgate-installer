@@ -1596,6 +1596,9 @@ func runDeployment(job *Job, req deployRequest) {
 			if newIP != "" && newIP != req.IP {
 				job.addLog("The router answered at its new address " + newIP + " — continuing there")
 				req.IP = newIP
+				job.mu.Lock()
+				job.IP = newIP
+				job.mu.Unlock()
 			}
 			if priv := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null")); priv != "" {
 				job.addLog("Router private (management) network: " + priv)

@@ -485,6 +485,10 @@ let wifiScanned = false;
 let wifiScanInFlight = false;
 let wifiScanToken = 0;
 let prestageJobId = '';
+// currentJobId is the deploy whose pending view is on screen. Re-check sends it
+// so the server can use the deploy's stored credential and re-discover the
+// management address after the postinst moves the wired port to br-private.
+let currentJobId = '';
 let wifiTestState = 'idle'; // idle | testing | ok | failed | unavailable
 
 // Show the installer build + the exact feed release being installed, from
@@ -1340,7 +1344,11 @@ async function recheck() {
   try {
     const resp = await fetch('/api/recheck', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip: selectedRouterIP(), password: document.getElementById('password').value }),
+      body: JSON.stringify({
+        job_id: currentJobId,
+        ip: selectedRouterIP(),
+        password: document.getElementById('password').value,
+      }),
     });
     const info = await resp.json().catch(() => ({}));
     if (info && info.state === 'healthy') {
@@ -1694,6 +1702,7 @@ async function startCleanSlate() {
   const resp = await fetch('/api/clean-slate-flash', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip, password, version, confirmation}) });
   const data = await resp.json();
   if (!resp.ok || data.error) { showError(data.error || 'Clean-slate flash refused.'); return; }
+  currentJobId = data.job_id;
   pollTimer = setInterval(() => pollStatus(data.job_id), 1000);
 }
 async function startDeploy() {
@@ -1752,6 +1761,7 @@ async function startDeploy() {
     return;
   }
 
+  currentJobId = data.job_id;
   pollTimer = setInterval(() => pollStatus(data.job_id), 1000);
 }
 

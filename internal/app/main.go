@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -206,6 +207,11 @@ type Job struct {
 	// fails mid-way leaves the operator's access exactly as it found it. Guarded
 	// by mu.
 	pendingRootPassword string
+	// deployPassword is the root credential this deploy used to reach the
+	// router, kept ONLY so the pending view's Re-check can reconnect without
+	// making the operator retype it. It is never serialized (handleStatus builds
+	// an explicit snapshot) and never logged. Guarded by mu.
+	deployPassword string
 	// stageCache holds pre-downloaded deploy assets keyed by the exact
 	// asset URL, populated by the PreStage phase (stageAssets) so the
 	// flash/install steps can consume staged bytes without live network.
@@ -462,8 +468,62 @@ type identifyRequest struct {
 
 // recheckRequest is the JSON body for /api/recheck.
 type recheckRequest struct {
+	// JobID is the deploy whose pending view the operator is re-checking. When
+	// supplied, the server uses the job's stored root credential and its last
+	// known address, and falls back to a fresh discovery of the management
+	// gateway. This is what lets Re-check survive the postinst moving the router
+	// to br-private without making the operator retype the password.
+	JobID    string `json:"job_id"`
 	IP       string `json:"ip"`
 	Password string `json:"password"`
+}
+
+// recheckConnectFn is the SSH seam for Re-check tests.
+var recheckConnectFn = sshConnect
+
+// recheckCredential picks the credential for a Re-check: an explicitly supplied
+// one wins; otherwise the deploy's stored password, then the generated-but-not-
+// yet-applied credential. Never serialized or logged.
+func recheckCredential(reqPassword string, job *Job) string {
+	if strings.TrimSpace(reqPassword) != "" {
+		return reqPassword
+	}
+	if job == nil {
+		return ""
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if job.deployPassword != "" {
+		return job.deployPassword
+	}
+	if job.pendingRootPassword != "" {
+		return job.pendingRootPassword
+	}
+	return job.generatedPassword
+}
+
+// recheckCandidates is the address order for Re-check: the address the caller
+// supplied, the job's last known address, then a fresh LAN scan. The scan leads
+// with the host's DEFAULT-ROUTE gateway, which is exactly where the router lands
+// after the postinst moves the wired port and the host re-leases on br-private.
+// Deduplicated; empty and malformed entries are dropped.
+func recheckCandidates(reqIP, jobIP string) []string {
+	out := make([]string, 0, 4)
+	seen := map[string]bool{}
+	add := func(ip string) {
+		ip = strings.TrimSpace(ip)
+		if ip == "" || seen[ip] || net.ParseIP(ip) == nil {
+			return
+		}
+		seen[ip] = true
+		out = append(out, ip)
+	}
+	add(reqIP)
+	add(jobIP)
+	for _, ip := range routerCandidatesFn() {
+		add(ip)
+	}
+	return out
 }
 
 // handleRecheck re-probes the payment API on an ALREADY-DEPLOYED router and says
@@ -482,16 +542,43 @@ func handleRecheck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid JSON")
 		return
 	}
-	if req.IP == "" {
+	var job *Job
+	if req.JobID != "" {
+		jobsMutex.RLock()
+		job = jobs[req.JobID]
+		jobsMutex.RUnlock()
+	}
+	password := recheckCredential(req.Password, job)
+	jobIP := ""
+	if job != nil {
+		job.mu.Lock()
+		jobIP = job.IP
+		job.mu.Unlock()
+	}
+	cands := recheckCandidates(req.IP, jobIP)
+	if len(cands) == 0 {
 		writeError(w, 400, "IP required")
 		return
 	}
-	client := sshConnect(req.IP, req.Password)
-	if client == nil && req.Password != "" {
-		client = sshConnect(req.IP, "")
+	var client *ssh.Client
+	usedIP := ""
+	for _, ip := range cands {
+		if c := recheckConnectFn(ip, password); c != nil {
+			client, usedIP = c, ip
+			break
+		}
+		// A router deployed with the default credential may still answer an
+		// empty-password connect; keep the old fallback, but only after the
+		// explicit/stored credential failed.
+		if password != "" {
+			if c := recheckConnectFn(ip, ""); c != nil {
+				client, usedIP = c, ip
+				break
+			}
+		}
 	}
 	if client == nil {
-		writeRouterDialFailure(w, req.IP, "", "cannot connect to router via SSH")
+		writeRouterDialFailure(w, cands[0], "", "cannot connect to router via SSH")
 		return
 	}
 	defer client.Close()
@@ -500,6 +587,7 @@ func handleRecheck(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"state":     merchantState(body),
 		"listening": listening,
+		"ip":        usedIP,
 	})
 }
 
@@ -1554,6 +1642,9 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job := newJob(req.IP)
+	job.mu.Lock()
+	job.deployPassword = req.Password
+	job.mu.Unlock()
 
 	// State WHICH feed release this deploy targets, before any download — the
 	// package-source / version-verified lines only appear once the deploy is
