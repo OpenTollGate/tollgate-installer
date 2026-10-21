@@ -25,12 +25,19 @@ func cleanSlateImage(model, version string) (openWrtImage, error) {
 	if model == "" {
 		// Name what the router actually reported: the old message interpolated
 		// the variable AFTER it had been emptied by the mapping, so every
-		// operator saw "Unknown GL.iNet model: " with no model in it.
-		return openWrtImage{}, fmt.Errorf("Unknown GL.iNet model: %s. Please update the model table in images.go or flash manually.", reported)
+		// operator saw "Unknown router model: " with no model in it.
+		return openWrtImage{}, fmt.Errorf("Unsupported router model: %s. Please update the model table in images.go or flash manually.", reported)
 	}
 	base, ok := glModelMap[model]
 	if !ok {
-		return openWrtImage{}, fmt.Errorf("Unknown GL.iNet model: %s. Please update the model table in images.go or flash manually.", model)
+		return openWrtImage{}, fmt.Errorf("Unsupported router model: %s. Please update the model table in images.go or flash manually.", model)
+	}
+	// Not every supported router ships on every supported release: CF-WR632AX
+	// was added to OpenWrt after the 24.10 branch, so it has no 24.10.8 image.
+	// Refuse here, by name, so the operator learns why instead of watching the
+	// download 404 two steps later with the router already part-flashed.
+	if !modelSupportsRelease(model, version) {
+		return openWrtImage{}, fmt.Errorf("OpenWrt %s has no sysupgrade image for %s (this router is available on: %s). Choose a supported release from the dropdown, or flash %s manually.", version, model, strings.Join(glModelReleases[model], ", "), model)
 	}
 	base.Version = version
 	return base, nil
