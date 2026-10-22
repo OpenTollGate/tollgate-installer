@@ -3194,34 +3194,63 @@ func reconnectSSH(ip, password string, attempts int, delay time.Duration) *ssh.C
 	return nil
 }
 
-// glModelFromBoard normalizes an OpenWrt board_name into a glModelMap key.
-// OpenWrt reports GL.iNet boards as "vendor,model" (e.g. "glinet,gl-mt6000"),
-// while glModelMap is keyed by the bare lowercase model ("gl-mt6000"). Returns
-// "" for an empty or non-GL.iNet board so callers never guess an image.
+// glModelFromBoard normalizes an OpenWrt board_name into an image-table key.
+//
+// OpenWrt reports boards as "vendor,model" ("glinet,gl-mt6000",
+// "dlink,covr-x1860-a1"), while the table is keyed by the OpenWrt image name
+// without the release prefix ("gl-mt6000", "dlink_covr-x1860-a1"). GL.iNet
+// keeps the bare model because that is what the table has always used; every
+// other vendor keeps the "<vendor>_<model>" form, because the vendor is part of
+// the image name and dropping it would let two vendors' identical model names
+// collide.
+//
+// Resolution is decided by the TABLE, not by a name pattern: a candidate is
+// returned only if it is a real row. That keeps glModelMap the single source of
+// truth — adding a device is one table row and needs no parser change — and it
+// means an unknown board can never be handed back as if it were flashable.
+//
+// Returns "" when the board resolves to no row, so callers never guess an image.
+// This is deliberately NOT "GL.iNet only": the wizard flashes any board the
+// release matrix carries, and refusing a non-GL board here is exactly what made
+// the COVR-X1860 unfashable (TARGETS.md §2 — a published asset with no table
+// row is invisible to the operator).
 func glModelFromBoard(board string) string {
 	board = strings.ToLower(strings.TrimSpace(board))
 	if board == "" {
 		return ""
 	}
-	// Take the model segment after the vendor comma (glinet,gl-mt6000 → gl-mt6000).
+	// OpenWrt's own spelling: "vendor,model".
 	if i := strings.LastIndex(board, ","); i >= 0 {
-		board = strings.TrimSpace(board[i+1:])
-	}
-	// Stock GL.iNet firmware reports the same identity with an UNDERSCORE
-	// (glinet_gl-mt6000): no comma, and the whole string does not start with
-	// "gl-". Flashing vanilla OpenWrt onto a ROUTER STILL ON STOCK FIRMWARE is
-	// a first-class use case (the clean-slate button), so accept that spelling
-	// too — but only when the segment after the last "_" really is a gl- model,
-	// so a foreign board name can never be mistaken for one.
-	if i := strings.LastIndex(board, "_"); i >= 0 {
-		if model := strings.TrimSpace(board[i+1:]); strings.HasPrefix(model, "gl-") {
-			board = model
+		vendor := strings.TrimSpace(board[:i])
+		model := strings.TrimSpace(board[i+1:])
+		if vendor == "" || model == "" {
+			return ""
 		}
-	}
-	if !strings.HasPrefix(board, "gl-") {
+		// GL.iNet keys are the bare model; other vendors keep the vendor
+		// because it is part of the OpenWrt image name.
+		for _, candidate := range []string{model, vendor + "_" + model} {
+			if _, ok := glModelMap[candidate]; ok {
+				return candidate
+			}
+		}
 		return ""
 	}
-	return board
+	// No comma: either a table key verbatim ("dlink_covr-x1860-a1"), or stock
+	// GL.iNet firmware's underscore spelling ("glinet_gl-mt6000"). Clean-slating
+	// a router still on stock firmware is the whole point of that button, so the
+	// underscore form resolves too — but only to a real row, so a foreign board
+	// name can never be mistaken for one.
+	if _, ok := glModelMap[board]; ok {
+		return board
+	}
+	if i := strings.LastIndex(board, "_"); i >= 0 {
+		if model := strings.TrimSpace(board[i+1:]); model != "" {
+			if _, ok := glModelMap[model]; ok {
+				return model
+			}
+		}
+	}
+	return ""
 }
 
 // waitForRouterAfterFlash polls for the router to come back after sysupgrade.

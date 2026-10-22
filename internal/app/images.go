@@ -84,6 +84,9 @@ var glModelMap = map[string]openWrtImage{
 	// ramips/mt7621
 	"gl-mt1300": {Target: "ramips", Subtarget: "mt7621", Board: "glinet_gl-mt1300", Version: openWrtVersion},
 
+	// D-Link (non-GL boards: OpenWrt reports "dlink,covr-x1860-a1")
+	"dlink_covr-x1860-a1": {Target: "ramips", Subtarget: "mt7621", Board: "dlink_covr-x1860-a1", Version: openWrtVersion},
+
 	// qualcommax/ipq60xx
 	"gl-ax1800":  {Target: "qualcommax", Subtarget: "ipq60xx", Board: "glinet_gl-ax1800", Version: openWrtVersion},
 	"gl-axt1800": {Target: "qualcommax", Subtarget: "ipq60xx", Board: "glinet_gl-axt1800", Version: openWrtVersion},
