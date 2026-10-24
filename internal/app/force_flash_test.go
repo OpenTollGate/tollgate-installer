@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -20,16 +21,51 @@ func TestGLModelFromBoard(t *testing.T) {
 		// (/tmp/sysinfo/board_name = "glinet_gl-mt6000"), which carries no comma.
 		// Clean-slating a router that is still on stock firmware is the whole
 		// point of the button, so this spelling must resolve.
-		"glinet_gl-mt6000": "gl-mt6000",
-		"glinet_gl-mt3000": "gl-mt3000",
-		"GLiNet_GL-MT6000": "gl-mt6000",
+		"glinet_gl-mt6000":      "gl-mt6000",
+		"glinet_gl-mt3000":      "gl-mt3000",
+		"GLiNet_GL-MT6000":      "gl-mt6000",
 		"glinet_gl-ar300m-lite": "gl-ar300m-lite",
-		"foo_bar":          "",
-		"glinet_":          "",
+		"foo_bar":               "",
+		"glinet_":               "",
+		// The guard is the MODEL TABLE, not a "gl-" prefix. A foreign board that
+		// merely happens to start with "gl-" must still be refused: the old
+		// prefix test handed "gl-mt9999" back as flashable, and only the later
+		// glModelMap lookup stopped it. Resolving against the table is what
+		// makes the table the single source of truth.
+		"fakevendor,gl-mt9999": "",
 	}
 	for in, want := range cases {
 		if got := glModelFromBoard(in); got != want {
 			t.Errorf("glModelFromBoard(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestGLModelFromBoardAcceptsEveryTableRouter pins the two properties the
+// widened guard must hold at once: every board a glModelMap row publishes
+// resolves back to that row's own key, and no board outside the table ever
+// resolves to anything. The wash of vendor prefixes (§8 of the brief) is data,
+// not special cases.
+func TestGLModelFromBoardAcceptsTableRouter(t *testing.T) {
+	// The COMFAST CF-WR632AX reports "comfast,cf-wr632ax" (OpenWrt
+	// mediatek/filogic, SUPPORTED_DEVICES += cf-wr632ax). It is a real
+	// flashable router, so the guard must accept it — and its model segment
+	// must be a key in the table, or accepting it would ship a 404.
+	if got := glModelFromBoard("comfast,cf-wr632ax"); got != "cf-wr632ax" {
+		t.Fatalf("glModelFromBoard(comfast,cf-wr632ax) = %q, want cf-wr632ax", got)
+	}
+	if _, ok := glModelMap["cf-wr632ax"]; !ok {
+		t.Fatal("glModelMap has no cf-wr632ax row — accepting the board would ship a 404")
+	}
+
+	// Round trip: for every row, the board it publishes must resolve back to
+	// that row's own key. A row the guard cannot resolve is a router the
+	// wizard can never flash.
+	for model, img := range glModelMap {
+		for _, board := range []string{img.Board, strings.Replace(img.Board, "_", ",", 1)} {
+			if got := glModelFromBoard(board); got != model {
+				t.Errorf("glModelFromBoard(%q) = %q, want the table key %q", board, got, model)
+			}
 		}
 	}
 }

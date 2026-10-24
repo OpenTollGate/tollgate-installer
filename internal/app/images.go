@@ -18,6 +18,36 @@ type openWrtImage struct {
 	Version   string // e.g. "25.12.5"
 }
 
+// glModelReleases is the per-model OpenWrt release allowlist for boards that do
+// NOT ship on every release the wizard supports — a router added to OpenWrt
+// after an older supported branch was cut has no image there. CF-WR632AX is the
+// case in point: it has a 25.12.5 sysupgrade image but NO 24.10.8 one (the
+// device landed after the 24.10 branch), so a request on 24.10.8 must be
+// refused up front rather than produce a URL that 404s mid-deploy.
+//
+// A model ABSENT from this map is assumed to ship on every supported release —
+// the historical behaviour, kept as the default so the existing rows are
+// unchanged and only a board with a known gap carries an entry. Keys must be
+// glModelMap keys (guarded by TestGlModelMapVersionAllowlistsAreSelfConsistent).
+var glModelReleases = map[string][]string{
+	"cf-wr632ax": {"25.12.5"},
+}
+
+// modelSupportsRelease reports whether the model has an OpenWrt sysupgrade
+// image on the given release. An absent allowlist means every supported release.
+func modelSupportsRelease(model, version string) bool {
+	allow, ok := glModelReleases[model]
+	if !ok {
+		return true
+	}
+	for _, v := range allow {
+		if v == version {
+			return true
+		}
+	}
+	return false
+}
+
 // URL returns the full sysupgrade download URL for this image.
 func (img openWrtImage) URL() string {
 	return fmt.Sprintf(
@@ -27,13 +57,25 @@ func (img openWrtImage) URL() string {
 	)
 }
 
-// openWrtVersion is the pinned OpenWrt release for all GL.iNet images.
+// openWrtVersion is the pinned OpenWrt release for every image in the map.
 // Bump this (and re-verify every board name below) when a new stable
 // OpenWrt version ships — see the quarterly image-URL check.
+//
+// Not every board ships on every supported release: a router added to OpenWrt
+// after a release branch was cut has no image there. Such a board pins its own
+// Version list in glModelMap (see cf-wr632ax) instead of inheriting this one.
 const openWrtVersion = "25.12.5"
 
-// glModelMap maps a GL.iNet board name (from /etc/gl-inet-release or
-// /tmp/sysinfo/board_name, lowercased) to its OpenWrt sysupgrade image.
+// glModelMap maps a supported router's board name to its OpenWrt sysupgrade
+// image. Keys are the bare lowercase model — the segment after the vendor
+// comma in the OpenWrt board_name (/tmp/sysinfo/board_name), e.g. "gl-mt6000"
+// for "glinet,gl-mt6000" and "cf-wr632ax" for "comfast,cf-wr632ax".
+//
+// This table is the AUTHORITY glModelFromBoard resolves a router's board
+// against: a model is flashable exactly when it has a row here, so adding a
+// row is the whole of "support the device" and an unknown board (whatever its
+// vendor prefix) is refused. Any new row must also satisfy the URL-format and
+// liveness tests in images_test.go.
 //
 // Board names, targets, and subtargets were VERIFIED against the live
 // downloads.openwrt.org 25.12.5 build tree (2026-09-08). The plan's original
@@ -50,7 +92,7 @@ const openWrtVersion = "25.12.5"
 // ship a 25.12.5 sysupgrade image (verified across every target), so they
 // are intentionally OMITTED: including them would produce 404 URLs and fail
 // the liveness test. If a real device reports one of these models, the
-// operator gets the "Unknown GL.iNet model" error and must flash manually.
+// operator gets the "Unsupported router model" error and must flash manually.
 //
 // Keys are lowercase model names (GL.iNet board names are lowercase).
 var glModelMap = map[string]openWrtImage{
@@ -61,6 +103,14 @@ var glModelMap = map[string]openWrtImage{
 	"gl-mt6000":   {Target: "mediatek", Subtarget: "filogic", Board: "glinet_gl-mt6000", Version: openWrtVersion},
 	"gl-x3000":    {Target: "mediatek", Subtarget: "filogic", Board: "glinet_gl-x3000", Version: openWrtVersion},
 	"gl-xe3000":   {Target: "mediatek", Subtarget: "filogic", Board: "glinet_gl-xe3000", Version: openWrtVersion},
+	// COMFAST CF-WR632AX: same aarch64_cortex-a53 / mediatek-filogic target as
+	// the GL-MT3000/MT6000 above. The map KEY is the bare model the router
+	// reports ("comfast,cf-wr632ax"); the Board is the UNDERCORE form because
+	// that is the image-filename segment. Verified 2026-10-16: the 25.12.5
+	// sysupgrade image is HTTP 200, the 24.10.8 one is HTTP 404 (the device was
+	// added to OpenWrt after the 24.10 branch), so its release allowlist names
+	// 25.12.5 only.
+	"cf-wr632ax": {Target: "mediatek", Subtarget: "filogic", Board: "comfast_cf-wr632ax", Version: openWrtVersion},
 
 	// ath79/generic
 	"gl-ar150":       {Target: "ath79", Subtarget: "generic", Board: "glinet_gl-ar150", Version: openWrtVersion},
