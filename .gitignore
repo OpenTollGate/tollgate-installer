@@ -10,3 +10,8 @@ test-results
 # Playwright is borrowed from the test-automation repo for the UI test.
 /node_modules
 /dist
+
+# Design mockups are deliberately committed: they are the evidence a theme
+# decision is made from, so a reviewer must be able to see them. The blanket
+# *.png above is for throwaway screenshots.
+!docs/design/theme-mockups/*.png
