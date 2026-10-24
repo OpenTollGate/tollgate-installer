@@ -1,0 +1,936 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  TollGate Installer — curl | bash test script (POST-v0.6.0 CHANNEL)
+#
+#  This is the v0.6.1 channel. It is a COPY of install-and-test.sh as shipped
+#  in the v0.6.0 release, plus fixes landed after that release.
+#
+#  WHY TWO FILES
+#  -------------
+#  install-and-test.sh is served live from `main`:
+#      https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh
+#  so every merge to `main` silently changes what existing users execute.
+#  v0.6.0 was handed out with that URL. To keep that audience stable:
+#
+#    install-and-test.sh        FROZEN at v0.6.0. Do not edit (CI-guarded).
+#    install-and-test-v0.6.1.sh THIS FILE. Post-0.6.0 fixes go here.
+#
+#  Users on v0.6.0 keep running exactly what they were given. Users who want
+#  the fixes opt in by fetching this file.
+#
+#  Downloads the Go tollgate-installer binary for your OS/arch, runs it
+#  (serves the web UI at :8099), and — given a router IP — deploys TollGate
+#  to a physical OpenWrt router via the REST API, then verifies the result.
+#
+#  USAGE
+#  ---------------------------------------------------------------
+#  Interactive (just opens the web UI, you drive it in a browser):
+#      bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test-v0.6.1.sh)
+#
+#  Headless full test against a router (no browser needed):
+#      bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test-v0.6.1.sh) \
+#          <ROUTER_IP> <ROUTER_PASSWORD> <LIGHTNING_ADDRESS>
+#
+#  To pin to the exact v0.6.0 behaviour instead, use the tag URL:
+#      bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/v0.6.0/install-and-test.sh)
+#
+#  CHANGES SINCE v0.6.0
+#  ---------------------------------------------------------------
+#   * detect_platform(): `tr 'A-Z' 'a-z'` instead of `tr '[:upper:]' '[:lower:]'`.
+#     busybox tr does not support character classes as the whole SET — it maps
+#     the literal strings pairwise, turning "Linux" into "Linlx", so every
+#     release-asset URL 404s on stock OpenWrt (observed 24.10.2, GL-MT6000).
+#
+#  Example:
+#      bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test-v0.6.1.sh) \
+#          10.47.41.1 '' user@coinos.io
+#
+#  The script:
+#    1. detects OS + arch, downloads the right `tollgate-installer` binary
+#    2. runs it on :8099 (auto-picks a free port if taken)
+#    3. runs a Wifi probe via the API, triggers POST /api/deploy
+#    4. polls /api/status/<id> until deploy completes
+#    5. verifies the router post-deploy: hostname, ports, DNS, LNURL,
+#       captive portal, TollGate health ad.
+#
+#  Runs on macOS (Intel + Apple Silicon) and Linux. Both are supported as
+#  HOSTS: the installer only has to reach the router over the network, it
+#  does not need to be Linux and does not act as a gateway. Every JSON field
+#  this script reads is parsed with awk/sed, so a stock macOS without Xcode
+#  Command Line Tools (i.e. without python3) still completes a headless
+#  deploy; python3, when present, is used only to prettify output.
+#
+#  PORTABILITY
+#  ---------------------------------------------------------------
+#  Audited against the GNU/BSD differences that break shell scripts:
+#    * not used anywhere (grep -n for each): sed -i, date -d, readlink -f,
+#      stat -c, grep -P, sha256sum, tac, xxd, base64 -w.
+#    * mktemp -d "<dir>/name.XXXXXX": the trailing-six-or-more-X template is the
+#      form both BSD mktemp and GNU mktemp accept; `-t` is not used.
+#    * sed/grep: only POSIX flags (-n, -e, -E, -F, -o, -q, -x) and [[:space:]].
+#    * awk: POSIX subset only — no gensub, no length(array), no whole-array
+#      delete (validated with mawk, which is stricter than gawk and close to
+#      the BSD awk macOS ships).
+#    * head -c, du -h, printf, command -v, kill -0: all supported on BSD.
+#    * sleep: integer arguments only (no `sleep 1.5`).
+#    * bash 3.2 syntax only (arrays, +=, set -o pipefail) — macOS ships 3.2.57.
+#    * the help text is embedded, not re-read from $0: under the documented
+#      `bash <(curl ...)` invocation $0 is a file descriptor that cannot be read
+#      a second time.
+#  ---------------------------------------------------------------
+set -euo pipefail
+
+# --- config ---------------------------------------------------------------
+BIN_NAME="tollgate-installer"
+PORT="${PORT:-8099}"
+# Download source. Prefers the OpenTollGate org release; falls back to the
+# felixfelix-bot fork pre-merge build.
+GH_REPO="OpenTollGate/tollgate-installer"
+FORK_REPO="felixfelix-bot/tollgate-installer"
+# Feed release selection. Default: the stable channel, so an out-of-the-box run
+# installs the stable release. Pass --channel alpha (or TOLLGATE_FEED_CHANNEL=alpha)
+# to follow the newest release candidate during an RC cycle. Override with
+# --tag / --channel, or TOLLGATE_FEED_RELEASE_TAG. The chosen tag is exported as
+# TOLLGATE_FEED_RELEASE_TAG, which the installer binary resolves at startup, so
+# the whole run targets that exact release.
+FEED_REPO="FreedomTechFeed/packages"
+FEED_CHANNEL="${TOLLGATE_FEED_CHANNEL:-stable}"
+FEED_TAG_OVERRIDE="${TOLLGATE_FEED_RELEASE_TAG:-}"
+# Installer BINARY selection. The launcher used to download the binary from
+# GitHub's `releases/latest`, which pins the newest NON-pre-release — so an
+# installer cut as a pre-release (rc20…rcN) was never the one served and a
+# tester ran a stale build (measured 2026-10-13: the launcher served rc19 while
+# rc23 was the current build). Resolve it the SAME way as the feed: newest tag
+# in INSTALLER_CHANNEL (default: the feed channel). Override with
+# --installer-tag / --installer-channel, or TOLLGATE_INSTALLER_TAG /
+# TOLLGATE_INSTALLER_CHANNEL.
+INSTALLER_CHANNEL="${TOLLGATE_INSTALLER_CHANNEL:-$FEED_CHANNEL}"
+INSTALLER_TAG_OVERRIDE="${TOLLGATE_INSTALLER_TAG:-}"
+LIST_RELEASES=0
+POSITIONAL=()
+# Installer flags this script consumes but must still hand to the binary. The arg
+# loop below drains "$@" (every argument it does not recognise becomes a
+# POSITIONAL), so a flag forwarded as "$@" at the RUN_BIN line would never arrive
+# — and the flag itself would be read as the router IP. Collected here instead and
+# re-emitted when the binary is started (BLOCK 1 of the #41 review).
+TRUST_ARGS=()
+# --bin <path>: run a pre-built installer binary instead of downloading one.
+BIN_PATH=""
+# The admin (root) and private-WiFi passwords are OPTIONAL. Left unset they are
+# sent EMPTY and the installer applies its fixed default (`TollGate`), which the
+# admin board then forces the operator to change at first login. Set them with
+# --admin-password / --wifi-password (or TOLLGATE_ADMIN_PASSWORD /
+# TOLLGATE_WIFI_PASSWORD) to install a value you choose up front.
+ADMIN_PASS="${TOLLGATE_ADMIN_PASSWORD:-}"
+WIFI_PASS="${TOLLGATE_WIFI_PASSWORD:-}"
+# Filled in by preflight(). python3 is optional; ssh/sshpass are only needed
+# for the step-6 router verification.
+PYTHON3=""
+SSH_BIN=""
+SSHPASS_BIN=""
+
+usage() {
+    cat <<'USAGE'
+TollGate Installer — one-shot setup and headless deploy test
+
+Downloads the tollgate-installer binary for this OS/arch, serves its web UI at
+http://localhost:8099 (the port is bumped if it is taken), and — when given a
+router IP — deploys TollGate to that OpenWrt router and verifies the result.
+
+  interactive :  bash <(curl -fsSL <raw-url>/install-and-test.sh)
+  headless    :  bash <(curl -fsSL <raw-url>/install-and-test.sh) \
+                     <ROUTER_IP> <ROUTER_PASSWORD> <LIGHTNING_ADDRESS>
+  example     :  ... 10.47.41.1 '' user@coinos.io
+
+Options:
+  --tag <tag>        Install an exact feed release tag (e.g. v0.6.0-alpha2-pre12).
+                     Same as TOLLGATE_FEED_RELEASE_TAG=<tag>.
+  --channel <name>   Newest feed release in a channel: stable (default), alpha
+                     (newest pre-release), beta, or any. Also selects the
+                     installer BINARY unless --installer-channel overrides it.
+  --installer-tag <tag>
+                     Run this exact installer build (e.g. v0.6.0-alpha2-rc23).
+                     Same as TOLLGATE_INSTALLER_TAG=<tag>.
+  --installer-channel <name>
+                     Newest installer build in a channel (defaults to
+                     --channel). stable serves the stable installer; alpha
+                     follows the newest pre-release during an RC cycle.
+  --list             List recent feed releases (newest first) and exit.
+  --bin <path>       Run this installer binary instead of downloading one
+                     (e.g. a locally built ./tollgate-installer).
+  --trust-host-key <SHA256:…>
+                     Trust this router SSH host-key fingerprint for this run
+                     (verify it on the router's console first). Same as
+                     TOLLGATE_TRUST_HOST_KEY=<fingerprint>.
+                     REQUIRED for the headless path against this repo's own
+                     test fixture (scripts/fixture-router, run by
+                     tests/shell/test-missing-asset-fails-loudly.sh): the
+                     fixture generates a FRESH host key on every start, so it
+                     is never in the known-hosts store, and a headless deploy
+                     that does not trust it aborts at the SSH verify step
+                     before any credentials are sent. The fixture prints the
+                     fingerprint to its own log at startup — read it from
+                     there (`docker logs <container>`) and pass it as this
+                     flag (the process-level test does exactly that).
+  --admin-password <pw>
+                     Root/admin password to set on the router (>= 8 chars).
+                     Omitted -> the installer's default `TollGate`, changed at
+                     first login. Same as TOLLGATE_ADMIN_PASSWORD.
+  --wifi-password <pw>
+                     Private-WiFi passphrase to set (>= 8 chars). Omitted -> the
+                     installer's default `TollGate`. Same as TOLLGATE_WIFI_PASSWORD.
+  -h, --help         Show this help.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tag)     FEED_TAG_OVERRIDE="${2:-}"; shift 2 ;;
+        --channel) FEED_CHANNEL="${2:-}"; shift 2 ;;
+        --installer-tag)     INSTALLER_TAG_OVERRIDE="${2:-}"; shift 2 ;;
+        --installer-channel) INSTALLER_CHANNEL="${2:-}"; shift 2 ;;
+        --list)    LIST_RELEASES=1; shift ;;
+        --bin)     BIN_PATH="${2:-}"; shift 2 ;;
+        --admin-password) ADMIN_PASS="${2:-}"; shift 2 ;;
+        --wifi-password)  WIFI_PASS="${2:-}"; shift 2 ;;
+        --trust-host-key)
+            if [ -z "${2:-}" ]; then
+                echo "ERROR: --trust-host-key needs a fingerprint, e.g. --trust-host-key SHA256:AbCdEf…" >&2
+                usage >&2
+                exit 1
+            fi
+            TRUST_ARGS+=(--trust-host-key "$2"); shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *)         POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+# --- 0. preflight ----------------------------------------------------------
+# Everything the script actually needs, checked up front with the fix for each,
+# instead of failing deep inside the run. curl/mktemp/bash abort; python3, ssh
+# and sshpass only degrade individual steps.
+
+note() { printf '  ! %s\n' "$1" >&2; }
+
+preflight() {
+    local missing=""
+
+    # bash >= 3.2: macOS ships 3.2.57. The script uses arrays, `+=`, and
+    # `set -o pipefail`, all of which predate 3.2.
+    if [ "${BASH_VERSINFO[0]:-0}" -lt 3 ] ||
+       { [ "${BASH_VERSINFO[0]:-0}" -eq 3 ] && [ "${BASH_VERSINFO[1]:-0}" -lt 2 ]; }; then
+        missing="${missing} bash(>=3.2)"
+    fi
+    command -v curl   >/dev/null 2>&1 || missing="${missing} curl"
+    command -v mktemp >/dev/null 2>&1 || missing="${missing} mktemp"
+    if [ -n "${missing}" ]; then
+        echo "ERROR: missing required tool(s):${missing}" >&2
+        echo "  Install, then re-run:" >&2
+        echo "    curl:   macOS 'brew install curl' · Debian/Ubuntu 'apt install curl'" >&2
+        echo "    bash:   macOS ships bash 3.2 — 'brew install bash' for a newer one" >&2
+        echo "    mktemp: part of coreutils (Debian/Ubuntu: 'apt install coreutils')" >&2
+        exit 1
+    fi
+
+    # python3 — OPTIONAL. Every JSON field this script must read (feed release
+    # tag, job_id, deploy status, /api/config) is parsed with awk/sed below, so
+    # a stock macOS without Xcode Command Line Tools can still run a headless
+    # deploy. python3 is only used to prettify JSON for humans.
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON3="$(command -v python3)"
+    fi
+    if [ -z "${PYTHON3}" ]; then
+        note "python3 not found — JSON is printed verbatim (not required: the deploy path parses with awk/sed)"
+        if [ "${PLATFORM%%-*}" = "darwin" ]; then
+            note "for prettier output: xcode-select --install"
+        fi
+    fi
+
+    # ssh / sshpass — step-6 router verification only. The deploy itself talks
+    # SSH from inside the Go binary (golang.org/x/crypto/ssh) and needs neither.
+    SSH_BIN="$(command -v ssh 2>/dev/null || true)"
+    SSHPASS_BIN="$(command -v sshpass 2>/dev/null || true)"
+    if [ -z "${SSH_BIN}" ]; then
+        note "ssh not found — router verification (step 6) will be skipped"
+    elif [ -z "${SSHPASS_BIN}" ]; then
+        note "sshpass not found — step 6 uses ssh's own SSH_ASKPASS (needs OpenSSH >= 8.4)"
+    fi
+}
+
+# --- portable JSON helpers (no python3 needed) ------------------------------
+# `tr -d '\n'` first: JSON strings cannot contain raw newlines, so collapsing
+# the body to one line is lossless and lets one pattern set serve both the
+# compact bodies the Go installer serves (json.Encoder) and the pretty-printed
+# bodies the GitHub API returns.
+
+# first_json_string <json> <field> — value of the FIRST `<field>: "value"` in
+# the body. Top-level fields come first in both the installer's responses and
+# the GitHub API's, which is what makes "first" the right one to take.
+first_json_string() {
+    printf '%s' "$1" | tr -d '\n' |
+        grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" |
+        sed -n '1p' |
+        sed -e 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//' -e 's/"$//' || true
+}
+
+# pretty_json — indent a JSON body when python3 is available, else echo it back
+# verbatim. Buffers stdin so a failure cannot swallow the body.
+pretty_json() {
+    local body
+    body="$(cat)"
+    if [ -n "${PYTHON3}" ] && printf '%s' "${body}" | "${PYTHON3}" -m json.tool 2>/dev/null; then
+        return 0
+    fi
+    printf '%s\n' "${body}"
+}
+
+# gh_api_json <url> — curl the GitHub API, optionally authenticated via
+# GITHUB_TOKEN (raising the 60/hr unauthenticated limit when present).
+gh_api_json() {
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        curl -fsSL --retry 2 -H "Authorization: Bearer ${GITHUB_TOKEN}" "$1"
+    else
+        curl -fsSL --retry 2 "$1"
+    fi
+}
+
+# repo_releases_json <repo> — the repo's recent releases (JSON array). The
+# hermetic shell test injects a fixture via TOLLGATE_TEST_RELEASES_JSON so no
+# network is needed.
+repo_releases_json() {
+    if [ -n "${TOLLGATE_TEST_RELEASES_JSON:-}" ]; then
+        printf '%s' "${TOLLGATE_TEST_RELEASES_JSON}"
+        return 0
+    fi
+    gh_api_json "https://api.github.com/repos/$1/releases?per_page=100"
+}
+
+# releases_awk is the python-free reader for that JSON (see the program text): the
+# GitHub REST API pretty-prints with every release key indented by exactly four
+# spaces, so the four-space anchor picks release keys and nothing from nested
+# objects, arrays or release bodies.
+RELEASES_AWK='
+BEGIN { n = 0; tag = ""; pub = ""; crea = "" }
+/^  \{[ \t]*$/ { commit(); next }
+/^    "tag_name":[ \t]*/     { tag  = val() }
+/^    "created_at":[ \t]*/   { crea = val() }
+/^    "published_at":[ \t]*/ { pub  = val() }
+function val(  p) { split($0, p, "\""); return p[4] }
+function commit() {
+    if (tag != "") { n++; tags[n] = tag; pubs[n] = pub; dates[n] = (pub != "" ? pub : crea) }
+    tag = ""; pub = ""; crea = ""
+}
+function is_pre(t) { return (tolower(t) ~ /(pre|alpha|beta|rc)/) }
+function chan_ok(t) {
+    if (channel == "" || channel == "any" || channel == "latest") return 1
+    if (channel == "alpha")  return is_pre(t)
+    if (channel == "beta")   return (tolower(t) ~ /(beta|rc)/)
+    if (channel == "stable") return (is_pre(t) ? 0 : 1)
+    return 1
+}
+END {
+    commit()
+    # stable insertion sort, newest first (ISO-8601 UTC sorts lexicographically)
+    for (i = 2; i <= n; i++) {
+        kt = tags[i]; kd = dates[i]; kp = pubs[i]; j = i - 1
+        while (j >= 1 && dates[j] < kd) {
+            tags[j+1] = tags[j]; dates[j+1] = dates[j]; pubs[j+1] = pubs[j]
+            j--
+        }
+        tags[j+1] = kt; dates[j+1] = kd; pubs[j+1] = kp
+    }
+    if (mode == "list") {
+        for (i = 1; i <= n; i++) printf "  %-30s %s\n", tags[i], substr(pubs[i], 1, 10)
+        exit
+    }
+    for (i = 1; i <= n; i++) {
+        if (chan_ok(tags[i])) { printf "%s\n", tags[i]; exit }
+    }
+}
+'
+
+# print_feed_releases — tag + published date, newest first.
+print_feed_releases() {
+    repo_releases_json "${FEED_REPO}" | awk -v mode=list "${RELEASES_AWK}"
+}
+
+# resolve_tag <repo> <channel> — the newest tag in <channel>, or empty if it
+# cannot be resolved (the caller then falls back to a safe default).
+resolve_tag() {
+    repo_releases_json "$1" | awk -v mode=newest -v channel="$2" "${RELEASES_AWK}"
+}
+
+# resolve_feed_tag — the newest feed tag in FEED_CHANNEL (or the explicit
+# override). Empty => the caller falls back to the installer's compiled pin.
+resolve_feed_tag() {
+    if [ -n "${FEED_TAG_OVERRIDE}" ]; then
+        printf '%s' "${FEED_TAG_OVERRIDE}"
+        return 0
+    fi
+    resolve_tag "${FEED_REPO}" "${FEED_CHANNEL}"
+}
+
+# resolve_installer_tag — the newest installer BINARY tag in INSTALLER_CHANNEL
+# (or the explicit override). Empty => the caller falls back to
+# `releases/latest`. This is what stops the launcher serving a stale build.
+resolve_installer_tag() {
+    if [ -n "${INSTALLER_TAG_OVERRIDE}" ]; then
+        printf '%s' "${INSTALLER_TAG_OVERRIDE}"
+        return 0
+    fi
+    resolve_tag "${GH_REPO}" "${INSTALLER_CHANNEL}"
+}
+
+# installer_download_url <repo> [tag] — the release-asset URL for the installer
+# binary, at a specific tag when resolved or `releases/latest` otherwise.
+installer_download_url() {
+    if [ -n "${2:-}" ]; then
+        printf 'https://github.com/%s/releases/download/%s/%s' "$1" "$2" "${BIN_ASSET}"
+    else
+        printf 'https://github.com/%s/releases/latest/download/%s' "$1" "${BIN_ASSET}"
+    fi
+}
+
+# --- 1. detect platform ---------------------------------------------------
+detect_platform() {
+    local os arch
+    # Portable lowercase: busybox tr does NOT support character classes — it maps
+    # the literal SETS '[:upper:]'/'[:lower:]' pairwise (u->l, p->o, e->w...),
+    # mangling "Linux" into "Linlx" so every release-asset URL 404s on OpenWrt.
+    # Observed on stock OpenWrt 24.10.2 (GL-MT6000); coreutils users never see it.
+    # 'A-Z'/'a-z' are POSIX range expressions and work on both.
+    os="$(uname -s | tr 'A-Z' 'a-z')"
+    case "$os" in
+        mingw64_nt-*|msys_nt-*|cygwin_nt-*) os="windows" ;;
+    esac
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64|amd64)  arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+    esac
+    PLATFORM="${os}-${arch}"
+    BIN_ASSET="${BIN_NAME}-${PLATFORM}"
+    if [ "${os}" = "windows" ]; then
+        BIN_ASSET="${BIN_ASSET}.exe"
+    fi
+}
+
+detect_platform
+
+echo "Detected platform: ${PLATFORM}"
+
+# Used only by the hermetic shell regression test; never set by the operator.
+# No network here: the test injects a fixture via TOLLGATE_TEST_RELEASES_JSON to
+# exercise installer-tag resolution, or gets the `releases/latest` fallback.
+if [ "${TOLLGATE_TEST_PLATFORM_ONLY:-0}" = 1 ]; then
+    _fixture_tag=""
+    if [ -n "${TOLLGATE_TEST_RELEASES_JSON:-}" ] || [ -n "${INSTALLER_TAG_OVERRIDE:-}" ]; then
+        _fixture_tag="$(resolve_installer_tag)"
+    fi
+    echo "Asset URL: $(installer_download_url "${GH_REPO}" "${_fixture_tag}")"
+    exit 0
+fi
+
+preflight
+
+# --- run directory ----------------------------------------------------------
+# One private directory per run for everything this script writes (installer
+# log, status scratch files, the askpass helper). $TMPDIR is the per-user temp
+# directory on macOS, so honour it when the OS sets one.
+TMP_BASE="${TMPDIR:-/tmp}"
+TMP_BASE="${TMP_BASE%/}"
+RUN_DIR="$(mktemp -d "${TMP_BASE}/tollgate-installer.XXXXXX")"
+LOG_FILE="${RUN_DIR}/installer.log"
+SEEN_FILE="${RUN_DIR}/seen"
+STATUS_FILE="${RUN_DIR}/status"
+
+# --- feed release resolution ----------------------------------------------
+if [ "${LIST_RELEASES}" = 1 ]; then
+    echo "Feed releases (${FEED_REPO}), newest first:"
+    print_feed_releases || echo "  (could not fetch releases)" >&2
+    exit 0
+fi
+
+RESOLVED_FEED_TAG="$(resolve_feed_tag 2>/dev/null || true)"
+if [ -n "${RESOLVED_FEED_TAG}" ]; then
+    export TOLLGATE_FEED_RELEASE_TAG="${RESOLVED_FEED_TAG}"
+    echo "Feed release: ${RESOLVED_FEED_TAG} (channel ${FEED_CHANNEL})"
+elif [ -n "${FEED_TAG_OVERRIDE}" ]; then
+    export TOLLGATE_FEED_RELEASE_TAG="${FEED_TAG_OVERRIDE}"
+    echo "Feed release: ${FEED_TAG_OVERRIDE} (explicit)"
+else
+    echo "Feed release: could not resolve channel '${FEED_CHANNEL}' from ${FEED_REPO}; using the installer's pinned default" >&2
+fi
+
+# --- 2. find + download binary -----------------------------------------------
+download() {   # download <repo> <url>
+    echo "Downloading ${BIN_ASSET} from $2 ..."
+    if curl -fsSL --retry 3 -o "${BIN_ASSET}" "$2"; then
+        chmod +x "${BIN_ASSET}"
+        echo "OK: ./${BIN_ASSET} ($(du -h "${BIN_ASSET}" | cut -f1))"
+        return 0
+    fi
+    return 1
+}
+
+# --bin skips the download entirely: locally built binary, air-gapped host, or a
+# Mac smoke-testing a release candidate. Otherwise resolve the installer tag by
+# channel and download it AT THAT TAG (falling back to the org's `latest` and
+# then the felixfelix-bot fork), so the launcher serves the current build instead
+# of whatever `releases/latest` points at.
+RUN_BIN="./${BIN_ASSET}"
+if [ -n "${BIN_PATH}" ]; then
+    if [ ! -x "${BIN_PATH}" ]; then
+        echo "ERROR: --bin ${BIN_PATH} is not an executable file." >&2
+        exit 1
+    fi
+    RUN_BIN="${BIN_PATH}"
+    echo "Using installer binary: ${BIN_PATH}"
+else
+    RESOLVED_INSTALLER_TAG="$(resolve_installer_tag 2>/dev/null || true)"
+    if [ -n "${RESOLVED_INSTALLER_TAG}" ]; then
+        echo "Installer build: ${RESOLVED_INSTALLER_TAG} (channel ${INSTALLER_CHANNEL})"
+    else
+        echo "Installer build: could not resolve channel '${INSTALLER_CHANNEL}' — using the latest release" >&2
+    fi
+    if ! download "${GH_REPO}" "$(installer_download_url "${GH_REPO}" "${RESOLVED_INSTALLER_TAG}")"; then
+        echo "OpenTollGate release download failed; trying ${GH_REPO}@latest..." >&2
+        if ! download "${GH_REPO}" "$(installer_download_url "${GH_REPO}" "")"; then
+            echo "trying the felixfelix-bot fork..." >&2
+            if ! download "${FORK_REPO}" "$(installer_download_url "${FORK_REPO}" "")"; then
+                echo "ERROR: could not download ${BIN_ASSET} from any source." >&2
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+# --- 3. find a free port (default 8099) ------------------------------------
+pick_port() {
+    local p="$1"
+    while curl -s -o /dev/null --max-time 1 "http://127.0.0.1:${p}" 2>/dev/null; do
+        p=$((p+1))
+    done
+    echo "$p"
+}
+PORT="$(pick_port "${PORT}")"
+
+# --- 4. run the installer ---------------------------------------------------
+echo
+echo "Starting ${BIN_NAME} on http://localhost:${PORT} ..."
+# Forward the installer flags this script consumed itself (see TRUST_ARGS) so an
+# operator can trust a router's SSH host key from the curl|bash flow too. The
+# equivalent environment variable (TOLLGATE_TRUST_HOST_KEY) works without it: the
+# binary is started from this shell, so it inherits the operator's environment.
+#
+# The "${TRUST_ARGS[@]+...}" guard (not a bare "${TRUST_ARGS[@]}") is required:
+# with `set -u` an empty array expansion is an "unbound variable" error on bash
+# 3.2, which macOS still ships and this script supports.
+"${RUN_BIN}" -port "${PORT}" ${TRUST_ARGS[@]+"${TRUST_ARGS[@]}"} >"${LOG_FILE}" 2>&1 &
+SERVER_PID=$!
+trap 'kill ${SERVER_PID} 2>/dev/null || true' EXIT
+
+# Wait for the UI instead of sleeping a fixed 1.5s: it returns as soon as the
+# server answers, tolerates a slow first start, and keeps the script free of
+# fractional `sleep` arguments.
+waited=0
+ready=0
+while [ "${waited}" -lt 15 ]; do
+    if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/"; then
+        ready=1
+        break
+    fi
+    if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+        break  # the installer exited: waiting longer cannot help
+    fi
+    waited=$((waited + 1))
+    sleep 1
+done
+
+if [ "${ready}" -ne 1 ]; then
+    echo "ERROR: installer did not come up on :${PORT} (waited ${waited}s). Log:" >&2
+    tail -20 "${LOG_FILE}" >&2
+    exit 1
+fi
+echo "Installer UI is up: http://localhost:${PORT}/"
+
+# Show the installer build + the exact feed release/feed it will install, from
+# /api/config. Older installer binaries lack the endpoint → say so, don't fail.
+print_config() {
+    local cfg
+    cfg="$(curl -s --max-time 5 "http://127.0.0.1:${PORT}/api/config" 2>/dev/null || true)"
+    if [ -z "${cfg}" ] || ! printf '%s' "${cfg}" | grep -q '"feed_release_tag"'; then
+        echo "Version info: /api/config unavailable on this installer build"
+        return 0
+    fi
+    if [ -n "${PYTHON3}" ]; then
+        printf '%s' "${cfg}" | "${PYTHON3}" -c '
+import sys, json
+try:
+    c = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+mod = (" module " + c["feed_module_pin7"]) if c.get("feed_module_pin7") else ""
+print("Installing: %s %s%s" % (c.get("feed_repo", "?"), c.get("feed_release_tag", "?"), mod))
+pkg = c.get("feed_pkg_version", "?")
+err = ("  [" + c["feed_pin_error"] + "]") if c.get("feed_pin_error") else ""
+print("            package %s%s" % (pkg, err))
+print("            installer %s (%s)  [installer build tag]" % (c.get("installer_version", "?"), c.get("installer_commit", "?")))
+' 2>/dev/null || true
+        return 0
+    fi
+    # No python3: same four facts, read with sed/grep instead.
+    local mod err
+    mod="$(first_json_string "${cfg}" feed_module_pin7)"
+    err="$(first_json_string "${cfg}" feed_pin_error)"
+    printf 'Installing: %s %s%s\n' \
+        "$(first_json_string "${cfg}" feed_repo)" \
+        "$(first_json_string "${cfg}" feed_release_tag)" \
+        "${mod:+ module ${mod}}"
+    printf '            package %s%s\n' \
+        "$(first_json_string "${cfg}" feed_pkg_version)" \
+        "${err:+  [${err}]}"
+    printf '            installer %s (%s)  [installer build tag]\n' \
+        "$(first_json_string "${cfg}" installer_version)" \
+        "$(first_json_string "${cfg}" installer_commit)"
+}
+print_config
+
+# --- 5. optional headless deploy --------------------------------------------
+ROUTER_IP="${POSITIONAL[0]:-}"
+ROUTER_PASS="${POSITIONAL[1]:-}"
+LNURL="${POSITIONAL[2]:-}"
+
+# The admin + private-WiFi passwords are OPTIONAL: left unset they are sent
+# EMPTY, and the installer applies its fixed default (`TollGate`) — the board
+# then forces a change at first login. A value set explicitly must still be
+# >= 8 chars (the deploy API's floor).
+if [ -n "${ADMIN_PASS}" ] && [ "${#ADMIN_PASS}" -lt 8 ]; then
+    echo "ERROR: --admin-password must be at least 8 characters." >&2
+    exit 1
+fi
+if [ -n "${WIFI_PASS}" ] && [ "${#WIFI_PASS}" -lt 8 ]; then
+    echo "ERROR: --wifi-password must be at least 8 characters." >&2
+    exit 1
+fi
+
+if [ -z "${ROUTER_IP}" ]; then
+    echo
+    echo "No router IP given — interactive mode. Open http://localhost:${PORT}/"
+    echo "in your browser, or re-run with: <IP> <PASSWORD> <LNURL_ADDRESS>"
+    wait "${SERVER_PID}" 2>/dev/null || true
+    exit 0
+fi
+
+echo
+echo "=== Scanning for routers on LAN ==="
+curl -s "http://127.0.0.1:${PORT}/api/scan" | pretty_json | head -40 || true
+
+echo
+echo "=== Deploying TollGate to ${ROUTER_IP} ==="
+DEPLOY_JSON="{\"ip\":\"${ROUTER_IP}\",\"password\":\"${ROUTER_PASS}\",\"adminPassword\":\"${ADMIN_PASS}\",\"privateWifiPassword\":\"${WIFI_PASS}\",\"lnurl\":\"${LNURL}\",\"mode\":\"wan\"}"
+RESP="$(curl -s -X POST "http://127.0.0.1:${PORT}/api/deploy" \
+    -H 'Content-Type: application/json' -d "${DEPLOY_JSON}")"
+echo "Deploy response: ${RESP}"
+# job_id is the one field the headless path cannot continue without, so it is
+# read with sed/grep (never python3). python3 is only a fallback for exotic
+# escaping in the response body.
+JOB_ID="$(first_json_string "${RESP}" job_id)"
+if [ -z "${JOB_ID}" ] && [ -n "${PYTHON3}" ]; then
+    JOB_ID="$(printf '%s' "${RESP}" | "${PYTHON3}" -c 'import sys,json; print(json.load(sys.stdin).get("job_id",""))' 2>/dev/null || true)"
+fi
+if [ -z "${JOB_ID}" ]; then
+    echo "ERROR: no job_id in deploy response" >&2
+    exit 1
+fi
+
+echo "Job: ${JOB_ID}"
+echo "Polling status..."
+
+# The installer's OWN version string embeds a feed pre-number (e.g.
+# `v0.6.0-alpha2-pre19-rc1`), because that is the feed release it was cut
+# alongside. It is a README-visible trap: an installer tagged `...-pre19-...`
+# happily installs pre20, the two lines print adjacently, and the reader
+# reasonably concludes they are the same namespace. Verified on a real
+# operator terminal (2026-09-28, pre20): "is it using pre19 or pre20?".
+# So the installer line is LABELLED, and short enough not to wrap. Keep both
+# printf branches identical —
+# tests/shell/test-installer-version-not-conflated-with-feed.sh pins that.
+# Print the deploy state + step summary, and echo provenance lines (package
+# source + installed build) exactly once as they appear in the job log.
+#
+# python3 is used when it is installed. Without it the same information is
+# read out of the body with sed/grep (see steps_summary / provenance_lines),
+# so the headless path does not depend on Xcode Command Line Tools.
+print_status() {
+    printf '%s' "$1" > "${STATUS_FILE}"
+    if [ -n "${PYTHON3}" ]; then
+        "${PYTHON3}" - "${SEEN_FILE}" "${STATUS_FILE}" <<'PY'
+import sys, json
+seen_path, status_path = sys.argv[1], sys.argv[2]
+try:
+    with open(status_path) as fh:
+        data = json.load(fh)
+except Exception:
+    print("  (status unavailable)")
+    sys.exit(0)
+
+state = data.get("status", "")
+steps = data.get("steps", []) or []
+summary = ", ".join(
+    f"{s.get('desc') or s.get('name') or '?'}:{s.get('status', '?')}" for s in steps
+)
+print(f"  {state}: {summary}")
+
+try:
+    with open(seen_path) as fh:
+        seen = set(fh.read().splitlines())
+except FileNotFoundError:
+    seen = set()
+
+markers = ("tollgate-wrt source", "Installed tollgate-wrt build")
+# The installer serialises the job log as "log"; "logs" is accepted too so the
+# launcher keeps working if that tag ever changes.
+try:
+    with open(seen_path, "a") as fh:
+        for entry in (data.get("log") or data.get("logs") or []):
+            msg = entry.get("msg", "")
+            if any(m in msg for m in markers) and msg not in seen:
+                print(f"    | {msg}")
+                seen.add(msg)
+                fh.write(msg + "\n")
+except Exception:
+    pass
+PY
+        return 0
+    fi
+    printf '  %s: %s\n' "$(first_json_string "$1" status)" "$(steps_summary "$1")"
+    provenance_lines "$1"
+}
+
+# steps_tail <status-json> — just the `"steps":[...]` slice of the body, so the
+# job-level "status" field can never be mistaken for a step's status. Both the
+# compact form the Go installer serves (`"steps":[{"name":...`) and the spaced
+# form other encoders produce (`"steps": [ {...}`) are accepted.
+steps_tail() {
+    printf '%s' "$1" | tr -d '\n' |
+        sed -e 's/.*"steps"[[:space:]]*:[[:space:]]*\[//' -e 's/\].*//'
+}
+
+# steps_awk reads the key/value pairs of one step object in the order the Go
+# serializer writes them (name, desc, status, detail) and either prints the
+# "desc:status" summary (-v summary=1) or the detail of the step whose desc
+# contains detail_for.
+STEPS_AWK='
+{ key = $2; val = $4
+  if (key == "name") { name = val }
+  else if (key == "desc") {
+      desc = val
+      if (detail_for != "" && index(val, detail_for) > 0) { want = 1 }
+  }
+  else if (key == "status") {
+      label = (desc != "" ? desc : (name != "" ? name : "?"))
+      if (summary) out = (out == "" ? label ":" val : out ", " label ":" val)
+      desc = ""; name = ""
+  }
+  else if (key == "detail" && want) { print "  " val; want = 0 }
+}
+END { if (summary && out != "") print out }
+'
+
+# steps_summary <status-json> — "desc:status" for every step, joined with ", ".
+steps_summary() {
+    steps_tail "$1" |
+        grep -oE '"(name|desc|status)"[[:space:]]*:[[:space:]]*"[^"]*"' |
+        awk -F'"' -v summary=1 "${STEPS_AWK}" || true
+}
+
+# provenance_lines <status-json> — the package-source / installed-build lines
+# from the job log, each printed at most once (SEEN_FILE dedupes across polls).
+provenance_lines() {
+    printf '%s' "$1" | tr -d '\n' |
+        grep -oE '"msg"[[:space:]]*:[[:space:]]*"[^"]*"' |
+        sed -e 's/^"msg"[[:space:]]*:[[:space:]]*"//' -e 's/"$//' |
+        grep -F -e 'tollgate-wrt source' -e 'Installed tollgate-wrt build' |
+        while IFS= read -r msg; do
+            if ! grep -Fxq "${msg}" "${SEEN_FILE}" 2>/dev/null; then
+                printf '    | %s\n' "${msg}"
+                printf '%s\n' "${msg}" >> "${SEEN_FILE}"
+            fi
+        done || true
+}
+
+# provenance_all <status-json> — every provenance line in the final status,
+# plus the detail of the "Installing tollgate-wrt" step.
+provenance_all() {
+    printf '%s' "$1" | tr -d '\n' |
+        grep -oE '"msg"[[:space:]]*:[[:space:]]*"[^"]*"' |
+        sed -e 's/^"msg"[[:space:]]*:[[:space:]]*"//' -e 's/"$//' |
+        grep -F -e 'tollgate-wrt source' -e 'Installed tollgate-wrt build' |
+        sed 's/^/  /' || true
+    steps_tail "$1" |
+        grep -oE '"(name|desc|status|detail)"[[:space:]]*:[[:space:]]*"[^"]*"' |
+        awk -F'"' -v detail_for="Installing tollgate-wrt" "${STEPS_AWK}" || true
+}
+
+while true; do
+    STATUS="$(curl -s "http://127.0.0.1:${PORT}/api/status/${JOB_ID}")"
+    STATE="$(first_json_string "${STATUS}" status)"
+    print_status "${STATUS}"
+    if [ "${STATE}" = "done" ]; then
+        echo "=== DEPLOY COMPLETE ==="
+        echo
+        echo "=== package provenance ==="
+        printf '%s' "${STATUS}" > "${STATUS_FILE}"
+        if [ -n "${PYTHON3}" ]; then
+            "${PYTHON3}" - "${STATUS_FILE}" <<'PY'
+import sys, json
+try:
+    with open(sys.argv[1]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+for entry in (data.get("log") or data.get("logs") or []):
+    msg = entry.get("msg", "")
+    if "tollgate-wrt source" in msg or "Installed tollgate-wrt build" in msg:
+        print(f"  {msg}")
+step = next((s for s in data.get("steps", []) or []
+             if "Installing tollgate-wrt" in (s.get("desc") or "")), None)
+if step and step.get("detail"):
+    print(f"  {step['detail']}")
+PY
+        else
+            provenance_all "${STATUS}"
+        fi
+        break
+    elif [ "${STATE}" = "failed" ] || [ "${STATE}" = "error" ]; then
+        echo "=== DEPLOY FAILED ===" >&2
+        printf '%s' "${STATUS}" | pretty_json >&2
+        rm -f "${SEEN_FILE}" "${STATUS_FILE}"
+        exit 1
+    fi
+    sleep 3
+done
+rm -f "${SEEN_FILE}" "${STATUS_FILE}"
+
+# --- 6. post-deploy router verification --------------------------------------
+#
+# sshpass is NOT installed on macOS (it is not in Homebrew core either), and the
+# deploy itself never needs it: the Go installer opens SSH with
+# golang.org/x/crypto/ssh, not by shelling out. So this step is a *verification*
+# step, and its tooling being absent must not be reported as an authentication
+# failure after a deploy that plainly completed. Three ways in, in order:
+#
+#   1. sshpass, when installed (password through the environment, not argv, so
+#      it stays out of `ps`);
+#   2. ssh's own SSH_ASKPASS helper on OpenSSH >= 8.4. The helper reads the
+#      password from the environment, so it is never written to disk, and ssh
+#      gets </dev/null because OpenSSH ignores a password handed to it on a pipe;
+#   3. an explicit "not performed on this host" line — never a failure.
+ROUTER_PROBE='
+    echo "--- hostname ---";          cat /proc/sys/kernel/hostname
+    echo "--- tollgate-wrt build ---"; tollgate version 2>/dev/null || opkg list-installed tollgate-wrt 2>/dev/null || apk info -v tollgate-wrt 2>/dev/null || echo "build version unavailable"
+    echo "--- ports ---";             netstat -tln 2>/dev/null | grep -E ":80 |:2050|:2121" || true
+    echo "--- DNS tollgate.lan ---";  nslookup tollgate.lan 127.0.0.1 2>/dev/null | tail -3 || true
+    echo "--- LNURL ---";             jq -r ".public_identities[] | select(.name==\"owner\") | .lightning_address" /etc/tollgate/identities.json 2>/dev/null || true
+    echo "--- captive portal ---";    ls -la /etc/tollgate/tollgate-captive-portal-site/splash.html /etc/nodogsplash/htdocs/splash.html 2>/dev/null || echo MISSING
+    echo "--- TollGate health ---";   wget -qO- --timeout=5 http://127.0.0.1:2121/ 2>/dev/null | head -c 200 || echo "health ad unreachable"
+'
+
+# ssh_askpass_require_supported — SSH_ASKPASS_REQUIRE (which makes ssh use an
+# askpass helper without a DISPLAY) arrived in OpenSSH 8.4.
+ssh_askpass_require_supported() {
+    local ver major minor
+    ver="$("${SSH_BIN}" -V 2>&1 | sed -n 's/^OpenSSH_\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')"
+    [ -n "${ver}" ] || return 1
+    major="${ver%%.*}"
+    minor="${ver#*.}"
+    if [ "${major}" -gt 8 ]; then return 0; fi
+    if [ "${major}" -eq 8 ] && [ "${minor}" -ge 4 ]; then return 0; fi
+    return 1
+}
+
+# router_verify <ip> <password> — 0 = verified, 1 = the attempt failed,
+# 2 = this host has no way to send a password (nothing was attempted).
+router_verify() {
+    local ip="$1" pass="$2" helper rc
+
+    [ -n "${SSH_BIN}" ] || return 2
+
+    # Empty password (many routers, and every key-only one): batch mode so ssh
+    # can never stop to prompt, which would hang an unattended run.
+    if [ -z "${pass}" ]; then
+        "${SSH_BIN}" -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            -o BatchMode=yes "root@${ip}" "${ROUTER_PROBE}" 2>&1
+        return $?
+    fi
+
+    if [ -n "${SSHPASS_BIN}" ]; then
+        SSHPASS="${pass}" "${SSHPASS_BIN}" -e "${SSH_BIN}" \
+            -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            "root@${ip}" "${ROUTER_PROBE}" 2>&1
+        return $?
+    fi
+
+    if ssh_askpass_require_supported; then
+        helper="${RUN_DIR}/askpass.sh"
+        printf '%s\n' '#!/bin/sh' \
+            'printf "%s\n" "${TOLLGATE_ROUTER_PASS}"' > "${helper}"
+        chmod 700 "${helper}"
+        TOLLGATE_ROUTER_PASS="${pass}" \
+        SSH_ASKPASS="${helper}" SSH_ASKPASS_REQUIRE=force \
+            "${SSH_BIN}" -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+            -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+            -o NumberOfPasswordPrompts=1 "root@${ip}" "${ROUTER_PROBE}" \
+            </dev/null 2>&1
+        rc=$?
+        rm -f "${helper}"
+        return "${rc}"
+    fi
+
+    return 2
+}
+
+echo
+echo "=== Verifying router ${ROUTER_IP} post-deploy ==="
+verify_rc=0
+if router_verify "${ROUTER_IP}" "${ROUTER_PASS}"; then
+    verify_rc=0
+else
+    verify_rc=$?
+    # Deploy sets the router's root password to the admin password (when one
+    # is given), so the pre-deploy router password no longer authenticates.
+    # Retry with the admin password before declaring failure (rc 2 = probe
+    # unavailable on this host, keep that verdict as-is).
+    if [ "${verify_rc}" -ne 2 ] && [ -n "${ADMIN_PASS}" ] \
+        && [ "${ADMIN_PASS}" != "${ROUTER_PASS}" ]; then
+        if router_verify "${ROUTER_IP}" "${ADMIN_PASS}"; then
+            verify_rc=0
+            echo "(note: the deploy set the router's root password to the admin password)"
+        fi
+    fi
+fi
+
+case "${verify_rc}" in
+    0) ;;
+    2) if [ -z "${SSH_BIN}" ]; then
+           echo "skipped: no ssh client on this host — router-side verification not performed here"
+       else
+           echo "skipped: sshpass is not installed and this ssh cannot use SSH_ASKPASS"
+           echo "         (sshpass is not part of macOS; the askpass route needs OpenSSH >= 8.4)"
+           echo "         router-side verification not performed on this host — the deploy"
+           echo "         itself does not need sshpass. To check by hand:"
+           echo "           ssh root@${ROUTER_IP}    # hostname, ports :2050/:2121, LNURL"
+       fi ;;
+    *)  echo "(router verification failed — wrong password or host unreachable;"
+        echo " the deploy itself reported done)" >&2 ;;
+esac
+
+echo
+echo "Done. Installer log: ${LOG_FILE}"
+echo "Router: Telnet/SSH root@${ROUTER_IP} — TollGate API :2121, portal :2050"
+kill "${SERVER_PID}" 2>/dev/null || true
+# What this script reports on is the deploy. A post-deploy probe that could not
+# run, on a host that simply lacks sshpass, must not turn a completed deploy
+# into a non-zero exit.
+exit 0
