@@ -628,6 +628,18 @@ code_norm() {
 # already in the field under the new spelling adopts the SAME code, while the
 # bare TollGate-<code> form (every router deployed before the bang) keeps
 # working. The suffix logic (everything after the first '-') is unchanged.
+#
+# The case rule below lists the re-brand's machine-name prefix as a LITERAL.
+# That is a declared, path-scoped exemption from the rebrand gutter — NOT a
+# silent one. Read it before changing this line:
+#   tests/shell/test-rebrand-literal-gutter.sh  (header: "the one documented,
+#   path-scoped, line-scoped exemption")
+# In short: recognizing a name the re-brand's own writer ships is the whole
+# point of adoption here, and resolving it GENERICALLY needs a brand input this
+# repo does not have yet (the module's code_from_name reads one; this wizard
+# hardcodes its prefixes and reads no brand file). Adding that input is a
+# behavioural change to the adoption path, which the gutter's exemption retires
+# together with this line once it lands.
 code_from_name() {
     p=$(trim_ws "${1%%-*}" | tr 'A-Z' 'a-z')
     p=${p#\!}
