@@ -975,6 +975,25 @@ func runDeployment(job *Job, req deployRequest) {
 	// that nil and panicked the whole installer (BLOCK 2 of the #52 review).
 	defer func() { closeSSHClient(client) }()
 
+	// Tester-side uplink, read BEFORE anything changes on the router (card
+	// t_27e348b5). A deploy reconfigures the router's wireless mid-run, so a
+	// machine driving it over wifi can be dropped by the very step meant to
+	// succeed. This snapshot is what lets a later transport loss be judged
+	// correctly instead of blamed on the router. Read before the first SSH
+	// command so it describes the path the deploy actually started on.
+	uplinkBefore := testerUplinkNow()
+	if uplinkBefore.Kind == uplinkKindWifi {
+		job.addLog("This machine reaches the router over wifi (" + describeUplinkState(uplinkBefore) +
+			"). The deploy reconfigures the router's wireless mid-run, so it may drop THIS machine's association; a loss of your own connection will be reported as such, not as an install failure.")
+	}
+	// rejoin holds the SSIDs a dropped tester can rejoin, filled in as soon as
+	// the deploy resolves the router's device identity (step 7).
+	rejoin := rejoinTargets{}
+	// installRan records whether the deploy changed anything on the router, so a
+	// tester-side loss at step 0 does not offer a Re-check for an install that
+	// never began.
+	installRan := false
+
 	// Step 0: Verify SSH
 	job.setStep(0, "running", "")
 	fwOut := sshRun(client, "cat /etc/openwrt_release 2>/dev/null || cat /etc/openwrt_version 2>/dev/null || echo 'not openwrt'")
@@ -1018,7 +1037,7 @@ func runDeployment(job *Job, req deployRequest) {
 		// form and fail the job with the reason instead of spinning.
 		board, boardErr := sshRunE(client, "cat /tmp/sysinfo/board_name 2>/dev/null")
 		if boardErr != nil {
-			failTransportLost(job, 0, req.IP, boardErr)
+			handleTransportLoss(job, 0, req.IP, boardErr, uplinkBefore, installRan, rejoin)
 			return
 		}
 		glModel = glModelFromBoard(board)
@@ -1569,6 +1588,11 @@ func runDeployment(job *Job, req deployRequest) {
 		}
 		installOut := sshRun(client, installCmd)
 		job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
+		// The install command has now run, so the router's state has changed.
+		// A tester-side loss from here on must offer Re-check, not "nothing was
+		// installed". (The re-acquire block below is the existing recovery for
+		// this step's own network restart.)
+		installRan = true
 		// The package postinst runs `/etc/init.d/network restart` on the router we
 		// are driving (packaging/Makefile): 99-tollgate-setup derives
 		// network.private (lan/24 ±1) and moves the wired port onto br-private, so
@@ -1766,6 +1790,12 @@ func runDeployment(job *Job, req deployRequest) {
 	} else {
 		job.addLog("Device code " + id.Code + " (" + id.Source + "): hostname=" + id.Hostname + ", captive SSID=" + id.SSID + ", private SSID=" + id.PrivateSSID)
 	}
+	// From here on the deploy knows the names a dropped tester must rejoin, so a
+	// later tester-side loss can tell the operator WHICH SSID to join instead of
+	// describing it. Both are written on the router by brandingCommands below.
+	if id.SSID != "" || id.PrivateSSID != "" {
+		rejoin = rejoinTargets{Captive: id.SSID, Private: id.PrivateSSID}
+	}
 
 	// Get router LAN IP first (needed for DNS entries). netifd stores
 	// network.lan.ipaddr as "192.168.1.1/24" on current OpenWrt, so the value
@@ -1944,7 +1974,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	// and the health gate run. Without this the deploy blamed the router for a
 	// failure it caused itself, then told the operator to go find it by hand.
 	if nc, err := ensureTransportAfterRestart(job, client, req.IP, req.Password); err != nil {
-		failTransportLost(job, 10, req.IP, err)
+		handleTransportLoss(job, 10, req.IP, err, uplinkBefore, installRan, rejoin)
 		return
 	} else {
 		client = nc
@@ -2007,7 +2037,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	// sshTransportAlive.
 	if err := sshTransportAlive(client); err != nil {
 		job.addLog("Lost the SSH transport to the router before the health check: " + err.Error())
-		failTransportLost(job, 11, req.IP, err)
+		handleTransportLoss(job, 11, req.IP, err, uplinkBefore, installRan, rejoin)
 		return
 	}
 	// Phase 1 — wait for the advertisement (the merchant is up): ~2 min at 3 s.
@@ -2015,7 +2045,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 		time.Sleep(3 * time.Second)
 		if err := sshTransportAlive(client); err != nil {
 			job.addLog(fmt.Sprintf("Health check attempt %d/%d: SSH TRANSPORT LOST — %v", attempt, healthAttempts, err))
-			failTransportLost(job, 11, req.IP, err)
+			handleTransportLoss(job, 11, req.IP, err, uplinkBefore, installRan, rejoin)
 			return
 		}
 		listening, healthBody = tollgateHealthProbe(client)
@@ -2045,7 +2075,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 			time.Sleep(8 * time.Second)
 			if err := sshTransportAlive(client); err != nil {
 				job.addLog(fmt.Sprintf("Merchant-starting wait %d/%d: SSH TRANSPORT LOST — %v", attempt, startingAttempts, err))
-				failTransportLost(job, 11, req.IP, err)
+				handleTransportLoss(job, 11, req.IP, err, uplinkBefore, installRan, rejoin)
 				return
 			}
 			listening, healthBody = tollgateHealthProbe(client)
@@ -2094,6 +2124,13 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 					"reachable mints and re-run, or check the router's uplink.\n" + diag
 			}
 		default: // "fail" — a merchant never once seen starting, with a live API, is a real crash-loop.
+			// This is the ROUTER-UNHEALTHY verdict, and it is only reachable
+			// while the SSH session is alive: every dead-session path above
+			// leaves through handleTransportLoss first. So the installer can
+			// state the difference the operator actually cares about — "the
+			// router is up and we talked to it, its money path is broken"
+			// rather than "we could not reach the router at all" — and it never
+			// reports a network loss as an install failure.
 			diag := tollgateDiagnostics(client, listening, healthBody)
 			job.addLog("Health check FAILED. Diagnostics:\n" + diag)
 			// Roll back wireless config so the router's radios are usable for
