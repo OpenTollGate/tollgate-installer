@@ -426,7 +426,7 @@
        wallet/mint health is still loading, so no price is advertised yet. -->
   <div id="pending-view" class="card hidden">
     <div class="error-msg" style="border-left:4px solid #f6ad55; text-align:left;">
-      <h2 style="color:#f6ad55;">TollGate installed — the merchant is still starting</h2>
+      <h2 id="pending-title" style="color:#f6ad55;">TollGate installed — the merchant is still starting</h2>
       <p id="pending-detail" style="margin-top:0.5rem; white-space:pre-wrap;"></p>
       <button class="btn" style="margin-top:1rem;" id="recheck-btn" onclick="recheck()">Re-check</button>
       <p class="hint" id="recheck-status" role="status" style="margin-top:0.6rem;"></p>
@@ -1323,12 +1323,16 @@ function showCredentialFile(path) {
   }
 }
 
-// showPending reveals the NON-fatal pending view: the deploy installed the
-// package and the API is up, but the merchant is still loading its wallet, so
-// no price is advertised yet. Re-check re-probes without re-deploying.
-function showPending(note) {
+// showPending reveals the NON-fatal pending view: the deploy either installed
+// the package and is waiting on the merchant, or stopped because THIS machine
+// lost its own connection. Both are non-fatal and both must be actionable, but
+// they are not the same story — so the heading is carried with the note (title)
+// and falls back to the merchant wording only when the backend sent none.
+function showPending(note, title) {
   const el = document.getElementById('pending-detail');
   if (el) el.textContent = note || 'The merchant is still loading its wallet and mint health.';
+  const h = document.getElementById('pending-title');
+  if (h) h.textContent = title || 'TollGate installed — the merchant is still starting';
   const v = document.getElementById('pending-view');
   if (v) v.classList.remove('hidden');
 }
@@ -1913,7 +1917,7 @@ async function pollStatus(jobId) {
     clearInterval(pollTimer);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
-      showPending(job.note);
+      showPending(job.note, job.note_title);
     }, 1500);
   }
 }

@@ -181,6 +181,12 @@ type Job struct {
 	// wallet/mints; the install succeeded and the money path will open). Rendered
 	// as an amber banner, never as an error. Guarded by mu.
 	Note string `json:"note,omitempty"`
+	// NoteTitle is the heading the pending view shows above Note. The pending
+	// state is reached for two different reasons — a merchant still loading its
+	// wallet, and a deploy that lost the TESTER's own connection — and the
+	// heading must say which. Empty means "the merchant is still starting",
+	// which is what every pre-existing pending path means. Guarded by mu.
+	NoteTitle string `json:"note_title,omitempty"`
 	// generatedPassword is set ONLY when the router had no root credential
 	// and none was supplied, so the deploy had to create one (see
 	// ensureRootCredential). It is served to the operator ONCE, on the first
@@ -1727,12 +1733,14 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		Steps             []Step     `json:"steps"`
 		Log               []LogEntry `json:"log"`
 		Error             string     `json:"error,omitempty"`
+		Note              string     `json:"note,omitempty"`
+		NoteTitle         string     `json:"note_title,omitempty"`
 		GeneratedPassword string     `json:"generated_password,omitempty"`
 		CredentialFile    string     `json:"credential_file,omitempty"`
 		ProgressCurrent   int        `json:"progressCurrent"`
 		ProgressTotal     int        `json:"progressTotal"`
 		ProgressLabel     string     `json:"progressLabel,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, generatedPassword,
+	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, job.Note, job.NoteTitle, generatedPassword,
 		job.credentialFile, job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
 
