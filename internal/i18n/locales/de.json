@@ -213,5 +213,15 @@
   "error.lightningAddress": "eine gültige Lightning-Adresse ist erforderlich",
   "error.jobNotFound": "Auftrag nicht gefunden",
   "error.ipVersion": "IP-Adresse und Version erforderlich",
-  "error.fingerprint": "ein Fingerabdruck ist erforderlich, z. B. SHA256:AbCdEf…"
+  "error.fingerprint": "ein Fingerabdruck ist erforderlich, z. B. SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "Router-CPU-Architektur konnte nicht ermittelt werden",
+  "jobError.target": "Router-Ziel konnte nicht ermittelt werden",
+  "jobError.notOpenWrt": "Der Router läuft noch nicht mit OpenWrt-Firmware",
+  "jobError.notOpenWrtPrestage": "Der Router läuft noch nicht mit OpenWrt-Firmware — Deploy-Dateien können nicht vorab geladen werden",
+  "jobError.packageInstall": "Paketinstallation fehlgeschlagen",
+  "jobError.opkgDowngrade": "opkg hat das Herunterstufen des Pakets abgelehnt: der Router läuft weiterhin mit dem VORHERIGEN tollgate-wrt-Binary und der neuen Konfiguration. Installiere eine Paketversion, die opkg akzeptiert, oder entferne das installierte tollgate-wrt zuerst (opkg remove tollgate-wrt) und starte erneut.",
+  "jobError.initScriptMissing": "tollgate-wrt-Init-Skript fehlt — Paketinstallation fehlgeschlagen",
+  "jobError.noWifiDevice": "Kein wifi-device in UCI gefunden — STA-Uplink kann nicht konfiguriert werden",
+  "jobError.imagePush": "OpenWrt-Image konnte nicht auf den Router übertragen werden"
 }

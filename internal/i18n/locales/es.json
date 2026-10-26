@@ -213,5 +213,15 @@
   "error.lightningAddress": "se requiere una dirección Lightning válida",
   "error.jobNotFound": "tarea no encontrada",
   "error.ipVersion": "se requieren la IP y la versión",
-  "error.fingerprint": "se requiere una huella, p. ej. SHA256:AbCdEf…"
+  "error.fingerprint": "se requiere una huella, p. ej. SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "No se pudo determinar la arquitectura de la CPU del router",
+  "jobError.target": "No se pudo determinar el destino del router",
+  "jobError.notOpenWrt": "El router todavía no ejecuta el firmware OpenWrt",
+  "jobError.notOpenWrtPrestage": "El router todavía no ejecuta el firmware OpenWrt — no se pueden predescargar los archivos de despliegue",
+  "jobError.packageInstall": "La instalación del paquete falló",
+  "jobError.opkgDowngrade": "opkg se negó a bajar la versión del paquete: el router sigue ejecutando el binario tollgate-wrt ANTERIOR con la configuración nueva. Instala una versión que opkg acepte, o elimina primero el tollgate-wrt instalado (opkg remove tollgate-wrt) y vuelve a intentarlo.",
+  "jobError.initScriptMissing": "Falta el script de inicio de tollgate-wrt — la instalación del paquete falló",
+  "jobError.noWifiDevice": "No se encontró ningún wifi-device en UCI — no se puede configurar el enlace STA",
+  "jobError.imagePush": "no se pudo enviar la imagen de OpenWrt al router"
 }

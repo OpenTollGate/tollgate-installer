@@ -213,5 +213,15 @@
   "error.lightningAddress": "требуется действительный адрес Lightning",
   "error.jobNotFound": "задача не найдена",
   "error.ipVersion": "требуются IP-адрес и версия",
-  "error.fingerprint": "требуется отпечаток, например SHA256:AbCdEf…"
+  "error.fingerprint": "требуется отпечаток, например SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "Не удалось определить архитектуру процессора роутера",
+  "jobError.target": "Не удалось определить модель роутера",
+  "jobError.notOpenWrt": "Роутер ещё не работает под управлением прошивки OpenWrt",
+  "jobError.notOpenWrtPrestage": "Роутер ещё не работает под управлением прошивки OpenWrt — нельзя заранее скачать файлы развёртывания",
+  "jobError.packageInstall": "Установка пакета не удалась",
+  "jobError.opkgDowngrade": "opkg отказался понизить версию пакета: роутер продолжает работать со ПРЕДЫДУЩИМ двоичным файлом tollgate-wrt и новой конфигурацией. Установите версию, которую принимает opkg, или сначала удалите установленный tollgate-wrt (opkg remove tollgate-wrt) и повторите попытку.",
+  "jobError.initScriptMissing": "Отсутствует init-скрипт tollgate-wrt — установка пакета не удалась",
+  "jobError.noWifiDevice": "В UCI не найдено ни одного wifi-device — невозможно настроить STA-аплинк",
+  "jobError.imagePush": "не удалось передать образ OpenWrt на роутер"
 }

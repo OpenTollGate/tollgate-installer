@@ -213,5 +213,15 @@
   "error.lightningAddress": "è richiesto un indirizzo Lightning valido",
   "error.jobNotFound": "attività non trovata",
   "error.ipVersion": "IP e versione richiesti",
-  "error.fingerprint": "è richiesta un'impronta, ad es. SHA256:AbCdEf…"
+  "error.fingerprint": "è richiesta un'impronta, ad es. SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "Impossibile determinare l'architettura della CPU del router",
+  "jobError.target": "Impossibile determinare il target del router",
+  "jobError.notOpenWrt": "Il router non esegue ancora il firmware OpenWrt",
+  "jobError.notOpenWrtPrestage": "Il router non esegue ancora il firmware OpenWrt — impossibile pre-scaricare i file di distribuzione",
+  "jobError.packageInstall": "Installazione del pacchetto non riuscita",
+  "jobError.opkgDowngrade": "opkg ha rifiutato il downgrade del pacchetto: il router esegue ancora il binario tollgate-wrt PRECEDENTE con la nuova configurazione. Installa una versione accettata da opkg, oppure rimuovi prima il tollgate-wrt installato (opkg remove tollgate-wrt) e riprova.",
+  "jobError.initScriptMissing": "Script di init di tollgate-wrt mancante — installazione del pacchetto non riuscita",
+  "jobError.noWifiDevice": "Nessun wifi-device trovato in UCI — impossibile configurare l'uplink STA",
+  "jobError.imagePush": "invio dell'immagine OpenWrt al router non riuscito"
 }

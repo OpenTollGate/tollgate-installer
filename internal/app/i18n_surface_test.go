@@ -272,6 +272,7 @@ func TestNoStringIsRenderedOutsideTheCatalogue(t *testing.T) {
 func TestEveryCatalogueKeyIsRendered(t *testing.T) {
 	page := string(indexHTML)
 	goErrorKeys := goErrorLiteralKeys(t)
+	goJobErrorKeys := goJobErrorLiteralKeys(t)
 	for _, key := range i18n.Keys() {
 		if strings.Contains(page, `"`+key+`"`) || strings.Contains(page, `'`+key+`'`) {
 			continue
@@ -289,6 +290,15 @@ func TestEveryCatalogueKeyIsRendered(t *testing.T) {
 			// handler emits is a translation nobody will ever read.
 			if !goErrorKeys[key] {
 				t.Errorf("catalogue key %q is not the resolution of any literal passed to writeError/writeErrorExtra; nothing can render it", key)
+			}
+			continue
+		}
+		if strings.HasPrefix(key, "jobError.") {
+			// Same mechanism, different field: handleStatus resolves these from
+			// the job's own English sentence (jobFail / Job.Error), so the
+			// reference is those call sites — see i18n_goprogress_test.go.
+			if !goJobErrorKeys[key] {
+				t.Errorf("catalogue key %q is not the resolution of any job error a job can store; nothing can render it", key)
 			}
 			continue
 		}

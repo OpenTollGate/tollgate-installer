@@ -213,5 +213,15 @@
   "error.lightningAddress": "alamat Lightning yang valid wajib diisi",
   "error.jobNotFound": "tugas tidak ditemukan",
   "error.ipVersion": "IP dan versi wajib diisi",
-  "error.fingerprint": "sidik jari wajib diisi, mis. SHA256:AbCdEf…"
+  "error.fingerprint": "sidik jari wajib diisi, mis. SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "Arsitektur CPU router tidak dapat ditentukan",
+  "jobError.target": "Target router tidak dapat ditentukan",
+  "jobError.notOpenWrt": "Router belum menjalankan firmware OpenWrt",
+  "jobError.notOpenWrtPrestage": "Router belum menjalankan firmware OpenWrt — aset deploy tidak dapat diunduh lebih dulu",
+  "jobError.packageInstall": "Instalasi paket gagal",
+  "jobError.opkgDowngrade": "opkg menolak menurunkan versi paket: router masih menjalankan biner tollgate-wrt SEBELUMNYA dengan konfigurasi baru. Pasang versi yang diterima opkg, atau hapus tollgate-wrt yang terpasang terlebih dahulu (opkg remove tollgate-wrt) lalu coba lagi.",
+  "jobError.initScriptMissing": "Skrip init tollgate-wrt tidak ada — instalasi paket gagal",
+  "jobError.noWifiDevice": "Tidak ada wifi-device di UCI — uplink STA tidak dapat dikonfigurasi",
+  "jobError.imagePush": "gagal mengirim image OpenWrt ke router"
 }

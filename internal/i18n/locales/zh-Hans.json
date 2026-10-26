@@ -213,5 +213,15 @@
   "error.lightningAddress": "需要有效的 Lightning 地址",
   "error.jobNotFound": "未找到任务",
   "error.ipVersion": "需要 IP 地址和版本",
-  "error.fingerprint": "需要指纹，例如 SHA256:AbCdEf…"
+  "error.fingerprint": "需要指纹，例如 SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "无法确定路由器的 CPU 架构",
+  "jobError.target": "无法确定路由器的目标型号",
+  "jobError.notOpenWrt": "路由器尚未运行 OpenWrt 固件",
+  "jobError.notOpenWrtPrestage": "路由器尚未运行 OpenWrt 固件 — 无法预下载部署文件",
+  "jobError.packageInstall": "软件包安装失败",
+  "jobError.opkgDowngrade": "opkg 拒绝降级该软件包：路由器仍在用新配置运行此前的 tollgate-wrt 程序。请安装 opkg 可接受的版本，或先移除已安装的 tollgate-wrt（opkg remove tollgate-wrt）后重试。",
+  "jobError.initScriptMissing": "缺少 tollgate-wrt 启动脚本 — 软件包安装失败",
+  "jobError.noWifiDevice": "UCI 中未找到 wifi-device — 无法配置 STA 上行链路",
+  "jobError.imagePush": "无法将 OpenWrt 镜像推送到路由器"
 }

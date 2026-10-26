@@ -213,5 +213,15 @@
   "error.lightningAddress": "geçerli bir Lightning adresi gerekli",
   "error.jobNotFound": "görev bulunamadı",
   "error.ipVersion": "IP ve sürüm gerekli",
-  "error.fingerprint": "bir parmak izi gerekli, örn. SHA256:AbCdEf…"
+  "error.fingerprint": "bir parmak izi gerekli, örn. SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "Yönlendiricinin CPU mimarisi belirlenemedi",
+  "jobError.target": "Yönlendiricinin hedefi belirlenemedi",
+  "jobError.notOpenWrt": "Yönlendirici henüz OpenWrt yazılımını çalıştırmıyor",
+  "jobError.notOpenWrtPrestage": "Yönlendirici henüz OpenWrt yazılımını çalıştırmıyor — dağıtım dosyaları önceden indirilemez",
+  "jobError.packageInstall": "Paket kurulumu başarısız oldu",
+  "jobError.opkgDowngrade": "opkg paketin sürümünü düşürmeyi reddetti: yönlendirici yeni yapılandırmayla birlikte hâlâ ÖNCEKİ tollgate-wrt ikili dosyasını çalıştırıyor. opkg'nin kabul ettiği bir sürüm kurun veya önce kurulu tollgate-wrt'yi kaldırıp (opkg remove tollgate-wrt) yeniden deneyin.",
+  "jobError.initScriptMissing": "tollgate-wrt başlangıç betiği eksik — paket kurulumu başarısız oldu",
+  "jobError.noWifiDevice": "UCI'da wifi-device bulunamadı — STA bağlantısı yapılandırılamıyor",
+  "jobError.imagePush": "OpenWrt imajı yönlendiriciye gönderilemedi"
 }

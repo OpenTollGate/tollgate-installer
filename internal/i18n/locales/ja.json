@@ -213,5 +213,15 @@
   "error.lightningAddress": "有効な Lightning アドレスが必要です",
   "error.jobNotFound": "ジョブが見つかりません",
   "error.ipVersion": "IP アドレスとバージョンが必要です",
-  "error.fingerprint": "フィンガープリントが必要です（例: SHA256:AbCdEf…）"
+  "error.fingerprint": "フィンガープリントが必要です（例: SHA256:AbCdEf…）",
+
+  "jobError.cpuArch": "ルーターの CPU アーキテクチャを特定できませんでした",
+  "jobError.target": "ルーターのターゲットを特定できませんでした",
+  "jobError.notOpenWrt": "ルーターはまだ OpenWrt ファームウェアで動作していません",
+  "jobError.notOpenWrtPrestage": "ルーターはまだ OpenWrt ファームウェアで動作していません — デプロイ用ファイルを事前ダウンロードできません",
+  "jobError.packageInstall": "パッケージのインストールに失敗しました",
+  "jobError.opkgDowngrade": "opkg がパッケージのダウングレードを拒否しました: ルーターは新しい設定のまま、以前の tollgate-wrt バイナリで動作し続けています。opkg が受け入れるバージョンをインストールするか、インストール済みの tollgate-wrt を先に削除して（opkg remove tollgate-wrt）再実行してください。",
+  "jobError.initScriptMissing": "tollgate-wrt の init スクリプトがありません — パッケージのインストールに失敗しました",
+  "jobError.noWifiDevice": "UCI に wifi-device が見つかりません — STA アップリンクを設定できません",
+  "jobError.imagePush": "OpenWrt イメージをルーターへ転送できませんでした"
 }

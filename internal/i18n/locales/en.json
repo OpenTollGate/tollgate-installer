@@ -215,5 +215,15 @@
   "error.lightningAddress": "a valid Lightning address is required",
   "error.jobNotFound": "job not found",
   "error.ipVersion": "IP and version required",
-  "error.fingerprint": "a fingerprint is required, e.g. SHA256:AbCdEf…"
+  "error.fingerprint": "a fingerprint is required, e.g. SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "Could not determine router CPU architecture",
+  "jobError.target": "Could not determine router target",
+  "jobError.notOpenWrt": "Router is not running OpenWrt firmware",
+  "jobError.notOpenWrtPrestage": "Router is not running OpenWrt firmware — cannot pre-download deploy assets",
+  "jobError.packageInstall": "Package installation failed",
+  "jobError.opkgDowngrade": "opkg refused to downgrade the package: the router still runs its PREVIOUS tollgate-wrt binary with the new config. Install a package whose version opkg accepts, or remove the installed tollgate-wrt first (opkg remove tollgate-wrt) and re-run.",
+  "jobError.initScriptMissing": "tollgate-wrt init script missing — package install failed",
+  "jobError.noWifiDevice": "No wifi-device found in UCI — cannot configure STA uplink",
+  "jobError.imagePush": "failed to push OpenWrt image to router"
 }

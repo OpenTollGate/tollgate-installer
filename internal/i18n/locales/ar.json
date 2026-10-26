@@ -213,5 +213,15 @@
   "error.lightningAddress": "مطلوب عنوان Lightning صالح",
   "error.jobNotFound": "لم يتم العثور على المهمة",
   "error.ipVersion": "عنوان IP والإصدار مطلوبان",
-  "error.fingerprint": "مطلوب بصمة، مثل SHA256:AbCdEf…"
+  "error.fingerprint": "مطلوب بصمة، مثل SHA256:AbCdEf…",
+
+  "jobError.cpuArch": "تعذّر تحديد معمارية معالج الراوتر",
+  "jobError.target": "تعذّر تحديد هدف الراوتر",
+  "jobError.notOpenWrt": "الراوتر لا يعمل ببرنامج OpenWrt بعد",
+  "jobError.notOpenWrtPrestage": "الراوتر لا يعمل ببرنامج OpenWrt بعد — لا يمكن تنزيل ملفات النشر مسبقًا",
+  "jobError.packageInstall": "فشل تثبيت الحزمة",
+  "jobError.opkgDowngrade": "رفض opkg تخفيض إصدار الحزمة: لا يزال الراوتر يعمل بنسخة tollgate-wrt السابقة مع الإعدادات الجديدة. ثبّت إصدارًا يقبله opkg، أو أزل tollgate-wrt المثبّت أولًا (opkg remove tollgate-wrt) ثم أعد المحاولة.",
+  "jobError.initScriptMissing": "سكربت تهيئة tollgate-wrt مفقود — فشل تثبيت الحزمة",
+  "jobError.noWifiDevice": "لم يُعثر على wifi-device في UCI — تعذّر إعداد وصلة STA",
+  "jobError.imagePush": "تعذّر دفع صورة OpenWrt إلى الراوتر"
 }

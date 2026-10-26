@@ -1721,6 +1721,20 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		job.generatedPasswordServed = true
 		job.generatedPassword = ""
 	}
+	// Step details and the job error are authored in Go (jobFail, setStep) and
+	// rendered by the page — pollStatus writes step.detail under each step and
+	// job.error into the failure banner. They are therefore a translated
+	// surface too, and they are localized here, OUTSIDE the lock, on a COPY:
+	// the snapshot shares job.Steps' backing array, so translating in place
+	// would burn one requester's language into the job's own state and a later
+	// request in another language would render it.
+	//
+	// A detail that is not in the catalogue (a raw sysupgrade line, a path, a
+	// fingerprint) is relayed verbatim by localizeMessage — see writeError. That
+	// is most of them by design; i18n_goprogress_test.go keeps the set of
+	// untranslated ones from growing without a decision.
+	steps := make([]Step, len(job.Steps))
+	copy(steps, job.Steps)
 	snapshot := struct {
 		IP                string     `json:"ip"`
 		Status            string     `json:"status"`
@@ -1733,9 +1747,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		ProgressCurrent   int        `json:"progressCurrent"`
 		ProgressTotal     int        `json:"progressTotal"`
 		ProgressLabel     string     `json:"progressLabel,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, generatedPassword,
+	}{job.IP, job.Status, job.Step, steps, job.Log, localizeMessage(r, job.Error), generatedPassword,
 		job.credentialFile, job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
+
+	for i := range snapshot.Steps {
+		snapshot.Steps[i].Detail = localizeMessage(r, snapshot.Steps[i].Detail)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(snapshot)
