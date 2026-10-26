@@ -200,5 +200,18 @@
   "step.flashVanilla": "Vanilla-OpenWrt flashen",
 
   "lang.label": "Sprache",
-  "lang.saved": "Deine Auswahl wird in diesem Browser gemerkt."
+  "lang.saved": "Deine Auswahl wird in diesem Browser gemerkt.",
+
+  "error.invalidJSON": "Ungültiges JSON",
+  "error.ipRequired": "IP-Adresse erforderlich",
+  "error.methodNotAllowed": "Methode nicht zulässig",
+  "error.postOnly": "nur POST",
+  "error.getOnly": "nur GET",
+  "error.jobID": "Auftrags-ID lässt sich nicht erzeugen",
+  "error.connect": "Verbindung zum Router nicht möglich",
+  "error.ipSSID": "IP-Adresse und SSID erforderlich",
+  "error.lightningAddress": "eine gültige Lightning-Adresse ist erforderlich",
+  "error.jobNotFound": "Auftrag nicht gefunden",
+  "error.ipVersion": "IP-Adresse und Version erforderlich",
+  "error.fingerprint": "ein Fingerabdruck ist erforderlich, z. B. SHA256:AbCdEf…"
 }

@@ -202,5 +202,18 @@
   "step.flashVanilla": "Flash vanilla OpenWrt",
 
   "lang.label": "Language",
-  "lang.saved": "Your choice is remembered on this browser."
+  "lang.saved": "Your choice is remembered on this browser.",
+
+  "error.invalidJSON": "invalid JSON",
+  "error.ipRequired": "IP required",
+  "error.methodNotAllowed": "method not allowed",
+  "error.postOnly": "POST only",
+  "error.getOnly": "GET only",
+  "error.jobID": "cannot generate a job id",
+  "error.connect": "could not connect to router",
+  "error.ipSSID": "ip and ssid are required",
+  "error.lightningAddress": "a valid Lightning address is required",
+  "error.jobNotFound": "job not found",
+  "error.ipVersion": "IP and version required",
+  "error.fingerprint": "a fingerprint is required, e.g. SHA256:AbCdEf…"
 }

@@ -200,5 +200,18 @@
   "step.flashVanilla": "Gravar OpenWrt original",
 
   "lang.label": "Idioma",
-  "lang.saved": "Sua escolha é memorizada neste navegador."
+  "lang.saved": "Sua escolha é memorizada neste navegador.",
+
+  "error.invalidJSON": "JSON inválido",
+  "error.ipRequired": "IP obrigatório",
+  "error.methodNotAllowed": "método não permitido",
+  "error.postOnly": "somente POST",
+  "error.getOnly": "somente GET",
+  "error.jobID": "não foi possível gerar um ID de tarefa",
+  "error.connect": "não foi possível conectar ao roteador",
+  "error.ipSSID": "IP e SSID obrigatórios",
+  "error.lightningAddress": "é necessário um endereço Lightning válido",
+  "error.jobNotFound": "tarefa não encontrada",
+  "error.ipVersion": "IP e versão obrigatórios",
+  "error.fingerprint": "é necessária uma impressão digital, p. ex. SHA256:AbCdEf…"
 }

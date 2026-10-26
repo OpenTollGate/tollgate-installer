@@ -200,5 +200,18 @@
   "step.flashVanilla": "فلاش OpenWrt الأصلي",
 
   "lang.label": "اللغة",
-  "lang.saved": "يُتذكَّر اختيارك في هذا المتصفّح."
+  "lang.saved": "يُتذكَّر اختيارك في هذا المتصفّح.",
+
+  "error.invalidJSON": "JSON غير صالح",
+  "error.ipRequired": "عنوان IP مطلوب",
+  "error.methodNotAllowed": "الطريقة غير مسموح بها",
+  "error.postOnly": "POST فقط",
+  "error.getOnly": "GET فقط",
+  "error.jobID": "تعذّر إنشاء معرّف للمهمة",
+  "error.connect": "تعذّر الاتصال بالراوتر",
+  "error.ipSSID": "عنوان IP واسم الشبكة مطلوبان",
+  "error.lightningAddress": "مطلوب عنوان Lightning صالح",
+  "error.jobNotFound": "لم يتم العثور على المهمة",
+  "error.ipVersion": "عنوان IP والإصدار مطلوبان",
+  "error.fingerprint": "مطلوب بصمة، مثل SHA256:AbCdEf…"
 }

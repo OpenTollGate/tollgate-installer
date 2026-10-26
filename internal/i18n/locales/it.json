@@ -200,5 +200,18 @@
   "step.flashVanilla": "Scrivi OpenWrt originale",
 
   "lang.label": "Lingua",
-  "lang.saved": "La tua scelta viene ricordata in questo browser."
+  "lang.saved": "La tua scelta viene ricordata in questo browser.",
+
+  "error.invalidJSON": "JSON non valido",
+  "error.ipRequired": "IP richiesto",
+  "error.methodNotAllowed": "metodo non consentito",
+  "error.postOnly": "solo POST",
+  "error.getOnly": "solo GET",
+  "error.jobID": "impossibile generare un ID attività",
+  "error.connect": "impossibile connettersi al router",
+  "error.ipSSID": "IP e SSID richiesti",
+  "error.lightningAddress": "è richiesto un indirizzo Lightning valido",
+  "error.jobNotFound": "attività non trovata",
+  "error.ipVersion": "IP e versione richiesti",
+  "error.fingerprint": "è richiesta un'impronta, ad es. SHA256:AbCdEf…"
 }

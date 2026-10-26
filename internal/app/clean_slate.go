@@ -91,37 +91,37 @@ func cleanSlateDetectedBoard(client *ssh.Client, version string) (string, openWr
 
 func cleanSlateInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		writeError(w, r, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
 	var req cleanSlateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeError(w, r, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if req.IP == "" {
-		writeError(w, http.StatusBadRequest, "IP required")
+		writeError(w, r, http.StatusBadRequest, "IP required")
 		return
 	}
 	client := sshConnect(req.IP, req.Password)
 	if client == nil {
-		writeError(w, http.StatusBadGateway, "could not connect to router")
+		writeError(w, r, http.StatusBadGateway, "could not connect to router")
 		return
 	}
 	defer client.Close()
 	board, img, err := cleanSlateDetectedBoard(client, req.Version)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	sumData, err := cleanSlateDownload(cleanSlateSumsURL(img))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to download OpenWrt sha256sums: "+err.Error())
+		writeError(w, r, http.StatusBadGateway, "failed to download OpenWrt sha256sums: "+err.Error())
 		return
 	}
 	expected, err := cleanSlateSHA256(sumData, imgFilename(img))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -146,37 +146,37 @@ func cleanSlateSumsURL(img openWrtImage) string {
 
 func cleanSlateFlash(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST only")
+		writeError(w, r, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
 	var req cleanSlateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeError(w, r, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if req.IP == "" || req.Version == "" {
-		writeError(w, http.StatusBadRequest, "IP and version required")
+		writeError(w, r, http.StatusBadRequest, "IP and version required")
 		return
 	}
 	// Validate identity and typed confirmation synchronously, before creating a job.
 	client := sshConnect(req.IP, req.Password)
 	if client == nil {
-		writeError(w, http.StatusBadGateway, "could not connect to router")
+		writeError(w, r, http.StatusBadGateway, "could not connect to router")
 		return
 	}
 	board, _, err := cleanSlateDetectedBoard(client, req.Version)
 	client.Close()
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := validateCleanSlateConfirmation(board, req.Confirmation); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	jobID, err := newJobID()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "cannot generate a job id")
+		writeError(w, r, http.StatusInternalServerError, "cannot generate a job id")
 		return
 	}
 	job := newCleanSlateJob(req.IP)

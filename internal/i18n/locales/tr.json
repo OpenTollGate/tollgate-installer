@@ -200,5 +200,18 @@
   "step.flashVanilla": "Orijinal OpenWrt yaz",
 
   "lang.label": "Dil",
-  "lang.saved": "Seçiminiz bu tarayıcıda hatırlanır."
+  "lang.saved": "Seçiminiz bu tarayıcıda hatırlanır.",
+
+  "error.invalidJSON": "geçersiz JSON",
+  "error.ipRequired": "IP gerekli",
+  "error.methodNotAllowed": "yönteme izin verilmiyor",
+  "error.postOnly": "yalnızca POST",
+  "error.getOnly": "yalnızca GET",
+  "error.jobID": "görev kimliği oluşturulamıyor",
+  "error.connect": "yönlendiriciye bağlanılamadı",
+  "error.ipSSID": "IP ve SSID gerekli",
+  "error.lightningAddress": "geçerli bir Lightning adresi gerekli",
+  "error.jobNotFound": "görev bulunamadı",
+  "error.ipVersion": "IP ve sürüm gerekli",
+  "error.fingerprint": "bir parmak izi gerekli, örn. SHA256:AbCdEf…"
 }

@@ -200,5 +200,18 @@
   "step.flashVanilla": "Flasher OpenWrt d'origine",
 
   "lang.label": "Langue",
-  "lang.saved": "Votre choix est mémorisé dans ce navigateur."
+  "lang.saved": "Votre choix est mémorisé dans ce navigateur.",
+
+  "error.invalidJSON": "JSON invalide",
+  "error.ipRequired": "Adresse IP requise",
+  "error.methodNotAllowed": "méthode non autorisée",
+  "error.postOnly": "POST uniquement",
+  "error.getOnly": "GET uniquement",
+  "error.jobID": "impossible de générer un identifiant de tâche",
+  "error.connect": "impossible de se connecter au routeur",
+  "error.ipSSID": "adresse IP et SSID requis",
+  "error.lightningAddress": "une adresse Lightning valide est requise",
+  "error.jobNotFound": "tâche introuvable",
+  "error.ipVersion": "adresse IP et version requises",
+  "error.fingerprint": "une empreinte est requise, p. ex. SHA256:AbCdEf…"
 }

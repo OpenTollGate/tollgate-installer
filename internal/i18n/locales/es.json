@@ -200,5 +200,18 @@
   "step.flashVanilla": "Flashear OpenWrt original",
 
   "lang.label": "Idioma",
-  "lang.saved": "Tu elección se recuerda en este navegador."
+  "lang.saved": "Tu elección se recuerda en este navegador.",
+
+  "error.invalidJSON": "JSON no válido",
+  "error.ipRequired": "Se requiere la IP",
+  "error.methodNotAllowed": "método no permitido",
+  "error.postOnly": "solo POST",
+  "error.getOnly": "solo GET",
+  "error.jobID": "no se puede generar un identificador de tarea",
+  "error.connect": "no se pudo conectar con el router",
+  "error.ipSSID": "se requieren la IP y el SSID",
+  "error.lightningAddress": "se requiere una dirección Lightning válida",
+  "error.jobNotFound": "tarea no encontrada",
+  "error.ipVersion": "se requieren la IP y la versión",
+  "error.fingerprint": "se requiere una huella, p. ej. SHA256:AbCdEf…"
 }

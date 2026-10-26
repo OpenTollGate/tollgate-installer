@@ -200,5 +200,18 @@
   "step.flashVanilla": "Flash OpenWrt asli",
 
   "lang.label": "Bahasa",
-  "lang.saved": "Pilihan Anda diingat di peramban ini."
+  "lang.saved": "Pilihan Anda diingat di peramban ini.",
+
+  "error.invalidJSON": "JSON tidak valid",
+  "error.ipRequired": "IP wajib diisi",
+  "error.methodNotAllowed": "metode tidak diizinkan",
+  "error.postOnly": "hanya POST",
+  "error.getOnly": "hanya GET",
+  "error.jobID": "tidak dapat membuat ID tugas",
+  "error.connect": "tidak dapat terhubung ke router",
+  "error.ipSSID": "IP dan SSID wajib diisi",
+  "error.lightningAddress": "alamat Lightning yang valid wajib diisi",
+  "error.jobNotFound": "tugas tidak ditemukan",
+  "error.ipVersion": "IP dan versi wajib diisi",
+  "error.fingerprint": "sidik jari wajib diisi, mis. SHA256:AbCdEf…"
 }

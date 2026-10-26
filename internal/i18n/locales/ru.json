@@ -200,5 +200,18 @@
   "step.flashVanilla": "Прошить оригинальный OpenWrt",
 
   "lang.label": "Язык",
-  "lang.saved": "Ваш выбор запоминается в этом браузере."
+  "lang.saved": "Ваш выбор запоминается в этом браузере.",
+
+  "error.invalidJSON": "некорректный JSON",
+  "error.ipRequired": "требуется IP-адрес",
+  "error.methodNotAllowed": "метод не разрешён",
+  "error.postOnly": "только POST",
+  "error.getOnly": "только GET",
+  "error.jobID": "не удаётся создать идентификатор задачи",
+  "error.connect": "не удалось подключиться к роутеру",
+  "error.ipSSID": "требуются IP-адрес и SSID",
+  "error.lightningAddress": "требуется действительный адрес Lightning",
+  "error.jobNotFound": "задача не найдена",
+  "error.ipVersion": "требуются IP-адрес и версия",
+  "error.fingerprint": "требуется отпечаток, например SHA256:AbCdEf…"
 }

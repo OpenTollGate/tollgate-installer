@@ -200,5 +200,18 @@
   "step.flashVanilla": "Ghi OpenWrt gốc",
 
   "lang.label": "Ngôn ngữ",
-  "lang.saved": "Lựa chọn của bạn được ghi nhớ trong trình duyệt này."
+  "lang.saved": "Lựa chọn của bạn được ghi nhớ trong trình duyệt này.",
+
+  "error.invalidJSON": "JSON không hợp lệ",
+  "error.ipRequired": "Cần địa chỉ IP",
+  "error.methodNotAllowed": "phương thức không được phép",
+  "error.postOnly": "chỉ POST",
+  "error.getOnly": "chỉ GET",
+  "error.jobID": "không tạo được mã công việc",
+  "error.connect": "không kết nối được với router",
+  "error.ipSSID": "Cần địa chỉ IP và SSID",
+  "error.lightningAddress": "cần địa chỉ Lightning hợp lệ",
+  "error.jobNotFound": "không tìm thấy công việc",
+  "error.ipVersion": "Cần địa chỉ IP và phiên bản",
+  "error.fingerprint": "cần dấu vân tay, ví dụ SHA256:AbCdEf…"
 }

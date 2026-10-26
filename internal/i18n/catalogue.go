@@ -425,3 +425,48 @@ func Merge(lang string) map[string]string {
 	}
 	return out
 }
+
+// textIndex maps a reference-catalogue VALUE back to its key, built once.
+//
+// It exists for the one surface that cannot name a key at its call site: the Go
+// handlers, which write an English sentence into a JSON error body. Making those
+// handlers construct keys would mean inlining key names into 40 call sites,
+// where the caller's real intent ("this request had no IP") would be replaced by
+// an opaque identifier and a typo would be invisible.
+//
+// So the English literal in Go IS the contract, and this index is how it is
+// checked: the sentence is looked up in en.json, and the test
+// TestEveryHandledErrorStringIsInTheCatalogue fails when a handler authors a
+// sentence the catalogue does not carry. The failure mode without that test is
+// silent — an unindexed sentence simply stays English, which looks fine on an
+// English page.
+var (
+	textOnce  sync.Once
+	textIndex map[string]string
+)
+
+func textKeyIndex() map[string]string {
+	textOnce.Do(func() {
+		c, err := loadAll()
+		if err != nil {
+			return
+		}
+		idx := make(map[string]string, len(c[DefaultLanguage]))
+		for k, v := range c[DefaultLanguage] {
+			if _, taken := idx[v]; !taken {
+				idx[v] = k
+			}
+		}
+		textIndex = idx
+	})
+	return textIndex
+}
+
+// KeyForText returns the catalogue key whose ENGLISH text is exactly s. ok is
+// false for a string the catalogue does not carry, which is the normal case for
+// a relayed diagnostic (a wrapped upstream error, a file path, a fingerprint):
+// those must be shown verbatim, not translated.
+func KeyForText(s string) (key string, ok bool) {
+	key, ok = textKeyIndex()[s]
+	return key, ok
+}

@@ -200,5 +200,18 @@
   "step.flashVanilla": "刷入原版 OpenWrt",
 
   "lang.label": "语言",
-  "lang.saved": "您的选择会在此浏览器中被记住。"
+  "lang.saved": "您的选择会在此浏览器中被记住。",
+
+  "error.invalidJSON": "JSON 无效",
+  "error.ipRequired": "需要 IP 地址",
+  "error.methodNotAllowed": "不允许的方法",
+  "error.postOnly": "仅限 POST",
+  "error.getOnly": "仅限 GET",
+  "error.jobID": "无法生成任务 ID",
+  "error.connect": "无法连接到路由器",
+  "error.ipSSID": "需要 IP 地址和 SSID",
+  "error.lightningAddress": "需要有效的 Lightning 地址",
+  "error.jobNotFound": "未找到任务",
+  "error.ipVersion": "需要 IP 地址和版本",
+  "error.fingerprint": "需要指纹，例如 SHA256:AbCdEf…"
 }

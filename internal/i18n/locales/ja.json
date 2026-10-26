@@ -200,5 +200,18 @@
   "step.flashVanilla": "純正 OpenWrt を書き込む",
 
   "lang.label": "言語",
-  "lang.saved": "選択内容はこのブラウザーに記憶されます。"
+  "lang.saved": "選択内容はこのブラウザーに記憶されます。",
+
+  "error.invalidJSON": "JSON が不正です",
+  "error.ipRequired": "IP アドレスが必要です",
+  "error.methodNotAllowed": "許可されていないメソッドです",
+  "error.postOnly": "POST のみ",
+  "error.getOnly": "GET のみ",
+  "error.jobID": "ジョブ ID を生成できません",
+  "error.connect": "ルーターに接続できませんでした",
+  "error.ipSSID": "IP アドレスと SSID が必要です",
+  "error.lightningAddress": "有効な Lightning アドレスが必要です",
+  "error.jobNotFound": "ジョブが見つかりません",
+  "error.ipVersion": "IP アドレスとバージョンが必要です",
+  "error.fingerprint": "フィンガープリントが必要です（例: SHA256:AbCdEf…）"
 }

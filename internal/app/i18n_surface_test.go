@@ -260,14 +260,18 @@ func TestNoStringIsRenderedOutsideTheCatalogue(t *testing.T) {
 // catalogue but never used is a string that gets translated forever and never
 // appears. It also catches a rename applied to only one side.
 //
-// Two families are referenced indirectly and would always look dead to a
-// literal search, so they are checked against their real source instead:
+// Three families are referenced indirectly and would always look dead to a
+// literal search, so each is checked against its real source instead:
 //   - step.* is built at runtime as 'step.' + step.name; the names live in
 //     deploySteps() and newCleanSlateJob(), so those Go literals are the
 //     reference.
 //   - lang.* labels are rendered by the picker from server-supplied data.
+//   - error.* is resolved on the SERVER from the handler's English sentence
+//     (i18n.KeyForText), so the reference is the set of literals passed to
+//     writeError, not anything in index.html.
 func TestEveryCatalogueKeyIsRendered(t *testing.T) {
 	page := string(indexHTML)
+	goErrorKeys := goErrorLiteralKeys(t)
 	for _, key := range i18n.Keys() {
 		if strings.Contains(page, `"`+key+`"`) || strings.Contains(page, `'`+key+`'`) {
 			continue
@@ -277,6 +281,14 @@ func TestEveryCatalogueKeyIsRendered(t *testing.T) {
 			// name that no job defines is a key nothing can ever show.
 			if !stepNameExists(strings.TrimPrefix(key, "step.")) {
 				t.Errorf("catalogue key %q matches no Step.Name in the deploy or clean-slate job; the page can never render it", key)
+			}
+			continue
+		}
+		if strings.HasPrefix(key, "error.") {
+			// Resolved server-side from a handler's English sentence. A key no
+			// handler emits is a translation nobody will ever read.
+			if !goErrorKeys[key] {
+				t.Errorf("catalogue key %q is not the resolution of any literal passed to writeError/writeErrorExtra; nothing can render it", key)
 			}
 			continue
 		}
