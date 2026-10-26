@@ -1871,7 +1871,9 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	//   7 production mints always;
 	//   2 testnut zero-fee test mints ONLY when the deploy payload opts in
 	//   (req.TestMints — E2E purchase testing, never a real customer default).
-	// Does NOT strip minibits (DLEQ keyset rotation bug fixed in gonuts v0.11.1).
+	// No mint is filtered out here, or anywhere: the mint set this wizard
+	// writes is exactly the compile-time constants in defaultMintsJSON. A mint
+	// is removed by editing that set, never by a pattern on the router.
 	devSplit, margin := req.resolvedAdvanced()
 	devSplit = clamp(devSplit, 0, 50)
 	margin = clamp(margin, 0, 100)
