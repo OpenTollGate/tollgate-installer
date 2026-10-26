@@ -41,10 +41,16 @@ func TestScanOffersTheMovedAddressInsteadOfBlamingThePassword(t *testing.T) {
 	if suggested < 0 {
 		t.Fatalf("the scan never looks at data.suggestedIp, so the address the server found is dropped on the floor:\n%s", body)
 	}
-	passwordHint := strings.Index(body, "check router password")
+	// The hint now comes from the catalogue (wifi.scanCheckPassword) instead of
+	// an inline English literal. Pin the KEY at the call site and the English
+	// TEXT in the catalogue, so neither half can be renamed alone — the point of
+	// this assertion is that the generic password fallback still exists and
+	// still sits after the moved-address branch.
+	passwordHint := strings.Index(body, "wifi.scanCheckPassword")
 	if passwordHint < 0 {
 		t.Fatalf("the generic password hint disappeared — this test can no longer tell whether it was kept out of the moved-address branch")
 	}
+	requireCatalogueString(t, "wifi.scanCheckPassword", "check router password")
 	if suggested > passwordHint {
 		t.Errorf("the moved-address branch sits AFTER the generic password fallback, so it can never be reached:\n%s", body)
 	}

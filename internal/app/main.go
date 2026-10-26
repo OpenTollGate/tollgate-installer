@@ -1747,8 +1747,21 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	// an older wizard than the binary that is running — the operator clicks a
 	// control that the current binary no longer serves, or talks to an endpoint
 	// whose request shape has since changed. Never store it.
+	//
+	// This also carries the language decision: the response is per-request and
+	// depends on the Accept-Language header and the saved cookie, so a shared
+	// cache would serve one visitor's language to the next (see
+	// i18n_surface.go).
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(indexHTML)
+	// Echo the decision back so a diagnostic and a test can see WHICH language a
+	// response was rendered in without parsing the body.
+	lang, dir := pageLanguage(r)
+	w.Header().Set("Content-Language", lang)
+	w.Header().Set("Vary", "Accept-Language, Cookie")
+	if dir == "rtl" {
+		w.Header().Set("X-Content-Direction", dir)
+	}
+	w.Write(renderIndex(lang, dir))
 }
 
 // configResponse is the installer's build + feed identity, served at

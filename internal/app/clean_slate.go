@@ -260,5 +260,8 @@ func runCleanSlate(job *Job, req cleanSlateRequest) {
 }
 
 func newCleanSlateJob(ip string) *Job {
-	return &Job{IP: ip, Status: "running", Steps: []Step{{Name: "identity", Desc: "Confirm router identity", Status: "pending"}, {Name: "image", Desc: "Verify OpenWrt image", Status: "pending"}, {Name: "flash", Desc: "Flash vanilla OpenWrt", Status: "pending"}}, Log: []LogEntry{}, stageCache: map[string][]byte{}, lastActivity: time.Now()}
+	// Step names are catalogue keys (step.<name>); "flash" belongs to the deploy
+	// flow's GL.iNet flash, so the clean-slate flash is "flashVanilla" — otherwise
+	// a translated page would label this step with the deploy step's text.
+	return &Job{IP: ip, Status: "running", Steps: []Step{{Name: "identity", Desc: "Confirm router identity", Status: "pending"}, {Name: "image", Desc: "Verify OpenWrt image", Status: "pending"}, {Name: "flashVanilla", Desc: "Flash vanilla OpenWrt", Status: "pending"}}, Log: []LogEntry{}, stageCache: map[string][]byte{}, lastActivity: time.Now()}
 }

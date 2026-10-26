@@ -1,6 +1,21 @@
 package i18n
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// contains reports whether haystack holds needle. Local helper so this file
+// does not need the slices package (the module targets an older Go for the
+// installer's build matrix).
+func contains(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
 
 // The precedence is the contract. Each test below pins ONE rung, and the
 // ordering tests pin that a higher rung beats a lower one even when the lower
@@ -168,7 +183,7 @@ func TestRTLDetection(t *testing.T) {
 // every one (the picker renders the labels).
 func TestCatalogueIsConsistent(t *testing.T) {
 	seen := map[string]bool{}
-	for _, l := range supportedLanguages {
+	for _, l := range requestedLanguages {
 		if seen[l.Tag] {
 			t.Errorf("duplicate tag %q in the catalogue", l.Tag)
 		}
@@ -179,19 +194,56 @@ func TestCatalogueIsConsistent(t *testing.T) {
 		if LanguageLabel(l.Tag) != l.Label {
 			t.Errorf("LanguageLabel(%q) did not round-trip", l.Tag)
 		}
+		// The catalogue status is a two-valued field with a documented
+		// invariant: either there is text, or there is a recorded reason.
+		// An entry that is neither is a gap someone forgot; an entry that is
+		// both is a contradiction.
+		if l.Catalogue == "" && l.FallbackWhy == "" {
+			t.Errorf("tag %q is neither shipped nor explained: add a catalogue or say why English is served", l.Tag)
+		}
+		if l.Catalogue != "" && l.FallbackWhy != "" {
+			t.Errorf("tag %q claims catalogue %q AND a fallback reason; pick one", l.Tag, l.Catalogue)
+		}
+		if l.Catalogue != "" {
+			if got := catalogueKeys(l.Catalogue); len(got) == 0 {
+				t.Errorf("tag %q names catalogue %q, but no such catalogue has any keys", l.Tag, l.Catalogue)
+			}
+		}
 	}
 	if !seen[DefaultLanguage] {
 		t.Fatalf("the default %q is not in the catalogue", DefaultLanguage)
 	}
-	// The operator asked for "the 21 most spoken languages". The catalogue holds
-	// 22 ENTRIES because two of them are not extra languages:
+	// The operator asked for "the 21 most spoken languages". The requested list
+	// holds 23 ENTRIES because they are not all distinct languages:
 	//   zh-Hans / zh-Hant  one language, two scripts (both needed: they are not
 	//                      mutually readable to a casual reader)
 	//   ar / ar-EG         Modern Standard Arabic plus an Egyptian variant entry
+	//   it                 the operator's permitted substitution for locales that
+	//                      could not be produced credibly
 	// So the count is asserted with that reasoning attached rather than as a bare
-	// number, and the distinct-LANGUAGE count is checked separately below.
-	if n := len(SupportedLanguages()); n != 22 {
-		t.Errorf("catalogue has %d entries, want 22 (21 languages; zh is two scripts, ar has a regional variant)", n)
+	// number, and the SHIPPED count is checked separately below.
+	if n := len(RequestedLanguages()); n != 23 {
+		t.Errorf("requested list has %d entries, want 23 (21 languages; zh is two scripts, ar has a regional variant, plus the it substitution)", n)
+	}
+
+	// A locale is pickable only when it has text. Advertising one we cannot
+	// render is the failure this whole design exists to avoid: the user picks
+	// मराठी and the wizard answers in English.
+	for _, tag := range ShippedLanguages() {
+		if !IsShipped(tag) {
+			t.Errorf("ShippedLanguages() offers %q, which IsShipped says has no catalogue", tag)
+		}
+	}
+	for tag, why := range FallbackLanguages() {
+		if IsShipped(tag) {
+			t.Errorf("%q is listed as a fallback but has a catalogue", tag)
+		}
+		if strings.TrimSpace(why) == "" {
+			t.Errorf("%q falls back to English with no recorded reason", tag)
+		}
+		if contains(ShippedLanguages(), tag) {
+			t.Errorf("%q falls back to English but is still offered in the picker", tag)
+		}
 	}
 }
 
@@ -273,7 +325,7 @@ func TestResolveAndResolveWithSourceAgree(t *testing.T) {
 // Every shipped language must be resolvable from its own tag, so a saved choice
 // or an exact header match always works.
 func TestEveryShippedLanguageResolvesFromItsOwnTag(t *testing.T) {
-	for _, tag := range SupportedLanguages() {
+	for _, tag := range ShippedLanguages() {
 		if got := Resolve(Request{Saved: tag}); got != tag {
 			t.Errorf("saved %q resolved to %q", tag, got)
 		}
