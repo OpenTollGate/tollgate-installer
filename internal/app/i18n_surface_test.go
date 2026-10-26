@@ -302,8 +302,47 @@ func TestEveryCatalogueKeyIsRendered(t *testing.T) {
 			}
 			continue
 		}
+		if strings.HasPrefix(key, "scanFailure.") || strings.HasPrefix(key, "scan.fail.problem.") ||
+			strings.HasPrefix(key, "scan.fail.source") || strings.HasPrefix(key, "scan.note.") ||
+			key == "scan.fail.summary" || key == "scan.fail.manualHint" ||
+			key == "scan.fail.tunnelNote" || strings.HasPrefix(key, "scan.fail.step") {
+			// The scan-failure block is translated SERVER-side (i18n_diag.go):
+			// the handler resolves these from the English sentences
+			// discover.go authors, because the page has no copy of the
+			// precedence (i18n.Surface) and must not grow one. The reference
+			// is therefore the diagnostics builder, not index.html — see
+			// i18n_diag_test.go's TestEveryScanFailureKeyIsReachable.
+			if !scanFailureKeyReachable(key) {
+				t.Errorf("catalogue key %q is not reachable from the scan-failure block; nothing can render it", key)
+			}
+			continue
+		}
 		t.Errorf("catalogue key %q is never referenced by index.html (dead translation, or a half-applied rename)", key)
 	}
+}
+
+// scanFailureKeyReachable reports whether a scan-failure key can actually be
+// emitted: either i18n_diag.go names it (the table plus the parameterised
+// families) or the page names it (the fixed headings it already renders).
+func scanFailureKeyReachable(key string) bool {
+	if strings.Contains(string(indexHTML), `"`+key+`"`) || strings.Contains(string(indexHTML), `'`+key+`'`) {
+		return true
+	}
+	for _, mapped := range diagFixedKeys {
+		if mapped == key {
+			return true
+		}
+	}
+	for _, k := range []string{
+		"scan.fail.summary", "scan.fail.manualHint", "scan.fail.sourceLine",
+		"scan.fail.tunnelNote", "scan.note.identified", "scan.note.noAnswer",
+		"scan.note.vendorIdentified", "scan.note.unverified",
+	} {
+		if key == k {
+			return true
+		}
+	}
+	return false
 }
 
 // stepNameExists reports whether any job definition uses this step name, which

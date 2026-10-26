@@ -454,7 +454,10 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	res := scanNetworkFn()
 	body := map[string]any{"routers": res.Routers}
 	if res.Diagnostics != nil {
-		body["diagnostics"] = res.Diagnostics
+		// Localized on a COPY: the diagnostics value belongs to the scan, and
+		// writing one requester's language into it would serve that language to
+		// the next one. See i18n_diag.go.
+		body["diagnostics"] = localizeDiagnostics(r, res.Diagnostics)
 		body["failure"] = res.Diagnostics.Text
 	}
 	w.Header().Set("Content-Type", "application/json")

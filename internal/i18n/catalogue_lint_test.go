@@ -176,7 +176,19 @@ func TestKeysAreAllLiveLivesInTheAppPackage(t *testing.T) {
 // absence of MARKUP tags rather than of angle brackets, and the exemption is
 // named here rather than being a silent skip.
 func TestCatalogueValuesArePlainText(t *testing.T) {
-	const shellCommandKey = "scan.fail.try3"
+	// Angle brackets are a defect everywhere EXCEPT in a string the operator is
+	// meant to paste into a shell, where `<interface>` and `<ROUTER-IP>` are
+	// placeholders and `<(curl …)` is process substitution. The exemption is a
+	// short, NAMED set rather than a pattern, so adding a string to it is a
+	// visible decision in this file — and each entry must still look like the
+	// shell thing it claims to be (checked at the bottom), so an exemption
+	// cannot be inherited by unrelated prose that lands under the same key.
+	shellCommandKeys := map[string]string{
+		// key: a substring the value must still contain.
+		"scan.fail.try3":  "curl",
+		"scan.fail.step3": "<interface>",
+		"scan.fail.step5": "curl",
+	}
 
 	ref, err := loadAll()
 	if err != nil {
@@ -192,13 +204,18 @@ func TestCatalogueValuesArePlainText(t *testing.T) {
 			if v == "" {
 				t.Errorf("%s: %q is empty; omit the key instead so it falls back to English", tag, key)
 			}
-			if markupTags.MatchString(v) {
+			// A shell command's placeholders (`<interface>`, `<ROUTER-IP>`)
+			// match the markup heuristic; the exemption is the same named set,
+			// and it is still checked at the bottom to look like a shell
+			// command, so this is not a general escape from the markup rule.
+			_, shellExempt := shellCommandKeys[key]
+			if !shellExempt && markupTags.MatchString(v) {
 				t.Errorf("%s: %q contains what looks like an HTML tag (%q); values are written with textContent, so it would render literally", tag, key, markupTags.FindString(v))
 			}
-			if key != shellCommandKey && strings.ContainsAny(v, "<>") && !markupTags.MatchString(v) {
-				// Angle brackets outside the shell command are almost always a
+			if !shellExempt && strings.ContainsAny(v, "<>") && !markupTags.MatchString(v) {
+				// Angle brackets outside a shell command are almost always a
 				// mistyped entity or an attempt to bold a word.
-				t.Errorf("%s: %q contains angle brackets (%q) outside the one key allowed to; use plain text", tag, key, v)
+				t.Errorf("%s: %q contains angle brackets (%q) outside the keys allowed to; use plain text", tag, key, v)
 			}
 			if strings.Contains(v, "&nbsp;") || strings.Contains(v, "&amp;") || strings.Contains(v, "&lt;") {
 				t.Errorf("%s: %q contains an HTML entity; it would render literally", tag, key)
@@ -206,10 +223,17 @@ func TestCatalogueValuesArePlainText(t *testing.T) {
 		}
 	}
 
-	// The exemption itself must stay a shell command, or it becomes a hole.
-	for tag, cat := range ref {
-		if v, ok := cat[shellCommandKey]; ok && !strings.Contains(v, "curl") {
-			t.Errorf("%s: %q no longer looks like the curl|bash one-liner, so its angle-bracket exemption is stale: %q", tag, shellCommandKey, v)
+	// Each exemption must still look like the shell thing it claims to be, or it
+	// becomes a hole for whatever prose lands under that key next.
+	for key, mustContain := range shellCommandKeys {
+		for tag, cat := range ref {
+			v, ok := cat[key]
+			if !ok {
+				continue
+			}
+			if !strings.Contains(v, mustContain) {
+				t.Errorf("%s: %q no longer contains %q, so its angle-bracket exemption is stale: %q", tag, key, mustContain, v)
+			}
 		}
 	}
 }
