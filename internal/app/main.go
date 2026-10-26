@@ -321,7 +321,12 @@ func (j *Job) setGeneratedPassword(pw string) {
 	j.generatedPassword = pw
 	j.mu.Unlock()
 	j.addLog("Router had NO root password and none was supplied — the fixed default was set.")
-	j.addLog("ROOT PASSWORD: default — it is shown ONCE, on this deploy's final screen (success or failure), and a copy is saved to the credential file named above. Change it to your own at first login.")
+	// Deliberately NO claim that a copy is on disk: setCredentialFile is the
+	// only place that may say so, and it only runs when the write succeeded. An
+	// operator whose persist failed is the one most at risk (this line is what
+	// they read instead), so it must not send them to a file that does not
+	// exist.
+	j.addLog("ROOT PASSWORD: default — it is shown ONCE, on this deploy's final screen (success or failure). Copy it from there into your password manager NOW. Change it to your own at first login.")
 }
 
 // setCredentialFile records where the generated credential was persisted, and

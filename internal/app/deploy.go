@@ -210,15 +210,44 @@ const (
 
 // credentialFilePath returns the recovery-log path, or "" when it cannot be
 // determined (no override and no home directory).
+//
+// An override is INTERPRETED, not taken verbatim: a value of `~/.creds` (or any
+// relative path) used to be MkdirAll'ed as-is, which created a literal `~`
+// directory inside whatever the process's CWD happened to be — the credential
+// then landed somewhere the operator never looks, while the log told them it was
+// saved "to ~/.creds". A leading `~/` is expanded against the home directory and
+// anything else relative is resolved against the CWD, so the path named in the
+// log is always the path on disk.
 func credentialFilePath() string {
 	if p := strings.TrimSpace(os.Getenv(credentialFileEnv)); p != "" {
-		return p
+		return absoluteCredentialPath(p)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
 	return filepath.Join(home, defaultCredentialFile)
+}
+
+// absoluteCredentialPath expands a leading `~` and resolves a relative override
+// against the working directory, so a write never lands in a surprising place.
+// It returns the value unchanged when it is already absolute and `~`-free.
+func absoluteCredentialPath(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+		} else {
+			return ""
+		}
+	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return ""
+	}
+	return abs
 }
 
 // persistRootCredential appends a generated root credential to the operator's
@@ -261,11 +290,17 @@ func persistRootCredential(ip, password string) (string, error) {
 		return "", err
 	}
 	// The credential must outlive a crash the instant after it is applied.
-	if err := f.Sync(); err != nil {
+	if err := syncCredentialFile(f); err != nil {
 		return "", err
 	}
 	return path, nil
 }
+
+// syncCredentialFile flushes the recovery log to stable storage. It is a var so
+// the flush is OBSERVABLE: the "survives a crash the instant after it is
+// applied" guarantee is load-bearing, and an untested fsync is a claim, not a
+// guarantee (deleting this block used to leave the whole suite green).
+var syncCredentialFile = func(f *os.File) error { return f.Sync() }
 
 // ensureRootCredential makes sure the router is never left without a root
 // credential and returns the password later deploy steps must reconnect with.
@@ -374,8 +409,17 @@ func finalizeRootCredential(job *Job, run routerRun, prove routerAuthProof) bool
 	// add a second "running" marker for step 4 (TestDeployStepIndexGuard).
 	if !applyRootPassword(job, run, prove, pw, "generated") {
 		// The value was persisted before it was ever used (step 4), so this
-		// deployment is recoverable by hand even though it is not complete.
-		job.addLog("The generated root credential could NOT be applied — take it from the credential file named above and set it on the router by hand.")
+		// deployment is recoverable by hand even though it is not complete —
+		// but only if the write actually landed, so only name the file when
+		// there is one (a failed persist leaves job.credentialFile empty).
+		job.mu.Lock()
+		credFile := job.credentialFile
+		job.mu.Unlock()
+		if credFile != "" {
+			job.addLog("The generated root credential could NOT be applied — take it from " + credFile + " and set it on the router by hand.")
+		} else {
+			job.addLog("The generated root credential could NOT be applied — no recovery file was written, so take the value from the one-time screen and set it on the router by hand.")
+		}
 		return false
 	}
 	job.setGeneratedPassword(pw)

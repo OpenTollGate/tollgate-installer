@@ -188,6 +188,14 @@ func TestCredentialPersistFailureWarnsLoudlyAndDoesNotAbort(t *testing.T) {
 	if job.Status == "failed" {
 		t.Fatalf("an unwritable credential file FAILED the deploy (%s); the one-shot serve still fires, and refusing to configure a router over a local file write error is the wrong trade", job.Error)
 	}
+	// Run the deployment to its generated-credential success point as well: the
+	// operator-facing "ROOT PASSWORD: …" line is only written when the deferred
+	// credential is APPLIED (finalizeRootCredential -> setGeneratedPassword), so
+	// the log this test reads is the one an operator whose write failed actually
+	// sees at the end of a deploy.
+	if !finalizeRootCredential(job, fr.run, fr.proveLogin) {
+		t.Fatalf("finalizeRootCredential failed after a persist error: %s", job.Error)
+	}
 
 	logText := jobLogText(job)
 	if !strings.Contains(logText, "could not save") {
@@ -199,10 +207,155 @@ func TestCredentialPersistFailureWarnsLoudlyAndDoesNotAbort(t *testing.T) {
 	if pw != "" && strings.Contains(logText, pw) {
 		t.Fatalf("the warning leaked the credential into the log:\n%s", logText)
 	}
+	// The adjacent ROOT PASSWORD line must not claim a copy exists when the
+	// write failed: an operator who reads "a copy is saved to the credential
+	// file" will not copy the one-shot value, and this is the one path where
+	// there is no file to fall back to.
+	if strings.Contains(logText, "a copy is saved") {
+		t.Fatalf("a failed persistence still claims a copy is on disk:\n%s", logText)
+	}
 
 	const jobID = "persist-failure-job"
 	registerStatusJob(t, jobID, job)
 	if got := readStatus(t, jobID)["credential_file"]; got != nil && got != "" {
 		t.Fatalf("status advertised credential_file = %v although nothing was written", got)
+	}
+}
+
+// TestPersistFailureNamesNoFileWhenTheApplyAlsoFails covers the other operator-
+// facing line on this path: the recovery hint written when the credential could
+// not be APPLIED. It used to say "take it from the credential file named above"
+// unconditionally — on a deploy where the write failed, there is no such file
+// and nothing above named one.
+func TestPersistFailureNamesNoFileWhenTheApplyAlsoFails(t *testing.T) {
+	// Persistence fails (a FILE where the directory must be) AND the apply fails.
+	base := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(base, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cred := filepath.Join(base, "tollgate-root-credentials")
+	t.Setenv(credentialFileEnvName, cred)
+
+	fr := &fakeCredentialRouter{hash: rootHashEmpty, refusePasswd: true, passwdOut: "passwd: password changed\n"}
+	job := newJob("192.168.23.1")
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
+		t.Fatalf("ensureRootCredential failed: %s", job.Error)
+	}
+	if finalizeRootCredential(job, fr.run, fr.proveLogin) {
+		t.Fatal("finalizeRootCredential reported success although passwd never took")
+	}
+
+	logText := jobLogText(job)
+	if !strings.Contains(logText, "could NOT be applied") {
+		t.Fatalf("the failed apply was not reported to the operator; log:\n%s", logText)
+	}
+	if strings.Contains(logText, "credential file named above") {
+		t.Fatalf("the recovery hint points at a credential file although the write failed and nothing named one:\n%s", logText)
+	}
+	// The failing path is named by the WARNING (correct — the operator needs to
+	// know which write failed), but the recovery hint must not send them to it.
+	hint := logText[strings.Index(logText, "could NOT be applied"):]
+	if strings.Contains(hint, cred) {
+		t.Fatalf("the recovery hint names %q, which was never written:\n%s", cred, logText)
+	}
+	if !strings.Contains(logText, "one-time screen") {
+		t.Fatalf("the operator was not told the only remaining source of the credential (the one-time screen); log:\n%s", logText)
+	}
+}
+
+// TestRecoveryHintNamesTheFileWhenTheApplyFails is the success-persist mirror:
+// when the file DID land, the recovery hint must name it (that path is the
+// operator's only way back into the router).
+func TestRecoveryHintNamesTheFileWhenTheApplyFails(t *testing.T) {
+	cred := filepath.Join(t.TempDir(), "tollgate-root-credentials")
+	t.Setenv(credentialFileEnvName, cred)
+
+	fr := &fakeCredentialRouter{hash: rootHashEmpty, refusePasswd: true, passwdOut: "passwd: password changed\n"}
+	job := newJob("192.168.23.1")
+	if _, ok := ensureRootCredential(job, fr.run, fr.proveLogin, ""); !ok {
+		t.Fatalf("ensureRootCredential failed: %s", job.Error)
+	}
+	if finalizeRootCredential(job, fr.run, fr.proveLogin) {
+		t.Fatal("finalizeRootCredential reported success although passwd never took")
+	}
+	logText := jobLogText(job)
+	if !strings.Contains(logText, "could NOT be applied") {
+		t.Fatalf("the failed apply was not reported to the operator; log:\n%s", logText)
+	}
+	// Scope to the hint line: setCredentialFile legitimately names the path
+	// earlier in the log, so a whole-log check cannot tell a hint that points
+	// at the file from one that does not.
+	hint := logText[strings.Index(logText, "could NOT be applied"):]
+	if !strings.Contains(hint, cred) {
+		t.Fatalf("the recovery hint does not name the file the credential was written to (%q); log:\n%s", cred, logText)
+	}
+}
+
+// TestCredentialOverrideIsResolvedToAnAbsolutePath pins that a `~`-relative or
+// relative TOLLGATE_CREDENTIAL_FILE is INTERPRETED rather than used verbatim:
+// MkdirAll on a literal "~/.creds" created a `~` directory in the process's CWD,
+// so the credential was written somewhere the operator never looks.
+func TestCredentialOverrideIsResolvedToAnAbsolutePath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home directory in this environment")
+	}
+
+	t.Setenv(credentialFileEnvName, "~/.creds-tollgate-test")
+	if got, want := credentialFilePath(), filepath.Join(home, ".creds-tollgate-test"); got != want {
+		t.Fatalf("credentialFilePath() = %q, want %q — a literal ~ would create a ~ directory in the CWD", got, want)
+	}
+
+	t.Setenv(credentialFileEnvName, "relative/creds")
+	got := credentialFilePath()
+	if !filepath.IsAbs(got) {
+		t.Fatalf("credentialFilePath() = %q for a relative override, want an absolute path", got)
+	}
+	if !strings.HasSuffix(got, filepath.Join("relative", "creds")) {
+		t.Fatalf("credentialFilePath() = %q, want it to end with relative/creds", got)
+	}
+
+	abs := filepath.Join(t.TempDir(), "creds")
+	t.Setenv(credentialFileEnvName, abs)
+	if got := credentialFilePath(); got != abs {
+		t.Fatalf("credentialFilePath() = %q for an absolute override, want it unchanged (%q)", got, abs)
+	}
+}
+
+// TestPersistFlushesTheCredentialToStableStorage makes the fsync guarantee
+// observable: the credential must outlive a crash the instant after it is
+// applied, so the write path must flush the file — a lenient fsync is not the
+// guarantee the deploy log advertises.
+func TestPersistFlushesTheCredentialToStableStorage(t *testing.T) {
+	cred := filepath.Join(t.TempDir(), "tollgate-root-credentials")
+	t.Setenv(credentialFileEnvName, cred)
+
+	orig := syncCredentialFile
+	t.Cleanup(func() { syncCredentialFile = orig })
+	var synced int
+	var flushed string
+	syncCredentialFile = func(f *os.File) error {
+		synced++
+		if b, err := os.ReadFile(cred); err == nil {
+			// Whatever is flushed must already include the credential, and it
+			// must be flushed from the file that carries it.
+			flushed = string(b)
+			if fi, err := f.Stat(); err == nil {
+				if b2, err := os.ReadFile(cred); err == nil && int64(len(b2)) != fi.Size() {
+					t.Errorf("the fsync ran on a file of size %d while %q holds %d bytes", fi.Size(), cred, len(b2))
+				}
+			}
+		}
+		return f.Sync()
+	}
+
+	if _, err := persistRootCredential("192.168.23.1", "PROBE-CREDENTIAL-VALUE"); err != nil {
+		t.Fatalf("persistRootCredential failed: %v", err)
+	}
+	if synced != 1 {
+		t.Fatalf("the credential file was flushed %d times, want exactly 1 — deleting the fsync leaves the credential unsynced across the crash window the deploy log promises to cover", synced)
+	}
+	if !strings.Contains(flushed, "PROBE-CREDENTIAL-VALUE") {
+		t.Fatalf("the credential was not yet in the file when it was flushed (saw %q)", flushed)
 	}
 }

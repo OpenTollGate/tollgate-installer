@@ -248,12 +248,19 @@ password, a copy is written to a recovery file **before** it is applied:
 # <RFC3339 time> <tab> <router address> <tab> <password>
 ```
 
-Override the location with `TOLLGATE_CREDENTIAL_FILE`. Its permissions are set
-to 0600 on creation and re-applied on every write, so a umask cannot publish a
-router's root password to other local users, and earlier entries are never
+Override the location with `TOLLGATE_CREDENTIAL_FILE` (absolute, or `~/…` — a
+leading `~` is expanded; a relative value is resolved against the installer's
+working directory, never taken as a literal `~` directory). Its permissions are
+set to 0600 on creation and re-applied on every write, so a umask cannot publish
+a router's root password to other local users, and earlier entries are never
 rewritten. The deploy log names the path (never the password — the log is
 returned in full by every status poll), so the credential stays findable even
 after the one-shot screen has been missed.
+
+The file is an append-only recovery log: it is never rotated automatically, one
+line is added per deploy that generates a credential, and it is plaintext at
+0600. Delete lines for routers you no longer own, and treat the whole file as a
+secret.
 
 ### The router's device identity — one code, minted once
 
