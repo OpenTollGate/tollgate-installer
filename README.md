@@ -446,4 +446,4 @@ commands — no payment processing, identity derivation, or Nostr logic.
 
 ## License
 
-MIT
+[MIT](LICENSE)
