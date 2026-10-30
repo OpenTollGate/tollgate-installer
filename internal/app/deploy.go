@@ -446,26 +446,29 @@ type mintCfg struct {
 	MinPayoutAmount         int    `json:"min_payout_amount"`
 	PricePerStep            int    `json:"price_per_step"`
 	PriceUnit               string `json:"price_unit"`
-	MinPurchaseSteps        int    `json:"min_purchase_steps"`
+	PurchaseMinSteps        int    `json:"purchase_min_steps"`
 }
 
-// prodMintJSONTemplate is the 7 production mints every real deployment gets.
-const prodMintJSONTemplate = `{"url":"https://mint.coinos.io","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.minibits.cash/Bitcoin","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.lnserver.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.macadamia.cash","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.westernbtc.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://kashu.me","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://mint.cubabitcoin.org","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0}`
+// prodMintJSONTemplate is the production mint set every real deployment gets.
+// Minibits is deliberately absent: it rate-limits by IP and its stored keyset
+// could wedge wallet initialisation (upstream #1142). lnserver is also absent:
+// it is not in the schema's shipped default set and was never verified here.
+const prodMintJSONTemplate = `{"url":"https://mint.coinos.io","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":10,"price_unit":"sats","purchase_min_steps":1},
+    {"url":"https://mint.macadamia.cash","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":10,"price_unit":"sats","purchase_min_steps":1},
+    {"url":"https://mint.westernbtc.com","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":10,"price_unit":"sats","purchase_min_steps":1},
+    {"url":"https://kashu.me","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":10,"price_unit":"sats","purchase_min_steps":1},
+    {"url":"https://mint.cubabitcoin.org","min_balance":64,"balance_tolerance_percent":10,"payout_interval_seconds":60,"min_payout_amount":128,"price_per_step":10,"price_unit":"sats","purchase_min_steps":1}`
 
-// testMintJSONTemplate is the 2 testnut zero-fee test mints. They fake
-// Lightning payments and exist ONLY for E2E purchase testing — never for
-// real customer deployments.
-const testMintJSONTemplate = `{"url":"https://nofee.testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0},
-    {"url":"https://testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","min_purchase_steps":0}`
+// testMintJSONTemplate is the two testnut mints used for E2E purchase testing.
+// They fake Lightning payments and exist ONLY behind the opt-in test_mints
+// flag — never for real customer deployments. Both were verified live on
+// 2026-10-29 (info + keysets + a 10-sat mint); the older
+// `nofee.testnut.cashu.space` hostname is dead.
+const testMintJSONTemplate = `{"url":"https://testnut.cashu.space","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","purchase_min_steps":1},
+    {"url":"https://testnut.cashu.exchange","min_balance":0,"balance_tolerance_percent":0,"payout_interval_seconds":999999,"min_payout_amount":999999,"price_per_step":1,"price_unit":"sats","purchase_min_steps":1}`
 
 // defaultMintsJSON returns the accepted_mints JSON array the wizard writes
-// to the router's /etc/tollgate/config.json. ALWAYS the 7 production mints;
+// to the router's /etc/tollgate/config.json. ALWAYS the 5 production mints;
 // the 2 testnut test mints (fake Lightning, E2E purchase testing only) are
 // appended ONLY when includeTestnut is true — test mints are strictly
 // opt-in, real customer deployments never get them by default.
@@ -516,7 +519,7 @@ func configJqFilter() string {
 		"(.profit_share[] | select(.identity == \"developer\") | .factor) = $df | " +
 		// Add operator's chosen mint if non-empty and not already present.
 		".accepted_mints = (if (($mu != \"\") and (((.accepted_mints // []) | map(.url) | index($mu)) == null)) then " +
-		"(.accepted_mints // []) + [{\"url\":$mu,\"min_balance\":64,\"balance_tolerance_percent\":10,\"payout_interval_seconds\":60,\"min_payout_amount\":128,\"price_per_step\":1,\"price_unit\":\"sats\",\"min_purchase_steps\":0}] " +
+		"(.accepted_mints // []) + [{\"url\":$mu,\"min_balance\":64,\"balance_tolerance_percent\":10,\"payout_interval_seconds\":60,\"min_payout_amount\":128,\"price_per_step\":10,\"price_unit\":\"sats\",\"purchase_min_steps\":1}] " +
 		"else (.accepted_mints // []) end) | " +
 		// Add any default mints that aren't already present (idempotent by
 		// URL; map+index instead of unique_by for jq <1.7 on OpenWrt).
@@ -554,8 +557,27 @@ type deviceIdentity struct {
 }
 
 // deviceIdentityDefaultNym is the private SSID's prefix when nothing on the
-// router says otherwise (the same default the module compiles in).
-const deviceIdentityDefaultNym = "c08r4d0r"
+// router says otherwise. It is an operator-facing name, not a person's handle:
+// the archived default leaked a developer's nym onto every router.
+const deviceIdentityDefaultNym = "noderunner-private"
+
+// privateSSIDPrefix is the effective private-SSID prefix for this process.
+// Set from --private-ssid-prefix / TOLLGATE_PRIVATE_NYM at startup; the
+// compiled default keeps an unbranded standalone run working.
+var privateSSIDPrefix = deviceIdentityDefaultNym
+
+// setPrivateSSIDPrefix applies an operator-supplied prefix. Invalid values are
+// ignored rather than written: the prefix ends up in a shell-quoted `uci set`
+// and in the router's only management SSID.
+func setPrivateSSIDPrefix(prefix string) {
+	p := strings.TrimSpace(prefix)
+	if p == "" || !privateSSIDPrefixRe.MatchString(p) {
+		return
+	}
+	privateSSIDPrefix = p
+}
+
+var privateSSIDPrefixRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 // ssidSafeForShell reports whether a value can be carried inside the
 // single-quoted `uci -q set …` lines this file builds. Those lines are joined
@@ -632,8 +654,9 @@ code_from_name() {
     p=$(trim_ws "${1%%-*}" | tr 'A-Z' 'a-z')
     p=${p#\!}
     s=${1#*-}
+    brand=${BRAND_TOKEN:-$(cat /etc/tollgate/brand 2>/dev/null | tr -d ' \011\015\012' | tr 'A-Z' 'a-z')}
     case "$p" in
-        tollgate|net4sats) code_norm "$s" ;;
+        tollgate|net4sats|"$brand") code_norm "$s" ;;
     esac
 }
 trim_ws() {
@@ -689,11 +712,13 @@ case "$NYM" in
 esac
 if [ -z "$NYM" ]; then
     PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
-    P=${PRI%%-*}; S=${PRI#*-}
+    # Split on the LAST hyphen: the code is always the four-character suffix,
+    # and the operator's nym may itself contain hyphens (noderunner-private).
+    P=${PRI%-*}; S=${PRI##*-}
     if [ "$S" != "$PRI" ] && [ -n "$P" ] && minted_suffix "$S" && ssid_safe "$P"; then
         NYM="$P"
     else
-        NYM=` + strconv.Quote(deviceIdentityDefaultNym) + `
+        NYM="${PRIVATE_NYM:-` + deviceIdentityDefaultNym + `}"
     fi
 fi
 
@@ -706,7 +731,7 @@ SSID="!TollGate-$CODE"
 PRIVATE_SSID="$NYM-$CODE"
 PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
 if [ -n "$PRI" ] && ssid_safe "$PRI"; then
-    P=${PRI%%-*}; S=${PRI#*-}
+    P=${PRI%-*}; S=${PRI##*-}
     if [ "$P" != "$NYM" ] || [ "$S" = "$PRI" ] || ! minted_suffix "$S"; then
         PRIVATE_SSID="$PRI"
     fi
@@ -772,14 +797,23 @@ func fallbackDeviceIdentity() deviceIdentity {
 		suffix[i] = alphabet[int(randBytes[i])%len(alphabet)]
 	}
 	code := string(suffix)
-	return deviceIdentity{
-		Code:        code,
-		Nym:         deviceIdentityDefaultNym,
-		Source:      "minted-locally",
-		Hostname:    "tollgate-" + code,
-		SSID:        "!TollGate-" + code,
-		PrivateSSID: deviceIdentityDefaultNym + "-" + code,
-	}
+	id := brandedDeviceIdentity(code, brandTokenFromEnv())
+	id.Nym = privateSSIDPrefix
+	id.Source = "minted-locally"
+	return id
+}
+
+// applyBrandToIdentity replaces the router-side resolver's historical literal
+// names with the brand and private-SSID prefix this process was started with.
+// The resolver owns the CODE (adopted or minted once, stored in
+// /etc/config/tollgate); the names are an input, not a router fact.
+func applyBrandToIdentity(id deviceIdentity) deviceIdentity {
+	branded := brandedDeviceIdentity(id.Code, brandTokenFromEnv())
+	id.Hostname = branded.Hostname
+	id.SSID = branded.SSID
+	id.Nym = privateSSIDPrefix
+	id.PrivateSSID = privateSSIDPrefix + "-" + id.Code
+	return id
 }
 
 // brandingCommands returns the router-side commands that brand a deployed
@@ -1241,6 +1275,15 @@ func runDeployment(job *Job, req deployRequest) {
 		// credential, not the possibly-empty value from the request.
 		req.Password = effectivePassword
 	}
+	// Brand token BEFORE packaging. The module's load_brand() is one-shot and
+	// runs in the package postinst, so a token written after step 6 is inert.
+	// The token is the ONLY thing written here: hostname/SSID/private SSID are
+	// derived by the module, and the step-7 branding commands use the same
+	// values this process resolved.
+	if cmds := brandTokenCommands(brandTokenFromEnv()); len(cmds) > 0 {
+		_ = sshRun(client, strings.Join(cmds, " && "))
+		job.addLog("Brand token written before packaging: " + brandTokenFromEnv())
+	}
 	time.Sleep(500 * time.Millisecond)
 
 	// Step 5: Configure upstream (WiFi STA if requested)
@@ -1279,464 +1322,484 @@ func runDeployment(job *Job, req deployRequest) {
 	job.setStep(6, "running", "")
 	pkgMgr := strings.TrimSpace(sshRun(client, "command -v apk >/dev/null 2>&1 && echo apk || echo opkg"))
 
-	// Auto-detect the router's CPU architecture and select the matching
-	// tollgate-wrt asset per-arch. Previously the download URL was hardcoded
-	// to aarch64_cortex-a53 — on any other router the wrong-arch binary simply
-	// won't execute, which is the exact silent failure this removes.
-	routerArch := detectArch(client)
-	job.addLog("Detected router CPU arch: " + routerArch)
-	if routerArch == "" {
-		// FAIL LOUDLY on an undetectable arch. Never silently default to
-		// aarch64_cortex-a53 — that is the bug being fixed.
-		job.addLog("Could not determine router CPU architecture")
-		jobFailAfterRestore(job, client, staCommitted, 6,
-			"Could not determine router CPU architecture",
-			"Could not determine router CPU architecture")
-		return
-	}
-
-	// The feed asset name is TARGET-QUALIFIED (tollgate-wrt_<ver>_<arch>-<target>),
-	// and two targets can share one arch (mips_24kc is ath79-generic AND
-	// ath79-nand), so the target must be detected too. FAIL LOUDLY on an
-	// undetectable target for the same reason as the arch: a guessed target
-	// would build a well-formed URL that 404s.
-	routerTarget := detectTarget(client)
-	job.addLog("Detected router target: " + routerTarget)
-	if routerTarget == "" {
-		job.addLog("Could not determine router target")
-		jobFailAfterRestore(job, client, staCommitted, 6,
-			"Could not determine router target",
-			"Could not determine router target")
-		return
-	}
-
-	// Select appropriate package URL based on package manager + arch.
-	// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages.
-	_, pkgExtension, ok := selectPkgURL(routerArch, routerTarget, pkgMgr)
-	if !ok {
-		// Undetectable arch — fail, never substitute aarch64. (selectPkgURL is
-		// generic today and only refuses an empty tuple, so this is defensive;
-		// it still restores, because the step-5 STA commit is already live.)
-		jobFailAfterRestore(job, client, staCommitted, 6,
-			"Unsupported CPU arch "+routerArch,
-			"Unsupported CPU arch "+routerArch)
-		return
-	}
-	// Candidate download URLs: the tag-consistent feed URL, plus the GitHub
-	// release fallback (aarch64 only) ONLY when the operator has explicitly
-	// opted in (--allow-fallback / TOLLGATE_ALLOW_GITHUB_FALLBACK=1). The
-	// fallback asset is pinned to a DIFFERENT, OLDER release than the requested
-	// feed tag, so without the opt-in it is not part of the candidate list at
-	// all AND the refusal is held for the fail-loudly check below: a feed
-	// outage must not turn into a silent downgrade reported as success.
-	pkgCandidates, fallbackRefusal := pkgCandidateURLsWithFallback(
-		routerArch, routerTarget, pkgExtension, githubFallbackAllowed())
-	// The selection-time report goes through fallbackSelectionLogLine, which
-	// says what was DECIDED, not that the requested release is unavailable:
-	// nothing has been downloaded yet at this point (C2-I-02 follow-up).
-	if line := fallbackSelectionLogLine(routerArch, pkgExtension, pkgCandidates, fallbackRefusal); line != "" {
-		job.addLog(line)
-	}
-	if pkgExtension == ".apk" {
-		job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
-	} else {
-		job.addLog("OpenWrt <=24.x detected with OPKG package manager (arch " + routerArch + ")")
-	}
-
-	// MT3000-class routers have no RTC — after a cold boot the clock is far
-	// in the past and router-side TLS to github.com fails cert validation.
-	// Sync from the laptop clock before any router-side download attempt.
-	sshRun(client, "date -s @"+strconv.FormatInt(time.Now().Unix(), 10)+" >/dev/null 2>&1; true")
-
-	// PRIMARY: prefer the tollgate-wrt bytes the PreStage step cached for this
-	// exact URL — the point of staging is that the actual install performs zero
-	// network fetches. On a cache miss, download the package on the LAPTOP and
-	// push it over SSH stdin. Pushing eliminates the router's DNS/TLS stack
-	// from the critical path — a freshly STA-connected router often has no
-	// working DNS yet. A live-fetch failure falls through to the router-side
-	// wget (and then feed) paths below.
-	//
-	// pkgCandidates holds the ordered URLs to try (feed first, then the GitHub
-	// release fallback for aarch64). The first that yields bytes wins.
-	pkgOnRouter := false
-	var pkgData []byte
-	var pkgFromCache bool
-	var pkgErr error
-	// pkgLaptopURL is the candidate whose bytes the laptop fetched. It is only
-	// promoted to pkgSourceURL once those bytes are CONFIRMED on the router, so
-	// a download/push that never landed is never reported as the package's
-	// source. Provenance is reported from pkgSourceURL only.
-	pkgLaptopURL := ""
-	for _, candURL := range pkgCandidates {
-		pkgData, pkgFromCache, pkgErr = stagedOrLiveBytes(job, "tollgate-wrt "+pkgExtension, candURL)
-		if pkgErr == nil && len(pkgData) > 0 {
-			pkgLaptopURL = candURL
-			break
-		}
-		if pkgErr != nil {
-			job.addLog("Laptop download failed for " + candURL + ": " + truncate(pkgErr.Error(), 80))
+	// Version convergence: the installer's pin is the source of truth, but a
+	// router already carrying a NEWER build must not be silently moved
+	// backwards. Older/unknown still install; newer is left alone unless the
+	// operator asked for --allow-downgrade.
+	skipInstall := false
+	if installedPkg := readInstalledPkgVersion(client); installedPkg != "" {
+		job.addLog("Installed tollgate-wrt: " + installedPkg + " (installer pin: " + feedPkgVersion() + ")")
+		if pkgVersionNewer(installedPkg, feedPkgVersion()) {
+			if *allowDowngrade {
+				job.addLog("WARNING: router runs a newer build; --allow-downgrade set — pinning " + feedPkgVersion())
+			} else {
+				job.addLog("Router already runs a NEWER tollgate-wrt than this installer's pin — leaving it untouched (pass --allow-downgrade to force the pin)")
+				job.setStep(6, "done", "newer build kept ("+installedPkg+")")
+				skipInstall = true
+			}
 		}
 	}
-	pkgSourceURL := ""
-	// integrity is the verdict on the package bytes (see pkgverify.go). It is
-	// carried to the install step detail so a package that could not be checked
-	// — or that came from a different release — can never render as an
-	// unqualified green "done".
-	var integrity pkgIntegrity
-	if pkgErr == nil && len(pkgData) > 0 {
-		// INTEGRITY GATE (audit C2-I-03). The bytes are about to be installed
-		// as root by a package manager whose own verification is disabled
-		// (--allow-untrusted / --force-*), so this is the last point at which
-		// "are these the bytes the release published?" can be answered. A
-		// mismatch or a structurally impossible package stops the deploy here;
-		// unverifiable bytes are logged, marked in the UI, and fatal when
-		// TOLLGATE_REQUIRE_PACKAGE_DIGEST=1.
-		v, err := checkPackageBytes(job, pkgLaptopURL, pkgExtension, pkgData)
-		integrity = v
-		if err != nil {
-			// Terminal failure of a deploy that already committed the STA
-			// config in step 5, so it leaves through the shared exit: the
-			// pre-deploy wireless snapshot is restored BEFORE the job fails
-			// (radios usable for a re-scan instead of committed to an uplink
-			// the dead deploy never used), and the error states the restore
-			// only when one actually ran. The detail names which half of the
-			// download the bytes came from — the router-side gate below has
-			// its own site and its own detail (card t_3fe64c6e).
+
+	if !skipInstall {
+		// Auto-detect the router's CPU architecture and select the matching
+		// tollgate-wrt asset per-arch. Previously the download URL was hardcoded
+		// to aarch64_cortex-a53 — on any other router the wrong-arch binary simply
+		// won't execute, which is the exact silent failure this removes.
+		routerArch := detectArch(client)
+		job.addLog("Detected router CPU arch: " + routerArch)
+		if routerArch == "" {
+			// FAIL LOUDLY on an undetectable arch. Never silently default to
+			// aarch64_cortex-a53 — that is the bug being fixed.
+			job.addLog("Could not determine router CPU architecture")
 			jobFailAfterRestore(job, client, staCommitted, 6,
-				"laptop-side package integrity check failed", err.Error())
+				"Could not determine router CPU architecture",
+				"Could not determine router CPU architecture")
 			return
 		}
-		push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
-		if strings.Contains(push, "PUSH_OK") {
-			pkgOnRouter = true
-			pkgSourceURL = pkgLaptopURL
-			if pkgFromCache {
-				job.addLog(fmt.Sprintf("Staged tollgate-wrt %s used from cache (%d KB), pushed to router via SSH", pkgExtension, len(pkgData)/1024))
-			} else {
-				job.addLog(fmt.Sprintf("Package downloaded on laptop (%d KB), pushed to router via SSH", len(pkgData)/1024))
-			}
-		} else {
-			job.addLog("SSH push failed: " + truncate(push, 80))
-		}
-	} else if pkgErr != nil {
-		job.addLog("Laptop download failed: " + truncate(pkgErr.Error(), 80) + " — falling back to router-side wget")
-	}
 
-	// FALLBACK: router-side wget, with a real DNS probe and wget's stderr
-	// logged so the job log shows WHY it fails (DNS vs TLS/clock vs routing)
-	// instead of a silent empty file.
-	if !pkgOnRouter {
-		probe := sshRun(client, "nslookup github.com 2>&1 | tail -n2")
-		job.addLog("Router DNS probe: " + truncate(probe, 60))
+		// The feed asset name is TARGET-QUALIFIED (tollgate-wrt_<ver>_<arch>-<target>),
+		// and two targets can share one arch (mips_24kc is ath79-generic AND
+		// ath79-nand), so the target must be detected too. FAIL LOUDLY on an
+		// undetectable target for the same reason as the arch: a guessed target
+		// would build a well-formed URL that 404s.
+		routerTarget := detectTarget(client)
+		job.addLog("Detected router target: " + routerTarget)
+		if routerTarget == "" {
+			job.addLog("Could not determine router target")
+			jobFailAfterRestore(job, client, staCommitted, 6,
+				"Could not determine router target",
+				"Could not determine router target")
+			return
+		}
+
+		// Select appropriate package URL based on package manager + arch.
+		// OpenWrt 25.12+ uses APK and cannot install legacy .ipk packages.
+		_, pkgExtension, ok := selectPkgURL(routerArch, routerTarget, pkgMgr)
+		if !ok {
+			// Undetectable arch — fail, never substitute aarch64. (selectPkgURL is
+			// generic today and only refuses an empty tuple, so this is defensive;
+			// it still restores, because the step-5 STA commit is already live.)
+			jobFailAfterRestore(job, client, staCommitted, 6,
+				"Unsupported CPU arch "+routerArch,
+				"Unsupported CPU arch "+routerArch)
+			return
+		}
+		// Candidate download URLs: the tag-consistent feed URL, plus the GitHub
+		// release fallback (aarch64 only) ONLY when the operator has explicitly
+		// opted in (--allow-fallback / TOLLGATE_ALLOW_GITHUB_FALLBACK=1). The
+		// fallback asset is pinned to a DIFFERENT, OLDER release than the requested
+		// feed tag, so without the opt-in it is not part of the candidate list at
+		// all AND the refusal is held for the fail-loudly check below: a feed
+		// outage must not turn into a silent downgrade reported as success.
+		pkgCandidates, fallbackRefusal := pkgCandidateURLsWithFallback(
+			routerArch, routerTarget, pkgExtension, githubFallbackAllowed())
+		// The selection-time report goes through fallbackSelectionLogLine, which
+		// says what was DECIDED, not that the requested release is unavailable:
+		// nothing has been downloaded yet at this point (C2-I-02 follow-up).
+		if line := fallbackSelectionLogLine(routerArch, pkgExtension, pkgCandidates, fallbackRefusal); line != "" {
+			job.addLog(line)
+		}
+		if pkgExtension == ".apk" {
+			job.addLog("OpenWrt 25+ detected with APK package manager (arch " + routerArch + ")")
+		} else {
+			job.addLog("OpenWrt <=24.x detected with OPKG package manager (arch " + routerArch + ")")
+		}
+
+		// MT3000-class routers have no RTC — after a cold boot the clock is far
+		// in the past and router-side TLS to github.com fails cert validation.
+		// Sync from the laptop clock before any router-side download attempt.
+		sshRun(client, "date -s @"+strconv.FormatInt(time.Now().Unix(), 10)+" >/dev/null 2>&1; true")
+
+		// PRIMARY: prefer the tollgate-wrt bytes the PreStage step cached for this
+		// exact URL — the point of staging is that the actual install performs zero
+		// network fetches. On a cache miss, download the package on the LAPTOP and
+		// push it over SSH stdin. Pushing eliminates the router's DNS/TLS stack
+		// from the critical path — a freshly STA-connected router often has no
+		// working DNS yet. A live-fetch failure falls through to the router-side
+		// wget (and then feed) paths below.
+		//
+		// pkgCandidates holds the ordered URLs to try (feed first, then the GitHub
+		// release fallback for aarch64). The first that yields bytes wins.
+		pkgOnRouter := false
+		var pkgData []byte
+		var pkgFromCache bool
+		var pkgErr error
+		// pkgLaptopURL is the candidate whose bytes the laptop fetched. It is only
+		// promoted to pkgSourceURL once those bytes are CONFIRMED on the router, so
+		// a download/push that never landed is never reported as the package's
+		// source. Provenance is reported from pkgSourceURL only.
+		pkgLaptopURL := ""
 		for _, candURL := range pkgCandidates {
-			wgetOut := sshRun(client, "wget -O /tmp/tollgate-wrt"+pkgExtension+" '"+candURL+"' 2>&1; [ -s /tmp/tollgate-wrt"+pkgExtension+" ] && echo WGET_OK || echo WGET_FAIL")
-			job.addLog("wget: " + truncate(wgetOut, 120))
-			if strings.Contains(wgetOut, "WGET_OK") {
-				// Same integrity gate as the laptop path, applied to the bytes
-				// the ROUTER fetched: hash the file on the router and compare
-				// with the published digest (pkgverify.go).
-				v, err := checkRouterFileDigest(job, client, candURL, pkgExtension, "/tmp/tollgate-wrt"+pkgExtension)
-				if err != nil {
-					// Same terminal-failure exit as the laptop-side gate above:
-					// by now step 5 has committed and reloaded the STA config,
-					// so the snapshot is restored before the job fails (card
-					// t_3fe64c6e).
-					jobFailAfterRestore(job, client, staCommitted, 6,
-						"router-side package integrity check failed", err.Error())
-					return
-				}
-				integrity = v
-				pkgOnRouter = true
-				pkgSourceURL = candURL
+			pkgData, pkgFromCache, pkgErr = stagedOrLiveBytes(job, "tollgate-wrt "+pkgExtension, candURL)
+			if pkgErr == nil && len(pkgData) > 0 {
+				pkgLaptopURL = candURL
 				break
 			}
+			if pkgErr != nil {
+				job.addLog("Laptop download failed for " + candURL + ": " + truncate(pkgErr.Error(), 80))
+			}
 		}
-	}
-
-	// PROVENANCE: state which source supplied the package — or that none did.
-	// The point of installing the FEED build is that an installer run also
-	// tests tollgate-module-basic-go + FreedomTechFeed/packages; that is only
-	// provable if the source is reported instead of inferred from a URL in the
-	// log. Never silently substituted: a GitHub-release install says so.
-	if pkgOnRouter {
-		job.addLog("tollgate-wrt source: " + pkgSourceLabel(routerArch, routerTarget, pkgExtension, pkgSourceURL) + " — " + pkgSourceURL)
-	} else {
-		job.addLog("tollgate-wrt source: none — no candidate URL supplied the package (feed and GitHub fallback both failed)")
-	}
-
-	// FAIL LOUDLY. The requested release could not be downloaded and the only
-	// other candidate is a known OLDER package: stop here and name both versions
-	// instead of substituting it, force-downgrading the router, and rendering the
-	// step green. (Before this, the v0.5.0 GitHub asset was tried silently and
-	// the post-install assertion could not fire for it — C2-I-02.)
-	//
-	// This is a step-6 terminal failure like any other, so it restores the
-	// pre-deploy wireless snapshot first — see refuseMissingRequestedRelease.
-	if refuseMissingRequestedRelease(job, client, staCommitted, pkgOnRouter, feedReleaseTag, fallbackRefusal) {
-		return
-	}
-
-	installedOK := false
-	// installStatus is the status step 6 renders with. "warn" when the package
-	// that landed is NOT the requested release (an explicitly opted-in fallback,
-	// or an install from the router's own feeds), so the UI cannot show it as an
-	// unqualified success. Declared before the download wiring so the deferred
-	// refusal path above cannot leave it unset.
-	installStatus := "done"
-	if pkgOnRouter {
-		job.addLog("Installing package via " + pkgMgr + "...")
-		sshRun(client, "rm -f /var/lock/opkg.lock 2>/dev/null")
-		// Install nodogsplash + jq prerequisites BEFORE the tollgate-wrt .ipk so
-		// opkg's dependency resolver doesn't fail on a fresh OpenWrt that
-		// doesn't have them pre-installed. Try opkg feed first; if that fails
-		// (nodogsplash not in default feeds on fresh 24.10.4), download the
-		// .ipk files from the OpenWrt package repo on the laptop and push them
-		// to the router via SSH — same pattern as the tollgate-wrt .ipk.
-		if pkgMgr != "apk" {
-			ndsUpdate := sshRun(client, "opkg update 2>&1")
-			job.addLog("opkg update (prereq): " + truncate(ndsUpdate, 60))
-			ndsInstall := sshRun(client, "opkg install nodogsplash jq 2>&1 | tail -5")
-			if strings.Contains(ndsInstall, "installed") || strings.Contains(ndsInstall, "already") {
-				job.addLog("nodogsplash+jq installed via opkg feed: " + truncate(ndsInstall, 80))
+		pkgSourceURL := ""
+		// integrity is the verdict on the package bytes (see pkgverify.go). It is
+		// carried to the install step detail so a package that could not be checked
+		// — or that came from a different release — can never render as an
+		// unqualified green "done".
+		var integrity pkgIntegrity
+		if pkgErr == nil && len(pkgData) > 0 {
+			// INTEGRITY GATE (audit C2-I-03). The bytes are about to be installed
+			// as root by a package manager whose own verification is disabled
+			// (--allow-untrusted / --force-*), so this is the last point at which
+			// "are these the bytes the release published?" can be answered. A
+			// mismatch or a structurally impossible package stops the deploy here;
+			// unverifiable bytes are logged, marked in the UI, and fatal when
+			// TOLLGATE_REQUIRE_PACKAGE_DIGEST=1.
+			v, err := checkPackageBytes(job, pkgLaptopURL, pkgExtension, pkgData)
+			integrity = v
+			if err != nil {
+				// Terminal failure of a deploy that already committed the STA
+				// config in step 5, so it leaves through the shared exit: the
+				// pre-deploy wireless snapshot is restored BEFORE the job fails
+				// (radios usable for a re-scan instead of committed to an uplink
+				// the dead deploy never used), and the error states the restore
+				// only when one actually ran. The detail names which half of the
+				// download the bytes came from — the router-side gate below has
+				// its own site and its own detail (card t_3fe64c6e).
+				jobFailAfterRestore(job, client, staCommitted, 6,
+					"laptop-side package integrity check failed", err.Error())
+				return
+			}
+			push := sshUploadPipe(client, pkgData, "cat > /tmp/tollgate-wrt"+pkgExtension+" && echo PUSH_OK")
+			if strings.Contains(push, "PUSH_OK") {
+				pkgOnRouter = true
+				pkgSourceURL = pkgLaptopURL
+				if pkgFromCache {
+					job.addLog(fmt.Sprintf("Staged tollgate-wrt %s used from cache (%d KB), pushed to router via SSH", pkgExtension, len(pkgData)/1024))
+				} else {
+					job.addLog(fmt.Sprintf("Package downloaded on laptop (%d KB), pushed to router via SSH", len(pkgData)/1024))
+				}
 			} else {
-				job.addLog("opkg feed install failed, downloading .ipk from OpenWrt repo...")
-				// Download nodogsplash + jq .ipk from OpenWrt package repo
-				// on laptop, push to router, install. nodogsplash is in the
-				// routing/ subdirectory, jq is in packages/.
-				baseURL := "https://downloads.openwrt.org/releases/24.10.4/packages/" + routerArch + "/"
-				routingURL := baseURL + "routing/"
-				packagesURL := baseURL + "packages/"
-				ndsListHTML := string(httpGetFileOrEmpty(routingURL))
-				jqListHTML := string(httpGetFileOrEmpty(packagesURL))
-				ndsPkg := extractIPKFilename(ndsListHTML, "nodogsplash")
-				jqPkg := extractIPKFilename(jqListHTML, "jq")
-				if ndsPkg != "" {
-					ndsData, ndsFromCache, ndsErr := stagedOrLiveBytes(job, "nodogsplash .ipk", routingURL+ndsPkg)
-					if ndsErr == nil && len(ndsData) > 1000 {
-						pushNds := sshUploadPipe(client, ndsData, "cat > /tmp/"+ndsPkg+" && echo NDS_PUSHED")
-						if strings.Contains(pushNds, "NDS_PUSHED") {
-							if ndsFromCache {
-								job.addLog(fmt.Sprintf("nodogsplash .ipk used from staging cache (%d KB), pushed to router", len(ndsData)/1024))
-							} else {
-								job.addLog(fmt.Sprintf("nodogsplash .ipk downloaded (%d KB), pushed to router", len(ndsData)/1024))
-							}
-						}
+				job.addLog("SSH push failed: " + truncate(push, 80))
+			}
+		} else if pkgErr != nil {
+			job.addLog("Laptop download failed: " + truncate(pkgErr.Error(), 80) + " — falling back to router-side wget")
+		}
+
+		// FALLBACK: router-side wget, with a real DNS probe and wget's stderr
+		// logged so the job log shows WHY it fails (DNS vs TLS/clock vs routing)
+		// instead of a silent empty file.
+		if !pkgOnRouter {
+			probe := sshRun(client, "nslookup github.com 2>&1 | tail -n2")
+			job.addLog("Router DNS probe: " + truncate(probe, 60))
+			for _, candURL := range pkgCandidates {
+				wgetOut := sshRun(client, "wget -O /tmp/tollgate-wrt"+pkgExtension+" '"+candURL+"' 2>&1; [ -s /tmp/tollgate-wrt"+pkgExtension+" ] && echo WGET_OK || echo WGET_FAIL")
+				job.addLog("wget: " + truncate(wgetOut, 120))
+				if strings.Contains(wgetOut, "WGET_OK") {
+					// Same integrity gate as the laptop path, applied to the bytes
+					// the ROUTER fetched: hash the file on the router and compare
+					// with the published digest (pkgverify.go).
+					v, err := checkRouterFileDigest(job, client, candURL, pkgExtension, "/tmp/tollgate-wrt"+pkgExtension)
+					if err != nil {
+						// Same terminal-failure exit as the laptop-side gate above:
+						// by now step 5 has committed and reloaded the STA config,
+						// so the snapshot is restored before the job fails (card
+						// t_3fe64c6e).
+						jobFailAfterRestore(job, client, staCommitted, 6,
+							"router-side package integrity check failed", err.Error())
+						return
 					}
+					integrity = v
+					pkgOnRouter = true
+					pkgSourceURL = candURL
+					break
 				}
-				if jqPkg != "" {
-					jqData, jqFromCache, jqErr := stagedOrLiveBytes(job, "jq .ipk", packagesURL+jqPkg)
-					if jqErr == nil && len(jqData) > 1000 {
-						pushJq := sshUploadPipe(client, jqData, "cat > /tmp/"+jqPkg+" && echo JQ_PUSHED")
-						if strings.Contains(pushJq, "JQ_PUSHED") {
-							if jqFromCache {
-								job.addLog(fmt.Sprintf("jq .ipk used from staging cache (%d KB), pushed to router", len(jqData)/1024))
-							} else {
-								job.addLog(fmt.Sprintf("jq .ipk downloaded (%d KB), pushed to router", len(jqData)/1024))
-							}
-						}
-					}
-				}
-				manualInstall := sshRun(client, "opkg install /tmp/nodogsplash_*.ipk /tmp/jq_*.ipk 2>&1 | tail -5")
-				job.addLog("nodogsplash+jq manual install: " + truncate(manualInstall, 80))
 			}
 		}
-		// opkg does lexical version compare — 'v0.5.0' > 'main.56...' so it refuses
-		// to downgrade unless forced. --force-reinstall ensures the files land even
-		// if opkg thinks the package is already present. Detect "Not downgrading"
-		// in the output as a hard failure regardless of binary existence.
+
+		// PROVENANCE: state which source supplied the package — or that none did.
+		// The point of installing the FEED build is that an installer run also
+		// tests tollgate-module-basic-go + FreedomTechFeed/packages; that is only
+		// provable if the source is reported instead of inferred from a URL in the
+		// log. Never silently substituted: a GitHub-release install says so.
+		if pkgOnRouter {
+			job.addLog("tollgate-wrt source: " + pkgSourceLabel(routerArch, routerTarget, pkgExtension, pkgSourceURL) + " — " + pkgSourceURL)
+		} else {
+			job.addLog("tollgate-wrt source: none — no candidate URL supplied the package (feed and GitHub fallback both failed)")
+		}
+
+		// FAIL LOUDLY. The requested release could not be downloaded and the only
+		// other candidate is a known OLDER package: stop here and name both versions
+		// instead of substituting it, force-downgrading the router, and rendering the
+		// step green. (Before this, the v0.5.0 GitHub asset was tried silently and
+		// the post-install assertion could not fire for it — C2-I-02.)
 		//
-		// No credential is passed on the environment: the package never sets one
-		// (see the module's 99-tollgate-setup). The admin password set at step 4
-		// is what the board checks against, and the wizard's private-WiFi PSK is
-		// applied through the module CLI once the service is up
-		// (applyPrivateWiFiPassphrase).
-		installCmd := "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
-		if pkgMgr == "apk" {
-			// apk has no downgrade refusal, but --force-overwrite guards against
-			// existing-file conflicts on reinstall.
-			installCmd = "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
-		}
-		// Capture the destination BEFORE the postinst runs. The postinst's
-		// network restart moves the wired port to br-private; a fresh LAN scan
-		// after the move cannot see that subnet if the host has not re-leased.
-		// network.private exists on a reinstall; on a first install the LAN's
-		// /24 neighbours are the candidates.
-		preInstallPrivate := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null"))
-		preInstallLan := strings.TrimSpace(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null"))
-		restartCandidates := installRestartCandidates(preInstallPrivate, preInstallLan, req.IP)
-		if preInstallPrivate != "" {
-			job.addLog("Management address before the install restart: " + preInstallPrivate)
-		}
-		installOut := sshRun(client, installCmd)
-		job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
-		// The package postinst runs `/etc/init.d/network restart` on the router we
-		// are driving (packaging/Makefile): 99-tollgate-setup derives
-		// network.private (lan/24 ±1) and moves the wired port onto br-private, so
-		// the pre-deploy address is gone and THIS session dies with it. That is
-		// expected, not a router fault — prove the session survived and, if it did
-		// not, find the router at its new address and re-acquire BEFORE the
-		// verification checks and the steps that follow. Without this the deploy
-		// blamed the router for a failure it caused itself and the stall watchdog
-		// fired at step 6.
-		if aliveErr := transportAliveFn(client); aliveErr != nil {
-			job.addLog("The package's postinst restarted networking on the router (expected — it derives br-private and moves the wired port): " + aliveErr.Error())
-			transportCloseFn(client)
-			nc, newIP := reacquireAfterInstallRestart(job, req.IP, req.Password, restartCandidates...)
-			if nc == nil {
-				// The install command ran; only the transport moved. Calling this
-				// a failed setup is the false alarm the operator saw on 2026-10-21:
-				// the router was healthy on br-private, but the host had not
-				// re-leased and the wizard could not verify it. End pending with
-				// the known management address and the reconnect instructions.
-				note := installMovePendingNote(preInstallPrivate, preInstallLan, req.IP)
-				job.addLog("The install ran but the router could not be re-acquired after its network restart; ending pending (installed, not verified).")
-				jobPending(job, 6, "installed; router moved to its management network", note,
-					"not reached — the router moved to its management network")
-				return
-			}
-			client = nc
-			if newIP != "" && newIP != req.IP {
-				job.addLog("The router answered at its new address " + newIP + " — continuing there")
-				req.IP = newIP
-				job.mu.Lock()
-				job.IP = newIP
-				job.mu.Unlock()
-			}
-			if priv := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null")); priv != "" {
-				job.addLog("Router private (management) network: " + priv)
-			}
-			// The derived network.private can collide with the upstream (e.g.
-			// 192.168.2.1 against a 192.168.2.0/24 upstream), which breaks DNS on
-			// the deployed router. Relocate now, as the post-install pass
-			// (step 10.5) also does.
-			nc2, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password, true), 6)
-			if !ok {
-				return
-			}
-			client = nc2
-		}
-		// If opkg refuses to downgrade, the OLD binary stays and the new config
-		// will crash against it — treat as a hard failure even if the binary exists.
-		if strings.Contains(installOut, "Not downgrading") {
-			job.addLog("ERROR: opkg refused to downgrade the package (old version kept)")
-			// A jobFail, not setStep(6,"error") + return: the latter left
-			// job.Status "running" forever, so the wizard spun with no error
-			// shown (see jobFail). It is also a terminal failure after step 5,
-			// so it restores the wireless snapshot like every other one.
-			jobFailAfterRestore(job, client, staCommitted, 6,
-				"opkg refused to downgrade tollgate-wrt",
-				"opkg refused to downgrade the package: the router still runs its PREVIOUS tollgate-wrt binary with the new config. Install a package whose version opkg accepts, or remove the installed tollgate-wrt first (opkg remove tollgate-wrt) and re-run.")
+		// This is a step-6 terminal failure like any other, so it restores the
+		// pre-deploy wireless snapshot first — see refuseMissingRequestedRelease.
+		if refuseMissingRequestedRelease(job, client, staCommitted, pkgOnRouter, feedReleaseTag, fallbackRefusal) {
 			return
 		}
-		// apk prints failures to stdout; the pipeline above hides the exit code,
-		// and a failed UPGRADE leaves the OLD binary in place — so the
-		// binary-existence check below would pass while the router still runs
-		// the previous package. Fail loudly on apk's error signatures.
-		if pkgMgr == "apk" && apkInstallFailed(installOut) {
-			job.addLog("ERROR: apk reported an installation failure: " + truncate(installOut, 200))
-			jobFailAfterRestore(job, client, staCommitted, 6,
-				"tollgate-wrt install failed (apk error)",
-				"apk could not install/upgrade tollgate-wrt — the previous package (with its OLD captive portal) is still in place:\n"+truncate(installOut, 400))
-			return
-		}
-		// Verify the binary actually exists (secondary check)
-		verifyOut := sshRun(client, "ls /usr/bin/tollgate-wrt 2>/dev/null || ls /usr/sbin/tollgate-wrt 2>/dev/null || which tollgate-wrt 2>/dev/null || echo 'NOT FOUND'")
-		if !strings.Contains(verifyOut, "NOT FOUND") {
-			// Post-install version assertion — UNCONDITIONAL. It used to be
-			// gated on the source URL containing the feed tag, so a GitHub
-			// fallback install was never compared with anything and a downgrade
-			// rendered as a green "done" step. Now the installed version is
-			// compared for EVERY source: a mismatch against the version the
-			// supplying source names fails the step, and a version that is not
-			// the requested release can no longer render as a plain success.
-			if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
-				job.addLog("Installed tollgate-wrt package version: " + pkgVer)
-				fatal, warn := pkgVersionVerdict(pkgVer, pkgSourceURL, routerArch, routerTarget, pkgExtension)
-				if fatal != "" {
-					job.addLog("ERROR: " + fatal)
-					jobFailAfterRestore(job, client, staCommitted, 6, "tollgate-wrt version mismatch", fatal)
+
+		installedOK := false
+		// installStatus is the status step 6 renders with. "warn" when the package
+		// that landed is NOT the requested release (an explicitly opted-in fallback,
+		// or an install from the router's own feeds), so the UI cannot show it as an
+		// unqualified success. Declared before the download wiring so the deferred
+		// refusal path above cannot leave it unset.
+		installStatus := "done"
+		if pkgOnRouter {
+			job.addLog("Installing package via " + pkgMgr + "...")
+			sshRun(client, "rm -f /var/lock/opkg.lock 2>/dev/null")
+			// Install nodogsplash + jq prerequisites BEFORE the tollgate-wrt .ipk so
+			// opkg's dependency resolver doesn't fail on a fresh OpenWrt that
+			// doesn't have them pre-installed. Try opkg feed first; if that fails
+			// (nodogsplash not in default feeds on fresh 24.10.4), download the
+			// .ipk files from the OpenWrt package repo on the laptop and push them
+			// to the router via SSH — same pattern as the tollgate-wrt .ipk.
+			if pkgMgr != "apk" {
+				ndsUpdate := sshRun(client, "opkg update 2>&1")
+				job.addLog("opkg update (prereq): " + truncate(ndsUpdate, 60))
+				ndsInstall := sshRun(client, "opkg install nodogsplash jq 2>&1 | tail -5")
+				if strings.Contains(ndsInstall, "installed") || strings.Contains(ndsInstall, "already") {
+					job.addLog("nodogsplash+jq installed via opkg feed: " + truncate(ndsInstall, 80))
+				} else {
+					job.addLog("opkg feed install failed, downloading .ipk from OpenWrt repo...")
+					// Download nodogsplash + jq .ipk from OpenWrt package repo
+					// on laptop, push to router, install. nodogsplash is in the
+					// routing/ subdirectory, jq is in packages/.
+					baseURL := "https://downloads.openwrt.org/releases/24.10.4/packages/" + routerArch + "/"
+					routingURL := baseURL + "routing/"
+					packagesURL := baseURL + "packages/"
+					ndsListHTML := string(httpGetFileOrEmpty(routingURL))
+					jqListHTML := string(httpGetFileOrEmpty(packagesURL))
+					ndsPkg := extractIPKFilename(ndsListHTML, "nodogsplash")
+					jqPkg := extractIPKFilename(jqListHTML, "jq")
+					if ndsPkg != "" {
+						ndsData, ndsFromCache, ndsErr := stagedOrLiveBytes(job, "nodogsplash .ipk", routingURL+ndsPkg)
+						if ndsErr == nil && len(ndsData) > 1000 {
+							pushNds := sshUploadPipe(client, ndsData, "cat > /tmp/"+ndsPkg+" && echo NDS_PUSHED")
+							if strings.Contains(pushNds, "NDS_PUSHED") {
+								if ndsFromCache {
+									job.addLog(fmt.Sprintf("nodogsplash .ipk used from staging cache (%d KB), pushed to router", len(ndsData)/1024))
+								} else {
+									job.addLog(fmt.Sprintf("nodogsplash .ipk downloaded (%d KB), pushed to router", len(ndsData)/1024))
+								}
+							}
+						}
+					}
+					if jqPkg != "" {
+						jqData, jqFromCache, jqErr := stagedOrLiveBytes(job, "jq .ipk", packagesURL+jqPkg)
+						if jqErr == nil && len(jqData) > 1000 {
+							pushJq := sshUploadPipe(client, jqData, "cat > /tmp/"+jqPkg+" && echo JQ_PUSHED")
+							if strings.Contains(pushJq, "JQ_PUSHED") {
+								if jqFromCache {
+									job.addLog(fmt.Sprintf("jq .ipk used from staging cache (%d KB), pushed to router", len(jqData)/1024))
+								} else {
+									job.addLog(fmt.Sprintf("jq .ipk downloaded (%d KB), pushed to router", len(jqData)/1024))
+								}
+							}
+						}
+					}
+					manualInstall := sshRun(client, "opkg install /tmp/nodogsplash_*.ipk /tmp/jq_*.ipk 2>&1 | tail -5")
+					job.addLog("nodogsplash+jq manual install: " + truncate(manualInstall, 80))
+				}
+			}
+			// opkg does lexical version compare — 'v0.5.0' > 'main.56...' so it refuses
+			// to downgrade unless forced. --force-reinstall ensures the files land even
+			// if opkg thinks the package is already present. Detect "Not downgrading"
+			// in the output as a hard failure regardless of binary existence.
+			//
+			// No credential is passed on the environment: the package never sets one
+			// (see the module's 99-tollgate-setup). The admin password set at step 4
+			// is what the board checks against, and the wizard's private-WiFi PSK is
+			// applied through the module CLI once the service is up
+			// (applyPrivateWiFiPassphrase).
+			installCmd := "opkg install --force-downgrade --force-reinstall --force-overwrite --force-depends /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
+			if pkgMgr == "apk" {
+				// apk has no downgrade refusal, but --force-overwrite guards against
+				// existing-file conflicts on reinstall.
+				installCmd = "apk add --allow-untrusted --force-overwrite /tmp/tollgate-wrt" + pkgExtension + " 2>&1 | tail -5"
+			}
+			// Capture the destination BEFORE the postinst runs. The postinst's
+			// network restart moves the wired port to br-private; a fresh LAN scan
+			// after the move cannot see that subnet if the host has not re-leased.
+			// network.private exists on a reinstall; on a first install the LAN's
+			// /24 neighbours are the candidates.
+			preInstallPrivate := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null"))
+			preInstallLan := strings.TrimSpace(sshRun(client, "uci -q get network.lan.ipaddr 2>/dev/null"))
+			restartCandidates := installRestartCandidates(preInstallPrivate, preInstallLan, req.IP)
+			if preInstallPrivate != "" {
+				job.addLog("Management address before the install restart: " + preInstallPrivate)
+			}
+			installOut := sshRun(client, installCmd)
+			job.addLog("Package installed (" + pkgMgr + "): " + truncate(installOut, 100))
+			// The package postinst runs `/etc/init.d/network restart` on the router we
+			// are driving (packaging/Makefile): 99-tollgate-setup derives
+			// network.private (lan/24 ±1) and moves the wired port onto br-private, so
+			// the pre-deploy address is gone and THIS session dies with it. That is
+			// expected, not a router fault — prove the session survived and, if it did
+			// not, find the router at its new address and re-acquire BEFORE the
+			// verification checks and the steps that follow. Without this the deploy
+			// blamed the router for a failure it caused itself and the stall watchdog
+			// fired at step 6.
+			if aliveErr := transportAliveFn(client); aliveErr != nil {
+				job.addLog("The package's postinst restarted networking on the router (expected — it derives br-private and moves the wired port): " + aliveErr.Error())
+				transportCloseFn(client)
+				nc, newIP := reacquireAfterInstallRestart(job, req.IP, req.Password, restartCandidates...)
+				if nc == nil {
+					// The install command ran; only the transport moved. Calling this
+					// a failed setup is the false alarm the operator saw on 2026-10-21:
+					// the router was healthy on br-private, but the host had not
+					// re-leased and the wizard could not verify it. End pending with
+					// the known management address and the reconnect instructions.
+					note := installMovePendingNote(preInstallPrivate, preInstallLan, req.IP)
+					job.addLog("The install ran but the router could not be re-acquired after its network restart; ending pending (installed, not verified).")
+					jobPending(job, 6, "installed; router moved to its management network", note,
+						"not reached — the router moved to its management network")
 					return
 				}
-				if warn != "" {
+				client = nc
+				if newIP != "" && newIP != req.IP {
+					job.addLog("The router answered at its new address " + newIP + " — continuing there")
+					req.IP = newIP
+					job.mu.Lock()
+					job.IP = newIP
+					job.mu.Unlock()
+				}
+				if priv := strings.TrimSpace(sshRun(client, "uci -q get network.private.ipaddr 2>/dev/null")); priv != "" {
+					job.addLog("Router private (management) network: " + priv)
+				}
+				// The derived network.private can collide with the upstream (e.g.
+				// 192.168.2.1 against a 192.168.2.0/24 upstream), which breaks DNS on
+				// the deployed router. Relocate now, as the post-install pass
+				// (step 10.5) also does.
+				nc2, ok := adoptRelocatedClient(job, fixSubnetCollisions(job, client, req.IP, req.Password, true), 6)
+				if !ok {
+					return
+				}
+				client = nc2
+			}
+			// If opkg refuses to downgrade, the OLD binary stays and the new config
+			// will crash against it — treat as a hard failure even if the binary exists.
+			if strings.Contains(installOut, "Not downgrading") {
+				job.addLog("ERROR: opkg refused to downgrade the package (old version kept)")
+				// A jobFail, not setStep(6,"error") + return: the latter left
+				// job.Status "running" forever, so the wizard spun with no error
+				// shown (see jobFail). It is also a terminal failure after step 5,
+				// so it restores the wireless snapshot like every other one.
+				jobFailAfterRestore(job, client, staCommitted, 6,
+					"opkg refused to downgrade tollgate-wrt",
+					"opkg refused to downgrade the package: the router still runs its PREVIOUS tollgate-wrt binary with the new config. Install a package whose version opkg accepts, or remove the installed tollgate-wrt first (opkg remove tollgate-wrt) and re-run.")
+				return
+			}
+			// apk prints failures to stdout; the pipeline above hides the exit code,
+			// and a failed UPGRADE leaves the OLD binary in place — so the
+			// binary-existence check below would pass while the router still runs
+			// the previous package. Fail loudly on apk's error signatures.
+			if pkgMgr == "apk" && apkInstallFailed(installOut) {
+				job.addLog("ERROR: apk reported an installation failure: " + truncate(installOut, 200))
+				jobFailAfterRestore(job, client, staCommitted, 6,
+					"tollgate-wrt install failed (apk error)",
+					"apk could not install/upgrade tollgate-wrt — the previous package (with its OLD captive portal) is still in place:\n"+truncate(installOut, 400))
+				return
+			}
+			// Verify the binary actually exists (secondary check)
+			verifyOut := sshRun(client, "ls /usr/bin/tollgate-wrt 2>/dev/null || ls /usr/sbin/tollgate-wrt 2>/dev/null || which tollgate-wrt 2>/dev/null || echo 'NOT FOUND'")
+			if !strings.Contains(verifyOut, "NOT FOUND") {
+				// Post-install version assertion — UNCONDITIONAL. It used to be
+				// gated on the source URL containing the feed tag, so a GitHub
+				// fallback install was never compared with anything and a downgrade
+				// rendered as a green "done" step. Now the installed version is
+				// compared for EVERY source: a mismatch against the version the
+				// supplying source names fails the step, and a version that is not
+				// the requested release can no longer render as a plain success.
+				if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
+					job.addLog("Installed tollgate-wrt package version: " + pkgVer)
+					fatal, warn := pkgVersionVerdict(pkgVer, pkgSourceURL, routerArch, routerTarget, pkgExtension)
+					if fatal != "" {
+						job.addLog("ERROR: " + fatal)
+						jobFailAfterRestore(job, client, staCommitted, 6, "tollgate-wrt version mismatch", fatal)
+						return
+					}
+					if warn != "" {
+						job.addLog("WARNING: " + warn)
+						installStatus = "warn"
+					} else {
+						job.addLog("Package version verified against " + feedReleaseTag + ": " + pkgVer)
+					}
+				} else {
+					job.addLog("WARNING: could not read the installed package version to verify the upgrade")
+				}
+				// NOTE (SW4a): the fw4/nftables enforcement rules (PR #283) ship
+				// inside the package under /etc/nftables.d/{20-nds-enforce,30-backend-firewall}.nft —
+				// no separate overlay download is performed (the old overlay URL 404'd).
+				//
+				// Report WHICH build landed: the installed version (and commit when
+				// the backend exposes one) plus the source that supplied it, so
+				// "which build am I running, and did this run exercise the feed?"
+				// is answerable from the deploy log alone.
+				build := reportInstalledBuild(job, client)
+				// Two independent verdicts meet here: C2-I-02's version verdict
+				// ("did the package that landed match the release the supplying
+				// source names?" — installStatus) and C2-I-03's integrity verdict
+				// (were the bytes checked against a published digest? — integrity).
+				// The step is GREEN only when both passed; anything else renders
+				// "warn" with the reason in the detail, so neither a downgrade nor
+				// unchecked bytes can look like an unqualified success.
+				detail := installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, routerTarget, pkgExtension, pkgSourceURL))
+				if installStatus == "warn" {
+					detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
+				}
+				job.setStep(6, installStepStatusFor(installStatus, integrity), detail+integrity.suffix())
+				installedOK = true
+			}
+		}
+		if !installedOK {
+			// Last resort: feed install (requires the router to already have
+			// working internet — usually not the case on a fresh STA uplink).
+			job.addLog("Package not on router — trying " + pkgMgr + " feed...")
+			var installOut string
+			if pkgMgr == "apk" {
+				installOut = sshRun(client, "apk update >/dev/null 2>&1; apk add "+tollgatePackage+" 2>&1 | tail -5")
+			} else {
+				installOut = sshRun(client, "rm -f /var/lock/opkg.lock 2>/dev/null; opkg update >/dev/null 2>&1; opkg install "+tollgatePackage+" 2>&1 | tail -5")
+			}
+			job.addLog("Feed install: " + truncate(installOut, 100))
+			verifyOut := sshRun(client, "which tollgate-wrt 2>/dev/null || echo 'NOT FOUND'")
+			if strings.Contains(verifyOut, "NOT FOUND") {
+				// STA config + radio changes are live at this point but the
+				// deploy is dead — restore the wireless snapshot so the router
+				// is left in its pre-deploy state. The refusal path above does
+				// the same: no terminal failure in this step may skip it.
+				jobFailAfterRestore(job, client, staCommitted, 6,
+					"tollgate-wrt install failed",
+					"Package installation failed")
+				return
+			}
+			// This path installed from the ROUTER's own configured package feeds —
+			// not the FreedomTechFeed release asset — so the provenance label says
+			// so explicitly rather than reusing "feed" for both meanings. The same
+			// "is it the requested release?" rule applies: a router-feed package
+			// that is not the requested one must not render as a plain success —
+			// AND these bytes never passed through this installer, so nothing about
+			// them was checked: the step also renders "warn" with an explicit
+			// NOT VERIFIED suffix rather than a green "done" with no suffix at all
+			// (cold cross-family review 2026-09-23, finding 1; C2-I-03).
+			if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
+				job.addLog("Installed tollgate-wrt package version: " + pkgVer)
+				if _, warn := pkgVersionVerdict(pkgVer, "", routerArch, routerTarget, pkgExtension); warn != "" {
 					job.addLog("WARNING: " + warn)
 					installStatus = "warn"
-				} else {
-					job.addLog("Package version verified against " + feedReleaseTag + ": " + pkgVer)
 				}
-			} else {
-				job.addLog("WARNING: could not read the installed package version to verify the upgrade")
 			}
-			// NOTE (SW4a): the fw4/nftables enforcement rules (PR #283) ship
-			// inside the package under /etc/nftables.d/{20-nds-enforce,30-backend-firewall}.nft —
-			// no separate overlay download is performed (the old overlay URL 404'd).
-			//
-			// Report WHICH build landed: the installed version (and commit when
-			// the backend exposes one) plus the source that supplied it, so
-			// "which build am I running, and did this run exercise the feed?"
-			// is answerable from the deploy log alone.
 			build := reportInstalledBuild(job, client)
-			// Two independent verdicts meet here: C2-I-02's version verdict
-			// ("did the package that landed match the release the supplying
-			// source names?" — installStatus) and C2-I-03's integrity verdict
-			// (were the bytes checked against a published digest? — integrity).
-			// The step is GREEN only when both passed; anything else renders
-			// "warn" with the reason in the detail, so neither a downgrade nor
-			// unchecked bytes can look like an unqualified success.
-			detail := installStepDetail(build, pkgMgr, pkgSourceLabel(routerArch, routerTarget, pkgExtension, pkgSourceURL))
+			feedVerdict := routerFeedInstallVerdict()
+			job.addLog("WARNING: " + feedVerdict.Detail)
+			detail := installStepDetail(build, pkgMgr, pkgSourceRouterFeed)
 			if installStatus == "warn" {
 				detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
 			}
-			job.setStep(6, installStepStatusFor(installStatus, integrity), detail+integrity.suffix())
-			installedOK = true
+			job.setStep(6, installStepStatusFor(installStatus, feedVerdict), detail+feedVerdict.suffix())
 		}
-	}
-	if !installedOK {
-		// Last resort: feed install (requires the router to already have
-		// working internet — usually not the case on a fresh STA uplink).
-		job.addLog("Package not on router — trying " + pkgMgr + " feed...")
-		var installOut string
-		if pkgMgr == "apk" {
-			installOut = sshRun(client, "apk update >/dev/null 2>&1; apk add "+tollgatePackage+" 2>&1 | tail -5")
-		} else {
-			installOut = sshRun(client, "rm -f /var/lock/opkg.lock 2>/dev/null; opkg update >/dev/null 2>&1; opkg install "+tollgatePackage+" 2>&1 | tail -5")
-		}
-		job.addLog("Feed install: " + truncate(installOut, 100))
-		verifyOut := sshRun(client, "which tollgate-wrt 2>/dev/null || echo 'NOT FOUND'")
-		if strings.Contains(verifyOut, "NOT FOUND") {
-			// STA config + radio changes are live at this point but the
-			// deploy is dead — restore the wireless snapshot so the router
-			// is left in its pre-deploy state. The refusal path above does
-			// the same: no terminal failure in this step may skip it.
-			jobFailAfterRestore(job, client, staCommitted, 6,
-				"tollgate-wrt install failed",
-				"Package installation failed")
-			return
-		}
-		// This path installed from the ROUTER's own configured package feeds —
-		// not the FreedomTechFeed release asset — so the provenance label says
-		// so explicitly rather than reusing "feed" for both meanings. The same
-		// "is it the requested release?" rule applies: a router-feed package
-		// that is not the requested one must not render as a plain success —
-		// AND these bytes never passed through this installer, so nothing about
-		// them was checked: the step also renders "warn" with an explicit
-		// NOT VERIFIED suffix rather than a green "done" with no suffix at all
-		// (cold cross-family review 2026-09-23, finding 1; C2-I-03).
-		if pkgVer := readInstalledPkgVersion(client); pkgVer != "" {
-			job.addLog("Installed tollgate-wrt package version: " + pkgVer)
-			if _, warn := pkgVersionVerdict(pkgVer, "", routerArch, routerTarget, pkgExtension); warn != "" {
-				job.addLog("WARNING: " + warn)
-				installStatus = "warn"
-			}
-		}
-		build := reportInstalledBuild(job, client)
-		feedVerdict := routerFeedInstallVerdict()
-		job.addLog("WARNING: " + feedVerdict.Detail)
-		detail := installStepDetail(build, pkgMgr, pkgSourceRouterFeed)
-		if installStatus == "warn" {
-			detail = "NOT THE REQUESTED RELEASE (" + feedReleaseTag + ") — " + detail
-		}
-		job.setStep(6, installStepStatusFor(installStatus, feedVerdict), detail+feedVerdict.suffix())
-	}
+	} // !skipInstall
 
 	// The .ipk now ships gonuts v0.11.1 with all keyset/multimint/existing-wallet
 	// fixes built in — no binary replacement needed.
@@ -1754,7 +1817,7 @@ func runDeployment(job *Job, req deployRequest) {
 	// tollgate-0GLK: the module minted, then the installer minted again.
 	job.setStep(7, "running", "")
 
-	idOut := sshRun(client, deviceIdentityScript)
+	idOut := sshRun(client, "PRIVATE_NYM="+shellQuoteSingle(privateSSIDPrefix)+" BRAND_TOKEN="+shellQuoteSingle(brandTokenFromEnv())+"\n"+deviceIdentityScript)
 	id := parseDeviceIdentity(idOut)
 	if id.Code == "" {
 		// The router-side resolver returned nothing usable (no uci, no
@@ -1764,6 +1827,7 @@ func runDeployment(job *Job, req deployRequest) {
 		id = fallbackDeviceIdentity()
 		job.addLog("WARNING: could not resolve a device code on the router (" + truncate(strings.TrimSpace(idOut), 80) + ") — minted " + id.Code + " locally; it is NOT stored on the router")
 	} else {
+		id = applyBrandToIdentity(id)
 		job.addLog("Device code " + id.Code + " (" + id.Source + "): hostname=" + id.Hostname + ", captive SSID=" + id.SSID + ", private SSID=" + id.PrivateSSID)
 	}
 
@@ -1868,10 +1932,10 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 
 	// 8b: Write margin + profit_share to config.json.
 	// Also ensure the default mints are present (idempotent):
-	//   7 production mints always;
+	//   5 production mints always (no minibits: it rate-limits by IP and its
+	//   stored keyset can wedge wallet init; no lnserver: never verified here);
 	//   2 testnut zero-fee test mints ONLY when the deploy payload opts in
 	//   (req.TestMints — E2E purchase testing, never a real customer default).
-	// Does NOT strip minibits (DLEQ keyset rotation bug fixed in gonuts v0.11.1).
 	devSplit, margin := req.resolvedAdvanced()
 	devSplit = clamp(devSplit, 0, 50)
 	margin = clamp(margin, 0, 100)
@@ -1885,7 +1949,7 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	}
 	if strings.Contains(cfgOut, "config updated") {
 		job.addLog("config.json: margin=" + strconv.Itoa(margin) + "%, devSplit=" + strconv.Itoa(devSplit) + "% (profit_share updated)")
-		mintsLog := "config.json: mints configured (coinos, minibits, lnserver, macadamia, westernbtc, kashu, cubabitcoin)"
+		mintsLog := "config.json: mints configured (coinos, macadamia, westernbtc, kashu, cubabitcoin)"
 		if req.TestMints {
 			mintsLog += " + testnut x2 (E2E test mints — opt-in)"
 		}

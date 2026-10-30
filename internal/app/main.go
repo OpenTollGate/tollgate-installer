@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -86,14 +87,44 @@ var (
 	// download fails the deploy instead of substituting an older package.
 	allowFallback = flag.Bool("allow-fallback", false,
 		"allow the older GitHub release fallback when the requested feed release is unavailable")
+	// allowDowngrade permits replacing a router build that is NEWER than the
+	// installer's resolved pin. The default is to leave it alone: "latest"
+	// must never silently move a router backwards.
+	allowDowngrade = flag.Bool("allow-downgrade", false,
+		"replace a tollgate-wrt that is newer than the installer's pin (default: leave it)")
 	// sshPort overrides the SSH port dialled on the router. Production always
 	// dials 22 (see sshDialPort); the end-to-end harness points the REAL binary
 	// at a fixture dropbear on an ephemeral port, so the whole
 	// scan -> refusal -> Trust -> remember path can be driven without hardware
 	// and without needing a privileged port 22 on the test host.
-	sshPort    = flag.String("ssh-port", "22", "SSH port to dial on the router (default 22; the E2E harness points this at a fixture)")
+	sshPort = flag.String("ssh-port", "22", "SSH port to dial on the router (default 22; the E2E harness points this at a fixture)")
+	// brand is the white-label token the captive SSID and hostname are derived
+	// from. Empty means the historical TollGate names. TOLLGATE_BRAND carries
+	// the same value for the curl|bash launcher.
+	brand = flag.String("brand", "", "brand token for the captive SSID and hostname (default: TollGate)")
+	// privateNym is the prefix of the private management SSID. It is the
+	// operator's own name, not a developer handle; the device code is appended
+	// by the deploy. TOLLGATE_PRIVATE_NYM carries the same value.
+	privateNym = flag.String("private-ssid-prefix", "", "prefix for the private management SSID (default: noderunner-private)")
 	listenAddr string
 )
+
+// applyStartupInputs wires the process-wide inputs that the environment or
+// flags can supply. Kept out of Main so the precedence is unit-testable: an
+// explicit flag wins over the environment, and an absent value leaves the
+// historical default untouched.
+func applyStartupInputs(brandFlag, brandEnv, nymFlag, nymEnv string) {
+	if token := strings.TrimSpace(brandFlag); token != "" {
+		SetBrandToken(token)
+	} else if token := strings.TrimSpace(brandEnv); token != "" {
+		SetBrandToken(token)
+	}
+	if prefix := strings.TrimSpace(nymFlag); prefix != "" {
+		setPrivateSSIDPrefix(prefix)
+	} else if prefix := strings.TrimSpace(nymEnv); prefix != "" {
+		setPrivateSSIDPrefix(prefix)
+	}
+}
 
 // defaultBindHost is the loopback interface the wizard serves on by default.
 // The setup wizard drives a root SSH session on the router, so a wildcard
@@ -1529,7 +1560,7 @@ type deployRequest struct {
 	Margin              *int   `json:"margin"`   // advanced: operator markup % (0-100); nil => defaultMargin
 	Mint                string `json:"mint"`     // advanced: preferred Cashu mint URL
 	// TestMints is OPT-IN: when false/absent (the default for real customer
-	// deployments) the wizard configures ONLY the 7 production mints. When
+	// deployments) the wizard configures ONLY the 5 production mints. When
 	// true it additionally appends the 2 testnut test mints, which fake
 	// Lightning payments for E2E purchase testing — never for production.
 	TestMints bool `json:"test_mints"` // advanced: include testnut test mints (E2E only, default false)
@@ -1997,6 +2028,7 @@ func allRadiosUp(statusJSON string) bool {
 
 func Main() {
 	flag.Parse()
+	applyStartupInputs(*brand, os.Getenv("TOLLGATE_BRAND"), *privateNym, os.Getenv("TOLLGATE_PRIVATE_NYM"))
 	sshDialPort = *sshPort
 	listenAddr = listenAddress(*listenBind, *listenPort)
 	mux := http.NewServeMux()

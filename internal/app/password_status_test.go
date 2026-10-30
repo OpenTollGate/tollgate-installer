@@ -152,4 +152,3 @@ func TestPasswordVerdictOffersNoFallbackAuth(t *testing.T) {
 		t.Error("passwordVerdict does not use isolatedPasswordDial — it must not derive the verdict from a fallback-capable connect")
 	}
 }
-
