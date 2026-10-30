@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -70,7 +72,7 @@ func TestApplyBrandToIdentityArchipelago(t *testing.T) {
 		Hostname:    "tollgate-ABCD",
 		SSID:        "!TollGate-ABCD",
 		PrivateSSID: "c08r4d0r-ABCD",
-	})
+	}, "noderunner-private")
 
 	if id.Hostname != "archipelago-ABCD" {
 		t.Errorf("hostname = %q, want archipelago-ABCD", id.Hostname)
@@ -90,7 +92,7 @@ func TestFallbackIdentityIsBranded(t *testing.T) {
 	withBrand(t, "archipelago")
 	withPrivateNym(t, "noderunner-private")
 
-	id := fallbackDeviceIdentity()
+	id := fallbackDeviceIdentity("noderunner-private")
 	if !strings.HasPrefix(id.SSID, "!Archipelago-") {
 		t.Errorf("fallback SSID = %q, want !Archipelago-*", id.SSID)
 	}
@@ -167,6 +169,74 @@ func TestTestnutMintsAreTheVerifiedPair(t *testing.T) {
 	}
 	if strings.Contains(joined, "nofee.testnut.cashu.space") {
 		t.Errorf("dead nofee testnut is still present: %v", got)
+	}
+}
+
+func TestAcceptedMintsPayloadReplacesTheList(t *testing.T) {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq not installed")
+	}
+	accepted := []mintCfg{
+		{URL: "https://mint-a.example", PricePerStep: 21, PriceUnit: "sat", PurchaseMinSteps: 1},
+		{URL: "https://mint-b.example", PricePerStep: 21, PriceUnit: "sat", PurchaseMinSteps: 1},
+	}
+	payload, _ := json.Marshal(accepted)
+	price := 21
+	filter := configJqReplaceFilter() +
+		" | .metric=\"milliseconds\" | .step_size=$ss" +
+		" | .accepted_mints |= map(.price_per_step=$pp)"
+	args := []string{
+		"--argjson", "m", "5",
+		"--argjson", "of", "0.9000",
+		"--argjson", "df", "0.1000",
+		"--argjson", "ss", "60000",
+		"--argjson", "dm", string(payload),
+		"--argjson", "pp", strconv.Itoa(price),
+		"--arg", "mu", "",
+		filter,
+	}
+	config := `{"accepted_mints":[{"url":"https://old.example"}],"profit_share":[{"identity":"owner","factor":0},{"identity":"developer","factor":0}]}`
+	cmd := exec.Command(jq, args...)
+	cmd.Stdin = strings.NewReader(config)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("jq failed: %v", err)
+	}
+	var doc struct {
+		AcceptedMints []mintCfg `json:"accepted_mints"`
+		StepSize      int       `json:"step_size"`
+		Metric        string    `json:"metric"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("merged config is not JSON: %v\n%s", err, out)
+	}
+	if len(doc.AcceptedMints) != 2 {
+		t.Fatalf("accepted_mints = %d, want 2 (replace, not merge): %s", len(doc.AcceptedMints), out)
+	}
+	if doc.AcceptedMints[0].URL != "https://mint-a.example" {
+		t.Errorf("first mint = %q", doc.AcceptedMints[0].URL)
+	}
+	for _, m := range doc.AcceptedMints {
+		if m.PricePerStep != 21 {
+			t.Errorf("mint %s price = %d, want 21", m.URL, m.PricePerStep)
+		}
+	}
+	if doc.StepSize != 60_000 || doc.Metric != "milliseconds" {
+		t.Errorf("step_size/metric = %d/%q", doc.StepSize, doc.Metric)
+	}
+}
+
+func TestEffectivePrivateSSID(t *testing.T) {
+	withPrivateNym(t, "node-default")
+	if got := effectivePrivateSSID("noderunner-private"); got != "noderunner-private" {
+		t.Errorf("request prefix = %q, want noderunner-private", got)
+	}
+	if got := effectivePrivateSSID("bad prefix"); got != "node-default" {
+		t.Errorf("invalid prefix = %q, want the process default", got)
+	}
+	if got := effectivePrivateSSID(""); got != "node-default" {
+		t.Errorf("empty prefix = %q, want the process default", got)
 	}
 }
 

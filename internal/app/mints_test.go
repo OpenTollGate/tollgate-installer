@@ -293,20 +293,20 @@ func TestMintConfigJqMerge(t *testing.T) {
 // must embed the operator mint as a shell-SINGLE-QUOTED jq --arg so an
 // empty/spacey mint cannot consume the filter or corrupt the command.
 func TestConfigJqCmdQuotesOperatorMint(t *testing.T) {
-	cmd := configJqCmd(5, "0.9000", "0.1000", "", false)
+	cmd := configJqCmd(5, "0.9000", "0.1000", "", false, nil, 60000, nil)
 	// Empty mint must still be single-quoted: `--arg mu ''`.
 	if !strings.Contains(cmd, "--arg mu '' ") {
 		t.Errorf("empty mint must be single-quoted (--arg mu ''):\n%s", cmd)
 	}
 	// A mint with a space/shell char must be fully single-quoted.
 	spacey := "https://mint.example.com/foo bar"
-	cmd2 := configJqCmd(5, "0.9000", "0.1000", spacey, false)
+	cmd2 := configJqCmd(5, "0.9000", "0.1000", spacey, false, nil, 60000, nil)
 	if !strings.Contains(cmd2, "--arg mu 'https://mint.example.com/foo bar' ") {
 		t.Errorf("spacey mint must be single-quoted verbatim:\n%s", cmd2)
 	}
 	// Embedded single quote must be escaped so it cannot break out.
 	quote := "https://mint.example.com/x'y"
-	cmd3 := configJqCmd(5, "0.9000", "0.1000", quote, false)
+	cmd3 := configJqCmd(5, "0.9000", "0.1000", quote, false, nil, 60000, nil)
 	if strings.Contains(cmd3, "--arg mu 'https://mint.example.com/x'y' ") {
 		t.Errorf("mint with a single quote must be escaped (not raw-interpolated):\n%s", cmd3)
 	}

@@ -529,16 +529,57 @@ func configJqFilter() string {
 		".accepted_mints = ((.accepted_mints // []) + ($dm | map(.url as $u | select(($have | index($u)) == null))))"
 }
 
+// configJqReplaceFilter replaces accepted_mints with the payload list.
+//
+// The merge filter above is right for an operator adding a preferred mint to
+// the shipped set. It is wrong when the node's schema UI is the authority: a
+// removed mint must stay removed, which is why an explicit accepted_mints
+// payload selects this filter instead.
+func configJqReplaceFilter() string {
+	return ".margin=$m | " +
+		"(.profit_share[] | select(.identity == \"owner\") | .factor) = $of | " +
+		"(.profit_share[] | select(.identity == \"developer\") | .factor) = $df | " +
+		".accepted_mints = $dm"
+}
+
 // configJqCmd builds the full router-side command that rewrites
-// /etc/tollgate/config.json. Host-computed values ($m/$of/$df/$dm) cross as
-// jq --argjson; the operator mint crosses as a single-quoted jq --arg.
-func configJqCmd(margin int, ownerFactor, devFactor, mint string, includeTestnut bool) string {
-	return "jq --argjson m " + strconv.Itoa(margin) + " " +
+// /etc/tollgate/config.json. Host-computed values cross as jq --argjson; the
+// single operator mint crosses as a single-quoted jq --arg.
+//
+// accepted, when non-empty, REPLACES the mint list (add/remove authority).
+// stepSizeMS and pricePerStep are the Archy schema payload; nil/zero keeps the
+// compiled defaults.
+func configJqCmd(
+	margin int,
+	ownerFactor, devFactor, mint string,
+	includeTestnut bool,
+	accepted []mintCfg,
+	stepSizeMS int,
+	pricePerStep *int,
+) string {
+	dm := defaultMintsJSON(includeTestnut)
+	filter := configJqFilter()
+	if len(accepted) > 0 {
+		if b, err := json.Marshal(accepted); err == nil {
+			dm = string(b)
+		}
+		filter = configJqReplaceFilter()
+	}
+	filter += " | .metric=\"milliseconds\" | .step_size=$ss"
+	if pricePerStep != nil {
+		filter += " | .accepted_mints |= map(.price_per_step=$pp)"
+	}
+	cmd := "jq --argjson m " + strconv.Itoa(margin) + " " +
 		"--argjson of " + ownerFactor + " " +
 		"--argjson df " + devFactor + " " +
-		"--argjson dm '" + defaultMintsJSON(includeTestnut) + "' " +
-		"--arg mu " + shellQuoteSingle(mint) + " " +
-		"'" + configJqFilter() + "' " +
+		"--argjson ss " + strconv.Itoa(stepSizeMS) + " " +
+		"--argjson dm " + shellQuoteSingle(dm) + " " +
+		"--arg mu " + shellQuoteSingle(mint) + " "
+	if pricePerStep != nil {
+		cmd += "--argjson pp " + strconv.Itoa(*pricePerStep) + " "
+	}
+	return cmd +
+		"'" + filter + "' " +
 		"/etc/tollgate/config.json > /tmp/cfg.tmp 2>&1 && " +
 		"mv /tmp/cfg.tmp /etc/tollgate/config.json && echo 'config updated' || echo 'no config'"
 }
@@ -783,7 +824,7 @@ func parseDeviceIdentity(out string) deviceIdentity {
 // same shape and the same derived names as the router-side resolver, and the
 // caller logs that the code could not be stored, so a router branded this way
 // will be re-named by the next install that can reach its UCI.
-func fallbackDeviceIdentity() deviceIdentity {
+func fallbackDeviceIdentity(prefix string) deviceIdentity {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	suffix := make([]byte, 4)
 	randBytes := make([]byte, 4)
@@ -798,7 +839,8 @@ func fallbackDeviceIdentity() deviceIdentity {
 	}
 	code := string(suffix)
 	id := brandedDeviceIdentity(code, brandTokenFromEnv())
-	id.Nym = privateSSIDPrefix
+	id.Nym = prefix
+	id.PrivateSSID = prefix + "-" + code
 	id.Source = "minted-locally"
 	return id
 }
@@ -807,13 +849,23 @@ func fallbackDeviceIdentity() deviceIdentity {
 // names with the brand and private-SSID prefix this process was started with.
 // The resolver owns the CODE (adopted or minted once, stored in
 // /etc/config/tollgate); the names are an input, not a router fact.
-func applyBrandToIdentity(id deviceIdentity) deviceIdentity {
+func applyBrandToIdentity(id deviceIdentity, prefix string) deviceIdentity {
 	branded := brandedDeviceIdentity(id.Code, brandTokenFromEnv())
 	id.Hostname = branded.Hostname
 	id.SSID = branded.SSID
-	id.Nym = privateSSIDPrefix
-	id.PrivateSSID = privateSSIDPrefix + "-" + id.Code
+	id.Nym = prefix
+	id.PrivateSSID = prefix + "-" + id.Code
 	return id
+}
+
+// effectivePrivateSSID returns the request-scoped prefix, falling back to the
+// process default. Invalid values are ignored rather than written to the
+// router's only management SSID.
+func effectivePrivateSSID(requested string) string {
+	if p := strings.TrimSpace(requested); p != "" && privateSSIDPrefixRe.MatchString(p) {
+		return p
+	}
+	return privateSSIDPrefix
 }
 
 // brandingCommands returns the router-side commands that brand a deployed
@@ -1817,17 +1869,18 @@ func runDeployment(job *Job, req deployRequest) {
 	// tollgate-0GLK: the module minted, then the installer minted again.
 	job.setStep(7, "running", "")
 
-	idOut := sshRun(client, "PRIVATE_NYM="+shellQuoteSingle(privateSSIDPrefix)+" BRAND_TOKEN="+shellQuoteSingle(brandTokenFromEnv())+"\n"+deviceIdentityScript)
+	privatePrefix := effectivePrivateSSID(req.PrivateSSID)
+	idOut := sshRun(client, "PRIVATE_NYM="+shellQuoteSingle(privatePrefix)+" BRAND_TOKEN="+shellQuoteSingle(brandTokenFromEnv())+"\n"+deviceIdentityScript)
 	id := parseDeviceIdentity(idOut)
 	if id.Code == "" {
 		// The router-side resolver returned nothing usable (no uci, no
 		// /dev/urandom). Brand anyway — the deploy is far past the point of no
 		// return — and say so, because a locally minted code could not be
 		// stored and the next install will therefore re-name the router.
-		id = fallbackDeviceIdentity()
+		id = fallbackDeviceIdentity(privatePrefix)
 		job.addLog("WARNING: could not resolve a device code on the router (" + truncate(strings.TrimSpace(idOut), 80) + ") — minted " + id.Code + " locally; it is NOT stored on the router")
 	} else {
-		id = applyBrandToIdentity(id)
+		id = applyBrandToIdentity(id, privatePrefix)
 		job.addLog("Device code " + id.Code + " (" + id.Source + "): hostname=" + id.Hostname + ", captive SSID=" + id.SSID + ", private SSID=" + id.PrivateSSID)
 	}
 
@@ -1941,7 +1994,15 @@ if [ -f "$D/logo192.png" ]; then echo "OK:$n"; else echo "OK_NO_ICON:$n"; fi`)
 	margin = clamp(margin, 0, 100)
 	ownerFactor := strconv.FormatFloat(1.0-float64(devSplit)/100.0, 'f', 4, 64)
 	devFactor := strconv.FormatFloat(float64(devSplit)/100.0, 'f', 4, 64)
-	cfgCmd := configJqCmd(margin, ownerFactor, devFactor, req.Mint, req.TestMints)
+	stepSizeMS := 60_000
+	if req.StepSizeMS != nil && *req.StepSizeMS >= 60_000 {
+		stepSizeMS = *req.StepSizeMS
+	}
+	pricePerStep := req.PricePerStep
+	if pricePerStep != nil && *pricePerStep < 1 {
+		pricePerStep = nil
+	}
+	cfgCmd := configJqCmd(margin, ownerFactor, devFactor, req.Mint, req.TestMints, req.AcceptedMints, stepSizeMS, pricePerStep)
 	cfgOut := sshRun(client, cfgCmd)
 
 	if strings.Contains(lnOut, "identities updated") {

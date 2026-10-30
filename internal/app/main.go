@@ -1564,6 +1564,14 @@ type deployRequest struct {
 	// true it additionally appends the 2 testnut test mints, which fake
 	// Lightning payments for E2E purchase testing — never for production.
 	TestMints bool `json:"test_mints"` // advanced: include testnut test mints (E2E only, default false)
+	// Archy config payload. AcceptedMints, when non-empty, REPLACES the
+	// installer's default list (add/remove in the node's schema UI is the
+	// authority). PricePerStep/StepSizeMS are the time price and interval;
+	// PrivateSSID is the per-deploy private-SSID prefix.
+	AcceptedMints []mintCfg `json:"accepted_mints"`
+	PricePerStep  *int      `json:"price_per_step"`
+	StepSizeMS    *int      `json:"step_size_ms"`
+	PrivateSSID   string    `json:"private_ssid"`
 	// PreStage asks the wizard to download all deploy binaries up-front into
 	// the Job's stageCache before running the flash/install steps, so the
 	// deploy can proceed even if the laptop's internet path dies mid-deploy
