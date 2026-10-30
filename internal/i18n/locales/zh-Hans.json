@@ -1,12 +1,10 @@
 {
   "title": "TollGate 安装程序 — 路由器设置",
   "tagline": "60 秒完成路由器设置",
-
   "scan.scanning": "正在扫描您网络中的路由器...",
   "scan.none": "没有路由器响应。以下是已尝试的操作。",
   "scan.timeout": "扫描未能及时完成。以下是已尝试的操作。",
   "scan.unreadable": "无法读取扫描结果。以下是已尝试的操作。",
-
   "scan.fail.heading": "扫描为何无法报告",
   "scan.fail.timeoutBody": "安装程序在 20 秒内没有响应，因此本页面对您的网络一无所知。",
   "scan.fail.unreadableBody": "无法读取安装程序的响应，因此本页面对您的网络一无所知。",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "注意：默认路由由隧道接口 {iface}（经由 {ip}）持有——你局域网里的路由器只能在其所在子网内访问。",
   "scan.fail.step1": "1. 使用 LAN 口：在 GL-MT3000 上，2.5 GbE 口是 WAN，1 GbE 口是 LAN——插到 WAN 上既拿不到 DHCP 租约，也没有路由。",
   "scan.fail.step2": "2. 给它时间：刷机或重启后，路由器需要 60-120 秒才会应答。",
-  "scan.fail.step3": "3. 在有线接口上强制续租：dhclient -v \u003cinterface\u003e。",
+  "scan.fail.step3": "3. 在有线接口上强制续租：dhclient -v <interface>。",
   "scan.fail.step4": "4. 原版 OpenWrt 只在 :22 上应答——在装上之前，:80 和 :8080 上没有 LuCI 网页界面。",
-  "scan.fail.step5": "5. 或者完全跳过扫描：bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003cyou@wallet.app\u003e",
+  "scan.fail.step5": "5. 或者完全跳过扫描：bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <you@wallet.app>",
   "scan.note.identified": "TollGate/OpenWrt 路由器（已识别）",
   "scan.note.noAnswer": "没有应答",
   "scan.note.vendorIdentified": "{vendor} 路由器（已识别）",
   "scan.note.unverified": "你局域网中未经验证的主机——在 {ports} 上有应答",
-
   "manual.label": "路由器地址",
   "manual.use": "使用此地址",
   "manual.hint": "知道路由器的 IP 地址？请填写——向导会直接识别它。",
@@ -54,12 +51,10 @@
   "manual.selected": "已选择 {ip}。请在下方继续。",
   "manual.selectedNote": "已选择 {ip} — {note}。请在下方继续。",
   "manual.unreachable": "无法连接安装程序来识别 {ip}。",
-
   "select.label": "选择您的路由器",
   "select.routerFallback": "路由器",
   "select.custom": "输入其他地址…",
   "select.customTitle": "当扫描未发现路由器时，手动输入其地址——例如它位于另一个子网",
-
   "trust.button": "信任此路由器的 SSH 主机密钥",
   "trust.lead": "等待您确认：此路由器的 SSH 密钥尚未被信任，因此还没有向它发送任何内容。",
   "trust.fingerprint": "指纹：{fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "路由器现在提供的指纹是 {fp} — 请在路由器控制台上核对该指纹，然后再次点击“信任”以确认。",
   "trust.remembered": "已信任路由器主机密钥并记录在 {store} 中。",
   "trust.networkError": "信任路由器主机密钥时发生网络错误。",
-
   "password.current": "当前路由器密码",
   "password.placeholder": "当前路由器密码（恢复出厂设置后留空）",
   "password.show": "显示密码",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ 路由器主机密钥未被信任——信任它之后才会校验密码。",
   "password.status.unreachable": "● 路由器暂时无法通过 SSH 访问——请检查地址和网线。",
   "password.status.unknown": "● 尚无法校验密码。",
-
   "upstream.label": "上行连接",
   "upstream.wan": "WAN（以太网）",
   "upstream.sta": "WiFi 中继",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "选择要中继的 WiFi 网络。",
   "upstream.wifiPassLabel": "上行 WiFi 密码",
   "upstream.wifiPassPlaceholder": "请输入上行 WiFi 密码",
-
   "wifi.passwordChanged": "路由器密码已更改——请点击“重新扫描”以刷新网络列表。",
   "wifi.enterPassword": "请输入要测试的 WiFi 密码",
   "wifi.testing": "正在测试 WiFi 连接...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "扫描期间发生网络错误。请尝试“重新扫描”。",
   "wifi.movedRouter": "有路由器在 {ip} 响应。请重新扫描以选择它，然后再次运行扫描。",
   "wifi.rescanForRouters": "重新扫描路由器",
-
   "prestage.running": "正在预下载软件包...",
   "prestage.done": "软件包已预下载",
   "prestage.failed": "预下载失败：{error}",
   "prestage.unknownError": "未知错误",
-
   "lnurl.label": "闪电地址",
   "lnurl.placeholder": "you@wallet.app  或  lnurl1...",
   "lnurl.hint": "闪电地址（you@wallet.app）或原始 LNURL（lnurl1...）。必填。",
-
   "advanced.summary": "高级设置（可选）",
   "advanced.adminLabel": "路由器管理密码（可选）",
   "advanced.adminPlaceholder": "留空以使用默认值：TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "并在首次登录时自行设置。",
   "advanced.adminTooShort": "路由器管理密码至少需要 8 个字符（或留空以使用默认值）。",
   "advanced.wifiTooShort": "管理 WiFi 密码至少需要 8 个字符（或留空以使用默认值）。",
-
   "cleanSlate.label": "全新状态（高级）",
   "cleanSlate.inspect": "检查全新状态镜像",
   "cleanSlate.selectBoard": "请选择检测到的板型以启用刷机",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "无法解析全新状态镜像。",
   "cleanSlate.refused": "全新状态刷机被拒绝。",
   "cleanSlate.detail": "板型：{board} | 镜像：{image} | sha256：{sha}",
-
   "devsplit.label": "开发者分成",
   "devsplit.hint": "支付中划入 TollGate 开发者基金的比例。默认 21%。",
   "margin.label": "加价",
   "margin.hint": "运营者在数据成本之上增加的加价。默认 21%。",
-
   "mint.label": "Cashu mint 偏好",
   "mint.defaultOption": "8333.space（默认）",
   "mint.hint": "路由器为 ecash 支付优先使用哪个 Cashu mint。Minibits 已暂时移除（DLEQ 密钥集轮换缺陷）。",
-
   "forceflash.label": "强制重刷固件（会清除路由器配置；升级到固定版本的 OpenWrt）",
   "forceflash.hintBefore": "当路由器已运行 OpenWrt 时通常跳过。启用后将执行",
   "forceflash.hintAfter": "刷到固定版本（例如 24.10 → 25.12），然后在干净系统上继续部署。",
-
   "deploy.button": "部署 TollGate",
   "deploy.scanAgain": "重新扫描",
   "deploy.deploying": "正在部署 TollGate...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "正在测试上行 WiFi 连接…",
   "deploy.fixUpstream": "请修复上行 WiFi 连接以解锁“部署”。",
   "deploy.enterUpstreamPass": "请输入上行 WiFi 密码——测试成功后将解锁“部署”。",
-
   "success.title": "TollGate 已上线！",
   "success.subtitle": "您的路由器现在是一个比特币 WiFi 热点。",
   "success.body": "连接到该 WiFi 网络并打开任意网站即可看到支付门户。",
-
   "credential.title": "路由器的新 root 密码",
   "credential.warnSuccess": "您的路由器原本没有 root 密码，因此已设为默认值。该值在此仅显示一次，同时在您关闭或刷新本页面之前，副本也会保存到本机文件（权限 600）。登录路由器管理面板后请更改为您自己的密码。",
   "credential.warnFailure": "本次部署在路由器的 root 密码已被设置之后失败。该值在此仅显示一次，同时在您关闭或刷新本页面之前，副本也会保存到本机文件（权限 600）——您需要它才能访问路由器。",
@@ -188,7 +170,6 @@
   "credential.copied": "已复制到剪贴板。",
   "credential.copyFailed": "复制失败。请选中上方的密码并手动复制。",
   "credential.savedTo": "副本已保存在本机：{path}",
-
   "pending.title": "TollGate 已安装 — 商户仍在启动",
   "pending.detail": "商户仍在加载其钱包和 mint 状态。",
   "pending.recheck": "重新检查",
@@ -197,13 +178,11 @@
   "pending.starting": "仍在启动——请再等一分钟，然后重新检查。",
   "pending.unreachable": "无法连接路由器——它可能仍在启动。",
   "pending.failed": "重新检查失败：{error}",
-
   "error.title": "设置失败",
   "error.retry": "重试",
   "error.generic": "出现了问题。",
   "error.unknown": "未知错误。请查看上方的日志。",
   "error.versionUnavailable": "此安装程序版本无法提供版本信息",
-
   "step.verify": "正在验证对路由器的 SSH 访问...",
   "step.stage": "正在预下载软件包和固件...",
   "step.flash": "正在向原版 GL.iNet 刷入 OpenWrt...",
@@ -219,10 +198,8 @@
   "step.identity": "确认路由器身份",
   "step.image": "校验 OpenWrt 镜像",
   "step.flashVanilla": "刷入原版 OpenWrt",
-
   "lang.label": "语言",
   "lang.saved": "您的选择会在此浏览器中被记住。",
-
   "error.invalidJSON": "JSON 无效",
   "error.ipRequired": "需要 IP 地址",
   "error.methodNotAllowed": "不允许的方法",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "未找到任务",
   "error.ipVersion": "需要 IP 地址和版本",
   "error.fingerprint": "需要指纹，例如 SHA256:AbCdEf…",
-
   "jobError.cpuArch": "无法确定路由器的 CPU 架构",
   "jobError.target": "无法确定路由器的目标型号",
   "jobError.notOpenWrt": "路由器尚未运行 OpenWrt 固件",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "opkg 拒绝降级该软件包：路由器仍在用新配置运行此前的 tollgate-wrt 程序。请安装 opkg 可接受的版本，或先移除已安装的 tollgate-wrt（opkg remove tollgate-wrt）后重试。",
   "jobError.initScriptMissing": "缺少 tollgate-wrt 启动脚本 — 软件包安装失败",
   "jobError.noWifiDevice": "UCI 中未找到 wifi-device — 无法配置 STA 上行链路",
-  "jobError.imagePush": "无法将 OpenWrt 镜像推送到路由器"
+  "jobError.imagePush": "无法将 OpenWrt 镜像推送到路由器",
+  "cobrador.intro": "每个收费站都有一个 Cobrador。",
+  "cobrador.infoLabel": "什么是 Cobrador？",
+  "cobrador.infoBody": "Cobrador 岛是 TollGate 操作员会面、对等和堆叠 SATs 的地方。你是这扇门的Cobrador。",
+  "cobrador.success": "欢迎回家，Cobrador。"
 }

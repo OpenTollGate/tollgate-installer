@@ -1,12 +1,10 @@
 {
   "title": "Instalador TollGate — Configuração do roteador",
   "tagline": "Configure seu roteador em 60 segundos",
-
   "scan.scanning": "Procurando roteadores na sua rede...",
   "scan.none": "Nenhum roteador respondeu. Isto foi o que se tentou.",
   "scan.timeout": "A busca não terminou a tempo. Isto foi o que se tentou.",
   "scan.unreadable": "Não foi possível ler a busca. Isto foi o que se tentou.",
-
   "scan.fail.heading": "Por que a busca não pôde informar",
   "scan.fail.timeoutBody": "O instalador não respondeu em 20 segundos, então esta página não sabe nada sobre a sua rede.",
   "scan.fail.unreadableBody": "Não foi possível ler a resposta do instalador, então esta página não sabe nada sobre a sua rede.",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "Nota: a rota predefinida pertence à interface de túnel {iface} (via {ip}) — o router da tua LAN só é alcançável na sua própria sub-rede.",
   "scan.fail.step1": "1. Usa a porta LAN: no GL-MT3000 a porta 2,5 GbE é WAN e a porta 1 GbE é LAN — ligado à WAN não obténs concessão DHCP nem rota.",
   "scan.fail.step2": "2. Dá-lhe tempo: depois de um flash ou reinício um router precisa de 60-120 s antes de responder.",
-  "scan.fail.step3": "3. Força uma concessão nova na interface com cabo: dhclient -v \u003cinterface\u003e.",
+  "scan.fail.step3": "3. Força uma concessão nova na interface com cabo: dhclient -v <interface>.",
   "scan.fail.step4": "4. O OpenWrt puro só responde em :22 — não há interface web LuCI em :80 nem :8080 antes de a instalares.",
-  "scan.fail.step5": "5. Ou salta a descoberta: bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003ctu@wallet.app\u003e",
+  "scan.fail.step5": "5. Ou salta a descoberta: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <tu@wallet.app>",
   "scan.note.identified": "router TollGate/OpenWrt (identificado)",
   "scan.note.noAnswer": "não respondeu",
   "scan.note.vendorIdentified": "router {vendor} (identificado)",
   "scan.note.unverified": "anfitrião não verificado na tua LAN — responde em {ports}",
-
   "manual.label": "Endereço do roteador",
   "manual.use": "Usar este endereço",
   "manual.hint": "Sabe o endereço IP do roteador? Digite-o — o assistente o identifica diretamente.",
@@ -54,12 +51,10 @@
   "manual.selected": "{ip} selecionado. Continue abaixo.",
   "manual.selectedNote": "{ip} selecionado — {note}. Continue abaixo.",
   "manual.unreachable": "Não foi possível alcançar o instalador para identificar {ip}.",
-
   "select.label": "Selecione seu roteador",
   "select.routerFallback": "Roteador",
   "select.custom": "Digitar outro endereço…",
   "select.customTitle": "Digite o endereço do roteador quando a busca não o encontrou — por exemplo, se ele estiver em outra sub-rede",
-
   "trust.button": "Confiar na chave de host SSH deste roteador",
   "trust.lead": "Aguardando sua decisão: a chave SSH deste roteador ainda não é confiável, então nada foi enviado a ele.",
   "trust.fingerprint": "Impressão digital: {fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "O roteador apresenta agora {fp} — verifique ESSA no console do roteador e clique em Confiar novamente para confirmá-la.",
   "trust.remembered": "Chave de host do roteador confiada e memorizada em {store}.",
   "trust.networkError": "Erro de rede ao confiar na chave de host do roteador.",
-
   "password.current": "Senha atual do roteador",
   "password.placeholder": "Senha atual do roteador (deixe em branco após um reset de fábrica)",
   "password.show": "Mostrar senha",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ Chave de host do roteador não confiável — confie nela e a senha será verificada.",
   "password.status.unreachable": "● Roteador ainda não acessível por SSH — verifique o endereço e o cabo.",
   "password.status.unknown": "● Ainda não foi possível verificar a senha.",
-
   "upstream.label": "Conexão de upstream",
   "upstream.wan": "WAN (Ethernet)",
   "upstream.sta": "Repetidor WiFi",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "Escolha a rede WiFi a ser repetida.",
   "upstream.wifiPassLabel": "Senha do WiFi de upstream",
   "upstream.wifiPassPlaceholder": "Digite a senha do WiFi de upstream",
-
   "wifi.passwordChanged": "Senha do roteador alterada — pressione Buscar novamente para atualizar a lista de redes.",
   "wifi.enterPassword": "Digite a senha do WiFi para testar",
   "wifi.testing": "Testando a conexão WiFi...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "Erro de rede durante a busca. Tente Buscar novamente.",
   "wifi.movedRouter": "Um roteador responde em {ip}. Busque novamente para selecioná-lo e então execute a busca outra vez.",
   "wifi.rescanForRouters": "Buscar roteadores novamente",
-
   "prestage.running": "Pré-baixando pacotes...",
   "prestage.done": "Pacotes pré-baixados",
   "prestage.failed": "Falha no pré-download: {error}",
   "prestage.unknownError": "erro desconhecido",
-
   "lnurl.label": "Endereço Lightning",
   "lnurl.placeholder": "voce@wallet.app  ou  lnurl1...",
   "lnurl.hint": "Endereço Lightning (voce@wallet.app) ou LNURL bruto (lnurl1...). Obrigatório.",
-
   "advanced.summary": "Configurações avançadas (opcional)",
   "advanced.adminLabel": "Senha de administrador do roteador (opcional)",
   "advanced.adminPlaceholder": "Deixe em branco para o padrão: TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "e escolha a sua no primeiro login.",
   "advanced.adminTooShort": "A senha de administrador do roteador deve ter pelo menos 8 caracteres (ou deixe em branco para o padrão).",
   "advanced.wifiTooShort": "A senha do WiFi de gerenciamento deve ter pelo menos 8 caracteres (ou deixe em branco para o padrão).",
-
   "cleanSlate.label": "Estado limpo (avançado)",
   "cleanSlate.inspect": "Inspecionar imagem de estado limpo",
   "cleanSlate.selectBoard": "Selecione a placa detectada para habilitar a gravação",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "Não foi possível resolver a imagem de estado limpo.",
   "cleanSlate.refused": "Gravação de estado limpo recusada.",
   "cleanSlate.detail": "Placa: {board} | Imagem: {image} | sha256: {sha}",
-
   "devsplit.label": "Repasse ao desenvolvedor",
   "devsplit.hint": "Parte dos pagamentos destinada ao fundo dos desenvolvedores do TollGate. Padrão 21%.",
   "margin.label": "Margem",
   "margin.hint": "Acréscimo do operador sobre o custo dos dados. Padrão 21%.",
-
   "mint.label": "Preferência de mint Cashu",
   "mint.defaultOption": "8333.space (padrão)",
   "mint.hint": "Qual mint Cashu o roteador deve preferir para pagamentos em ecash. Minibits removido temporariamente (bug de rotação de keyset DLEQ).",
-
   "forceflash.label": "Regravar o firmware (APAGA a configuração do roteador; atualiza para a versão OpenWrt fixada)",
   "forceflash.hintBefore": "Normalmente ignorado quando o roteador já executa OpenWrt. Ative para executar",
   "forceflash.hintAfter": "sobre a versão fixada (por ex. 24.10 → 25.12) e depois continuar a implantação no sistema limpo.",
-
   "deploy.button": "Implantar TollGate",
   "deploy.scanAgain": "Buscar novamente",
   "deploy.deploying": "Implantando TollGate...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "Testando a conexão WiFi de upstream…",
   "deploy.fixUpstream": "Corrija a conexão WiFi de upstream para liberar Implantar.",
   "deploy.enterUpstreamPass": "Digite a senha do WiFi de upstream — Implantar é liberado depois de um teste bem-sucedido.",
-
   "success.title": "TollGate está no ar!",
   "success.subtitle": "Seu roteador agora é um hotspot WiFi de Bitcoin.",
   "success.body": "Conecte-se à rede WiFi e abra qualquer site para ver o portal de pagamento.",
-
   "credential.title": "A nova senha root do roteador",
   "credential.warnSuccess": "Seu roteador não tinha senha root, então foi definida a padrão. O valor é mostrado UMA ÚNICA VEZ aqui, e uma cópia também é salva num arquivo nesta máquina (modo 600) antes de você fechar ou recarregar esta página. Troque por uma sua depois de entrar no painel de administração do roteador.",
   "credential.warnFailure": "Esta implantação falhou DEPOIS de a senha root do roteador já ter sido definida. O valor é mostrado UMA ÚNICA VEZ aqui, e uma cópia também é salva num arquivo nesta máquina (modo 600) antes de você fechar ou recarregar esta página — você vai precisar dela para alcançar o roteador.",
@@ -188,7 +170,6 @@
   "credential.copied": "Copiado para a área de transferência.",
   "credential.copyFailed": "Falha ao copiar. Selecione a senha acima e copie manualmente.",
   "credential.savedTo": "Uma cópia está salva nesta máquina: {path}",
-
   "pending.title": "TollGate instalado — o comerciante ainda está iniciando",
   "pending.detail": "O comerciante ainda está carregando a carteira e o estado do mint.",
   "pending.recheck": "Verificar novamente",
@@ -197,13 +178,11 @@
   "pending.starting": "Ainda iniciando — dê mais um minuto e verifique novamente.",
   "pending.unreachable": "Não foi possível alcançar o roteador — ele pode ainda estar iniciando.",
   "pending.failed": "A verificação falhou: {error}",
-
   "error.title": "A configuração falhou",
   "error.retry": "Tentar novamente",
   "error.generic": "Algo deu errado.",
   "error.unknown": "Erro desconhecido. Verifique o log acima.",
   "error.versionUnavailable": "informações de versão indisponíveis nesta compilação do instalador",
-
   "step.verify": "Verificando o acesso SSH ao roteador...",
   "step.stage": "Pré-baixando pacotes e firmware...",
   "step.flash": "Gravando OpenWrt no GL.iNet de fábrica...",
@@ -219,10 +198,8 @@
   "step.identity": "Confirmar a identidade do roteador",
   "step.image": "Verificar a imagem do OpenWrt",
   "step.flashVanilla": "Gravar OpenWrt original",
-
   "lang.label": "Idioma",
   "lang.saved": "Sua escolha é memorizada neste navegador.",
-
   "error.invalidJSON": "JSON inválido",
   "error.ipRequired": "IP obrigatório",
   "error.methodNotAllowed": "método não permitido",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "tarefa não encontrada",
   "error.ipVersion": "IP e versão obrigatórios",
   "error.fingerprint": "é necessária uma impressão digital, p. ex. SHA256:AbCdEf…",
-
   "jobError.cpuArch": "Não foi possível determinar a arquitetura da CPU do roteador",
   "jobError.target": "Não foi possível determinar o alvo do roteador",
   "jobError.notOpenWrt": "O roteador ainda não executa o firmware OpenWrt",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "o opkg recusou rebaixar o pacote: o roteador continua executando o binário tollgate-wrt ANTERIOR com a nova configuração. Instale uma versão que o opkg aceite, ou remova primeiro o tollgate-wrt instalado (opkg remove tollgate-wrt) e tente novamente.",
   "jobError.initScriptMissing": "Script de init do tollgate-wrt ausente — a instalação do pacote falhou",
   "jobError.noWifiDevice": "Nenhum wifi-device encontrado no UCI — não é possível configurar o uplink STA",
-  "jobError.imagePush": "falha ao enviar a imagem OpenWrt para o roteador"
+  "jobError.imagePush": "falha ao enviar a imagem OpenWrt para o roteador",
+  "cobrador.intro": "Todo TollGate possui um Cobrador.",
+  "cobrador.infoLabel": "O que é um Cobrador?",
+  "cobrador.infoBody": "A Ilha Cobrador é onde os operadores TollGate se encontram, peer e empilham SATs. Você é o Cobrador deste portão.",
+  "cobrador.success": "Bem-vindo ao lar, Cobrador."
 }

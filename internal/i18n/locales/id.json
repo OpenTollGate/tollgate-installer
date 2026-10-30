@@ -1,12 +1,10 @@
 {
   "title": "Pemasang TollGate — Penyiapan Router",
   "tagline": "Siapkan router Anda dalam 60 detik",
-
   "scan.scanning": "Memindai router di jaringan Anda...",
   "scan.none": "Tidak ada router yang menjawab. Berikut yang sudah dicoba.",
   "scan.timeout": "Pemindaian tidak selesai tepat waktu. Berikut yang sudah dicoba.",
   "scan.unreadable": "Hasil pemindaian tidak dapat dibaca. Berikut yang sudah dicoba.",
-
   "scan.fail.heading": "Mengapa pemindaian tidak dapat melapor",
   "scan.fail.timeoutBody": "Pemasang tidak menjawab dalam 20 detik, jadi halaman ini tidak mengetahui apa pun tentang jaringan Anda.",
   "scan.fail.unreadableBody": "Jawaban pemasang tidak dapat dibaca, jadi halaman ini tidak mengetahui apa pun tentang jaringan Anda.",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "Catatan: rute bawaan dimiliki antarmuka terowongan {iface} (lewat {ip}) — router di LAN kamu hanya bisa dijangkau di subnetnya sendiri.",
   "scan.fail.step1": "1. Pakai port LAN: di GL-MT3000 port 2,5 GbE adalah WAN dan port 1 GbE adalah LAN — kalau tertancap di WAN kamu tidak dapat sewa DHCP maupun rute.",
   "scan.fail.step2": "2. Beri waktu: setelah flash atau reboot router butuh 60-120 s sebelum menjawab.",
-  "scan.fail.step3": "3. Paksa sewa baru di antarmuka kabel: dhclient -v \u003cinterface\u003e.",
+  "scan.fail.step3": "3. Paksa sewa baru di antarmuka kabel: dhclient -v <interface>.",
   "scan.fail.step4": "4. OpenWrt polos hanya menjawab di :22 — tidak ada antarmuka web LuCI di :80 atau :8080 sebelum dipasang.",
-  "scan.fail.step5": "5. Atau lewati pemindaian: bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003ckamu@wallet.app\u003e",
+  "scan.fail.step5": "5. Atau lewati pemindaian: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <kamu@wallet.app>",
   "scan.note.identified": "router TollGate/OpenWrt (teridentifikasi)",
   "scan.note.noAnswer": "tidak menjawab",
   "scan.note.vendorIdentified": "router {vendor} (teridentifikasi)",
   "scan.note.unverified": "host belum terverifikasi di LAN kamu — menjawab di {ports}",
-
   "manual.label": "Alamat router",
   "manual.use": "Gunakan alamat ini",
   "manual.hint": "Tahu alamat IP router? Ketik — panduan akan mengenalinya langsung.",
@@ -54,12 +51,10 @@
   "manual.selected": "{ip} dipilih. Lanjutkan di bawah.",
   "manual.selectedNote": "{ip} dipilih — {note}. Lanjutkan di bawah.",
   "manual.unreachable": "Tidak dapat menghubungi pemasang untuk mengenali {ip}.",
-
   "select.label": "Pilih router Anda",
   "select.routerFallback": "Router",
   "select.custom": "Masukkan alamat lain…",
   "select.customTitle": "Ketik alamat router saat pemindaian tidak menemukannya — misalnya jika berada di subnet lain",
-
   "trust.button": "Percayai kunci host SSH router ini",
   "trust.lead": "Menunggu Anda: kunci SSH router ini belum dipercaya, jadi belum ada yang dikirim ke sana.",
   "trust.fingerprint": "Sidik jari: {fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "Router sekarang menyajikan {fp} — verifikasi ITU di konsol router, lalu klik Percayai lagi untuk mengonfirmasinya.",
   "trust.remembered": "Kunci host router dipercaya dan diingat di {store}.",
   "trust.networkError": "Kesalahan jaringan saat mempercayai kunci host router.",
-
   "password.current": "Kata sandi router saat ini",
   "password.placeholder": "Kata sandi router saat ini (biarkan kosong setelah reset pabrik)",
   "password.show": "Tampilkan kata sandi",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ Kunci host router belum dipercaya — percayai dulu, lalu kata sandi diperiksa.",
   "password.status.unreachable": "● Router belum dapat dijangkau lewat SSH — periksa alamat dan kabel.",
   "password.status.unknown": "● Kata sandi belum dapat diverifikasi.",
-
   "upstream.label": "Koneksi hulu",
   "upstream.wan": "WAN (Ethernet)",
   "upstream.sta": "Pengulang WiFi",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "Pilih jaringan WiFi yang akan diulang.",
   "upstream.wifiPassLabel": "Kata sandi WiFi hulu",
   "upstream.wifiPassPlaceholder": "Masukkan kata sandi WiFi hulu",
-
   "wifi.passwordChanged": "Kata sandi router diubah — tekan Pindai ulang untuk menyegarkan daftar jaringan.",
   "wifi.enterPassword": "Masukkan kata sandi WiFi untuk diuji",
   "wifi.testing": "Menguji koneksi WiFi...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "Kesalahan jaringan saat memindai. Coba Pindai ulang.",
   "wifi.movedRouter": "Ada router yang menjawab di {ip}. Pindai ulang untuk memilihnya, lalu jalankan pemindaian lagi.",
   "wifi.rescanForRouters": "Pindai ulang router",
-
   "prestage.running": "Mengunduh paket lebih awal...",
   "prestage.done": "Paket sudah diunduh lebih awal",
   "prestage.failed": "Unduhan awal gagal: {error}",
   "prestage.unknownError": "kesalahan tidak diketahui",
-
   "lnurl.label": "Alamat Lightning",
   "lnurl.placeholder": "anda@wallet.app  atau  lnurl1...",
   "lnurl.hint": "Alamat Lightning (anda@wallet.app) atau LNURL mentah (lnurl1...). Wajib.",
-
   "advanced.summary": "Pengaturan lanjutan (opsional)",
   "advanced.adminLabel": "Kata sandi admin router (opsional)",
   "advanced.adminPlaceholder": "Biarkan kosong untuk nilai bawaan: TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "dan pilih sendiri saat login pertama.",
   "advanced.adminTooShort": "Kata sandi admin router harus minimal 8 karakter (atau biarkan kosong untuk nilai bawaan).",
   "advanced.wifiTooShort": "Kata sandi WiFi manajemen harus minimal 8 karakter (atau biarkan kosong untuk nilai bawaan).",
-
   "cleanSlate.label": "Kondisi bersih (lanjutan)",
   "cleanSlate.inspect": "Periksa image kondisi bersih",
   "cleanSlate.selectBoard": "Pilih papan yang terdeteksi untuk mengaktifkan flashing",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "Tidak dapat menyelesaikan image kondisi bersih.",
   "cleanSlate.refused": "Flashing kondisi bersih ditolak.",
   "cleanSlate.detail": "Papan: {board} | Image: {image} | sha256: {sha}",
-
   "devsplit.label": "Bagi hasil pengembang",
   "devsplit.hint": "Bagian pembayaran yang disalurkan ke dana pengembang TollGate. Bawaan 21%.",
   "margin.label": "Margin",
   "margin.hint": "Markup operator di atas biaya data. Bawaan 21%.",
-
   "mint.label": "Preferensi mint Cashu",
   "mint.defaultOption": "8333.space (bawaan)",
   "mint.hint": "Cashu mint mana yang harus diutamakan router untuk pembayaran ecash. Minibits dihapus sementara (bug rotasi keyset DLEQ).",
-
   "forceflash.label": "Paksa flash ulang firmware (MENGHAPUS konfigurasi router; meningkatkan ke rilis OpenWrt yang dipatok)",
   "forceflash.hintBefore": "Biasanya dilewati bila router sudah menjalankan OpenWrt. Aktifkan untuk menjalankan",
   "forceflash.hintAfter": "ke rilis yang dipatok (mis. 24.10 → 25.12), lalu lanjutkan penyebaran di sistem bersih.",
-
   "deploy.button": "Sebarkan TollGate",
   "deploy.scanAgain": "Pindai lagi",
   "deploy.deploying": "Menyebarkan TollGate...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "Menguji koneksi WiFi hulu…",
   "deploy.fixUpstream": "Perbaiki koneksi WiFi hulu untuk membuka Sebarkan.",
   "deploy.enterUpstreamPass": "Masukkan kata sandi WiFi hulu — Sebarkan terbuka setelah uji berhasil.",
-
   "success.title": "TollGate sudah aktif!",
   "success.subtitle": "Router Anda kini menjadi hotspot WiFi Bitcoin.",
   "success.body": "Sambungkan ke jaringan WiFi dan buka situs web apa pun untuk melihat portal pembayaran.",
-
   "credential.title": "Kata sandi root baru router",
   "credential.warnSuccess": "Router Anda tidak punya kata sandi root, jadi dipasang nilai bawaan. Nilai ini ditampilkan SEKALI di sini, dan salinannya juga disimpan ke berkas di mesin ini (mode 600) sebelum Anda menutup atau memuat ulang halaman ini. Ganti dengan kata sandi Anda sendiri setelah masuk ke papan admin router.",
   "credential.warnFailure": "Penyebaran ini gagal SETELAH kata sandi root router sudah dipasang. Nilai ini ditampilkan SEKALI di sini, dan salinannya juga disimpan ke berkas di mesin ini (mode 600) sebelum Anda menutup atau memuat ulang halaman ini — Anda akan memerlukannya untuk menjangkau router.",
@@ -188,7 +170,6 @@
   "credential.copied": "Disalin ke papan klip.",
   "credential.copyFailed": "Gagal menyalin. Pilih kata sandi di atas dan salin secara manual.",
   "credential.savedTo": "Salinan disimpan di mesin ini: {path}",
-
   "pending.title": "TollGate terpasang — pedagang masih mulai",
   "pending.detail": "Pedagang masih memuat dompet dan status mint-nya.",
   "pending.recheck": "Periksa ulang",
@@ -197,13 +178,11 @@
   "pending.starting": "Masih mulai — beri satu menit lagi, lalu periksa ulang.",
   "pending.unreachable": "Tidak dapat menjangkau router — mungkin masih menyala.",
   "pending.failed": "Pemeriksaan ulang gagal: {error}",
-
   "error.title": "Penyiapan gagal",
   "error.retry": "Coba lagi",
   "error.generic": "Terjadi kesalahan.",
   "error.unknown": "Kesalahan tidak diketahui. Periksa log di atas.",
   "error.versionUnavailable": "info versi tidak tersedia pada build pemasang ini",
-
   "step.verify": "Memverifikasi akses SSH ke router...",
   "step.stage": "Mengunduh paket dan firmware lebih awal...",
   "step.flash": "Mem-flash OpenWrt pada GL.iNet pabrik...",
@@ -219,10 +198,8 @@
   "step.identity": "Konfirmasi identitas router",
   "step.image": "Verifikasi image OpenWrt",
   "step.flashVanilla": "Flash OpenWrt asli",
-
   "lang.label": "Bahasa",
   "lang.saved": "Pilihan Anda diingat di peramban ini.",
-
   "error.invalidJSON": "JSON tidak valid",
   "error.ipRequired": "IP wajib diisi",
   "error.methodNotAllowed": "metode tidak diizinkan",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "tugas tidak ditemukan",
   "error.ipVersion": "IP dan versi wajib diisi",
   "error.fingerprint": "sidik jari wajib diisi, mis. SHA256:AbCdEf…",
-
   "jobError.cpuArch": "Arsitektur CPU router tidak dapat ditentukan",
   "jobError.target": "Target router tidak dapat ditentukan",
   "jobError.notOpenWrt": "Router belum menjalankan firmware OpenWrt",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "opkg menolak menurunkan versi paket: router masih menjalankan biner tollgate-wrt SEBELUMNYA dengan konfigurasi baru. Pasang versi yang diterima opkg, atau hapus tollgate-wrt yang terpasang terlebih dahulu (opkg remove tollgate-wrt) lalu coba lagi.",
   "jobError.initScriptMissing": "Skrip init tollgate-wrt tidak ada — instalasi paket gagal",
   "jobError.noWifiDevice": "Tidak ada wifi-device di UCI — uplink STA tidak dapat dikonfigurasi",
-  "jobError.imagePush": "gagal mengirim image OpenWrt ke router"
+  "jobError.imagePush": "gagal mengirim image OpenWrt ke router",
+  "cobrador.intro": "Setiap Gerbang Tol mempunyai Cobrador.",
+  "cobrador.infoLabel": "Apa itu Cobrador?",
+  "cobrador.infoBody": "Pulau Cobrador adalah tempat operator TollGate bertemu, melakukan peer, dan menumpuk SATs. Anda adalah Cobrador gerbang ini.",
+  "cobrador.success": "Selamat datang di rumah, Cobrador."
 }

@@ -1,12 +1,10 @@
 {
   "title": "مثبّت TollGate — إعداد الراوتر",
   "tagline": "أعدّ الراوتر في 60 ثانية",
-
   "scan.scanning": "جارٍ البحث عن راوترات في شبكتك...",
   "scan.none": "لم يستجب أي راوتر. هذا ما جُرِّب.",
   "scan.timeout": "لم ينتهِ البحث في الوقت المحدد. هذا ما جُرِّب.",
   "scan.unreadable": "تعذّرت قراءة نتيجة البحث. هذا ما جُرِّب.",
-
   "scan.fail.heading": "لماذا لم يتمكن البحث من إعطاء نتيجة",
   "scan.fail.timeoutBody": "لم يستجب المثبّت خلال 20 ثانية، لذا لا تعرف هذه الصفحة شيئًا عن شبكتك.",
   "scan.fail.unreadableBody": "تعذّرت قراءة ردّ المثبّت، لذا لا تعرف هذه الصفحة شيئًا عن شبكتك.",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "ملاحظة: المسار الافتراضي مملوك لواجهة النفق {iface} (عبر {ip}) — لا يمكن الوصول إلى الراوتر في شبكتك المحلية إلا من داخل شبكته الفرعية.",
   "scan.fail.step1": "1. استخدم منفذ LAN: في GL-MT3000 منفذ 2.5 GbE هو WAN ومنفذ 1 GbE هو LAN — إذا وصّلته بـ WAN فلن تحصل على إجارة DHCP ولا على مسار.",
   "scan.fail.step2": "2. أمهله وقتًا: بعد تثبيت البرنامج الثابت أو إعادة التشغيل يحتاج الراوتر من 60 إلى 120 ثانية قبل أن يستجيب.",
-  "scan.fail.step3": "3. اطلب إجارة جديدة قسرًا على الواجهة السلكية: dhclient -v \u003cinterface\u003e.",
+  "scan.fail.step3": "3. اطلب إجارة جديدة قسرًا على الواجهة السلكية: dhclient -v <interface>.",
   "scan.fail.step4": "4. يستجيب OpenWrt الخام على :22 فقط — لا توجد واجهة LuCI على :80 أو :8080 قبل تثبيتها.",
-  "scan.fail.step5": "5. أو تجاوز الفحص تمامًا: bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003cyou@wallet.app\u003e",
+  "scan.fail.step5": "5. أو تجاوز الفحص تمامًا: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <you@wallet.app>",
   "scan.note.identified": "راوتر TollGate/OpenWrt (تم التعرّف عليه)",
   "scan.note.noAnswer": "لم يستجب",
   "scan.note.vendorIdentified": "راوتر {vendor} (تم التعرّف عليه)",
   "scan.note.unverified": "مضيف غير موثّق في شبكتك المحلية — يستجيب على {ports}",
-
   "manual.label": "عنوان الراوتر",
   "manual.use": "استخدام هذا العنوان",
   "manual.hint": "هل تعرف عنوان IP للراوتر؟ اكتبه — سيتعرّف عليه المعالج مباشرة.",
@@ -54,12 +51,10 @@
   "manual.selected": "تم اختيار {ip}. تابع أدناه.",
   "manual.selectedNote": "تم اختيار {ip} — {note}. تابع أدناه.",
   "manual.unreachable": "تعذّر الوصول إلى المثبّت للتعرّف على {ip}.",
-
   "select.label": "اختر الراوتر",
   "select.routerFallback": "راوتر",
   "select.custom": "إدخال عنوان آخر…",
   "select.customTitle": "اكتب عنوان الراوتر عندما لا يعثر عليه البحث — مثلًا إذا كان في شبكة فرعية أخرى",
-
   "trust.button": "الوثوق بمفتاح المضيف SSH لهذا الراوتر",
   "trust.lead": "بانتظار قرارك: مفتاح SSH لهذا الراوتر غير موثوق بعد، لذا لم يُرسَل إليه أي شيء.",
   "trust.fingerprint": "البصمة: {fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "يعرض الراوتر الآن {fp} — تحقّق من هذِه على وحدة تحكّم الراوتر، ثم اضغط الوثوق مرة أخرى لتأكيدها.",
   "trust.remembered": "تم الوثوق بمفتاح مضيف الراوتر وتذكّره في {store}.",
   "trust.networkError": "خطأ في الشبكة أثناء الوثوق بمفتاح مضيف الراوتر.",
-
   "password.current": "كلمة مرور الراوتر الحالية",
   "password.placeholder": "كلمة مرور الراوتر الحالية (اتركها فارغة بعد إعادة ضبط المصنع)",
   "password.show": "إظهار كلمة المرور",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ مفتاح مضيف الراوتر غير موثوق — وثِق به، ثم تُفحص كلمة المرور.",
   "password.status.unreachable": "● الراوتر غير متاح عبر SSH بعد — افحص العنوان والكبل.",
   "password.status.unknown": "● تعذّر التحقّق من كلمة المرور بعد.",
-
   "upstream.label": "اتصال المنبع",
   "upstream.wan": "WAN (إيثرنت)",
   "upstream.sta": "مكرّر WiFi",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "اختر شبكة WiFi التي تريد تكرارها.",
   "upstream.wifiPassLabel": "كلمة مرور WiFi للمنبع",
   "upstream.wifiPassPlaceholder": "أدخل كلمة مرور WiFi للمنبع",
-
   "wifi.passwordChanged": "تغيّرت كلمة مرور الراوتر — اضغط إعادة البحث لتحديث قائمة الشبكات.",
   "wifi.enterPassword": "أدخل كلمة مرور WiFi للاختبار",
   "wifi.testing": "جارٍ اختبار اتصال WiFi...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "خطأ في الشبكة أثناء البحث. جرّب إعادة البحث.",
   "wifi.movedRouter": "هناك راوتر يستجيب على {ip}. أعد البحث لاختياره، ثم شغّل البحث مرة أخرى.",
   "wifi.rescanForRouters": "إعادة البحث عن الراوترات",
-
   "prestage.running": "جارٍ تنزيل الحزم مسبقًا...",
   "prestage.done": "تم تنزيل الحزم مسبقًا",
   "prestage.failed": "فشل التنزيل المسبق: {error}",
   "prestage.unknownError": "خطأ غير معروف",
-
   "lnurl.label": "عنوان Lightning",
   "lnurl.placeholder": "you@wallet.app  أو  lnurl1...",
   "lnurl.hint": "عنوان Lightning ‏(you@wallet.app) أو LNURL خام ‏(lnurl1...). مطلوب.",
-
   "advanced.summary": "إعدادات متقدّمة (اختياري)",
   "advanced.adminLabel": "كلمة مرور مسؤول الراوتر (اختياري)",
   "advanced.adminPlaceholder": "اتركها فارغة للقيمة الافتراضية: TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "واختر واحدة خاصة بك عند أول تسجيل دخول.",
   "advanced.adminTooShort": "يجب أن تتكوّن كلمة مرور مسؤول الراوتر من 8 أحرف على الأقل (أو اتركها فارغة للقيمة الافتراضية).",
   "advanced.wifiTooShort": "يجب أن تتكوّن كلمة مرور WiFi الإدارية من 8 أحرف على الأقل (أو اتركها فارغة للقيمة الافتراضية).",
-
   "cleanSlate.label": "بداية نظيفة (متقدّم)",
   "cleanSlate.inspect": "فحص صورة البداية النظيفة",
   "cleanSlate.selectBoard": "اختر اللوحة المكتشفة لتفعيل الفلاش",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "تعذّر تحديد صورة البداية النظيفة.",
   "cleanSlate.refused": "رُفض فلاش البداية النظيفة.",
   "cleanSlate.detail": "اللوحة: {board} | الصورة: {image} | sha256: {sha}",
-
   "devsplit.label": "حصة المطوّر",
   "devsplit.hint": "نسبة المدفوعات الموجّهة إلى صندوق مطوّري TollGate. الافتراضي 21٪.",
   "margin.label": "هامش الربح",
   "margin.hint": "زيادة يضيفها المشغّل على تكلفة البيانات. الافتراضي 21٪.",
-
   "mint.label": "تفضيل Cashu mint",
   "mint.defaultOption": "8333.space (افتراضي)",
   "mint.hint": "أي Cashu mint يفضّله الراوتر لمدفوعات ecash. أُزيل Minibits مؤقتًا (خلل في تدوير مفاتيح DLEQ).",
-
   "forceflash.label": "إعادة فلاش الثابت (يمسح إعدادات الراوتر؛ يرقّي إلى إصدار OpenWrt المثبَّت)",
   "forceflash.hintBefore": "يُتخطّى عادةً عندما يعمل الراوتر على OpenWrt بالفعل. فعّله لتشغيل",
   "forceflash.hintAfter": "على الإصدار المثبَّت (مثلًا 24.10 → 25.12)، ثم تابع النشر على النظام النظيف.",
-
   "deploy.button": "نشر TollGate",
   "deploy.scanAgain": "البحث مرة أخرى",
   "deploy.deploying": "جارٍ نشر TollGate...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "جارٍ اختبار اتصال WiFi للمنبع…",
   "deploy.fixUpstream": "أصلح اتصال WiFi للمنبع لفتح النشر.",
   "deploy.enterUpstreamPass": "أدخل كلمة مرور WiFi للمنبع — يُفتح النشر بعد اختبار ناجح.",
-
   "success.title": "TollGate يعمل الآن!",
   "success.subtitle": "راوترك أصبح الآن نقطة اتصال WiFi للبيتكوين.",
   "success.body": "اتصل بشبكة WiFi وافتح أي موقع ويب لرؤية بوابة الدفع.",
-
   "credential.title": "كلمة مرور root الجديدة للراوتر",
   "credential.warnSuccess": "لم يكن لراوترك كلمة مرور root، لذا ضُبطت على القيمة الافتراضية. تُعرض القيمة هنا مرة واحدة فقط، وتُحفظ نسخة أيضًا في ملف على هذا الجهاز (الوضع 600) قبل أن تغلق هذه الصفحة أو تعيد تحميلها. غيّرها إلى كلمة خاصة بك بعد تسجيل الدخول إلى لوحة إدارة الراوتر.",
   "credential.warnFailure": "فشل هذا النشر بعد أن كانت كلمة مرور root للراوتر قد ضُبطت بالفعل. تُعرض القيمة هنا مرة واحدة فقط، وتُحفظ نسخة أيضًا في ملف على هذا الجهاز (الوضع 600) قبل أن تغلق هذه الصفحة أو تعيد تحميلها — ستحتاجها للوصول إلى الراوتر.",
@@ -188,7 +170,6 @@
   "credential.copied": "نُسخت إلى الحافظة.",
   "credential.copyFailed": "فشل النسخ. حدّد كلمة المرور أعلاه وانسخها يدويًا.",
   "credential.savedTo": "حُفظت نسخة على هذا الجهاز: {path}",
-
   "pending.title": "تم تثبيت TollGate — التاجر لا يزال يبدأ",
   "pending.detail": "لا يزال التاجر يحمّل محفظته وحالة الـ mint.",
   "pending.recheck": "إعادة الفحص",
@@ -197,13 +178,11 @@
   "pending.starting": "لا يزال يبدأ — أمهله دقيقة أخرى ثم أعد الفحص.",
   "pending.unreachable": "تعذّر الوصول إلى الراوتر — ربما لا يزال يبدأ.",
   "pending.failed": "فشلت إعادة الفحص: {error}",
-
   "error.title": "فشل الإعداد",
   "error.retry": "المحاولة مرة أخرى",
   "error.generic": "حدث خطأ ما.",
   "error.unknown": "خطأ غير معروف. افحص السجل أعلاه.",
   "error.versionUnavailable": "معلومات الإصدار غير متاحة في بناء المثبّت هذا",
-
   "step.verify": "جارٍ التحقّق من وصول SSH إلى الراوتر...",
   "step.stage": "جارٍ تنزيل الحزم والثابت مسبقًا...",
   "step.flash": "جارٍ فلاش OpenWrt على GL.iNet الأصلي...",
@@ -219,10 +198,8 @@
   "step.identity": "تأكيد هوية الراوتر",
   "step.image": "التحقّق من صورة OpenWrt",
   "step.flashVanilla": "فلاش OpenWrt الأصلي",
-
   "lang.label": "اللغة",
   "lang.saved": "يُتذكَّر اختيارك في هذا المتصفّح.",
-
   "error.invalidJSON": "JSON غير صالح",
   "error.ipRequired": "عنوان IP مطلوب",
   "error.methodNotAllowed": "الطريقة غير مسموح بها",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "لم يتم العثور على المهمة",
   "error.ipVersion": "عنوان IP والإصدار مطلوبان",
   "error.fingerprint": "مطلوب بصمة، مثل SHA256:AbCdEf…",
-
   "jobError.cpuArch": "تعذّر تحديد معمارية معالج الراوتر",
   "jobError.target": "تعذّر تحديد هدف الراوتر",
   "jobError.notOpenWrt": "الراوتر لا يعمل ببرنامج OpenWrt بعد",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "رفض opkg تخفيض إصدار الحزمة: لا يزال الراوتر يعمل بنسخة tollgate-wrt السابقة مع الإعدادات الجديدة. ثبّت إصدارًا يقبله opkg، أو أزل tollgate-wrt المثبّت أولًا (opkg remove tollgate-wrt) ثم أعد المحاولة.",
   "jobError.initScriptMissing": "سكربت تهيئة tollgate-wrt مفقود — فشل تثبيت الحزمة",
   "jobError.noWifiDevice": "لم يُعثر على wifi-device في UCI — تعذّر إعداد وصلة STA",
-  "jobError.imagePush": "تعذّر دفع صورة OpenWrt إلى الراوتر"
+  "jobError.imagePush": "تعذّر دفع صورة OpenWrt إلى الراوتر",
+  "cobrador.intro": "كل بوابة تحصيل رسوم لديها Cobrador.",
+  "cobrador.infoLabel": "ما هو __كوبرادور__؟",
+  "cobrador.infoBody": "جزيرة Cobrador هي المكان الذي يلتقي فيه مشغلو TollGate ويتبادلون المعلومات ويجمعون SATs. أنت __كوبرادور__ لهذه البوابة.",
+  "cobrador.success": "مرحبًا بك في بيتك، __كوبرادور__."
 }

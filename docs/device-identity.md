@@ -29,8 +29,8 @@ One code, four characters of `[A-Z0-9]`, stored in `/etc/config/tollgate`
 | Identifier | Value |
 |---|---|
 | hostname | `tollgate-<code>` |
-| captive SSID | `!TollGate-<code>` |
-| private SSID | `<nym>-<code>` |
+| captive SSID | `!<brand>-<suffix>` |
+| private SSID | `Private-<operator>-<suffix>` |
 
 The installer no longer mints when it can adopt. Step 7 runs
 `deviceIdentityScript` **on the router** (`deploy.go`), which:
@@ -40,8 +40,9 @@ The installer no longer mints when it can adopt. Step 7 runs
 3. else from a machine-shaped captive SSID (`!TollGate-OQ3Q`, `TollGate-OQ3Q`, `tollgate-0GLK`);
 4. else mints (BusyBox `hexdump`, no `od` on the target) and **stores** it.
 
-It also resolves the nym for the private SSID (stored value, else the prefix of
-a machine-shaped private SSID, else `c08r4d0r`), writes both back to the store,
+It also resolves the operator token for the private SSID (stored value, else the
+prefix of a machine-shaped private SSID, else `c08r4d0r`), the display suffix
+(stored `ssid_suffix`, else the device code), and writes them back to the store,
 and prints `TG_*` markers that `parseDeviceIdentity` reads. `brandingCommands`
 then only *writes* the three names — it contains no mint, which
 `TestBrandingNeverMintsACode` pins.
@@ -54,11 +55,11 @@ writer moves the hostname and the SSID, and the store still wins.
 
 * **Hostname**: `tollgate-<code>` (unchanged behaviour in shape — the installer
   has always written this spelling).
-* **Captive SSID**: `!TollGate-<code>`, on the guest APs under **both** spellings
+* **Captive SSID**: `!<brand>-<suffix>`, on the guest APs under **both** spellings
   (`tollgate_2g_open` / `tollgate_5g_open` from the module, `default_radio0/1`
   from a stock OpenWrt). The old writer matched only `default_radio*`, so on a
   module-configured router it silently matched nothing.
-* **Private SSID**: `<nym>-<code>` on `private_radio0` / `private_radio1`, and
+* **Private SSID**: `Private-<operator>-<suffix>` on `private_radio0` / `private_radio1`, and
   only when those sections exist. The old writer skipped `private_radio*` on
   purpose, which is why the private SSID kept a code no other name used.
 * **Never**: the uplink STA's SSID, and the private **PSK**. Re-keying the
@@ -78,6 +79,12 @@ writer moves the hostname and the SSID, and the store still wins.
   (which emits a no-op that says so, rather than a line whose quoting cannot
   hold). `TestPrivateSSIDCommandRefusesAValueItCannotQuote` pins both, including
   that the refusal still leaves the `&&` chain intact.
+
+`c08r4d0r` is a leetspeak spelling of **cobrador**, Spanish for the person who
+collects the toll/fare — the TollGate operator. A brand build can set another
+operator token with `--operator-token` or `TOLLGATE_OPERATOR_TOKEN` (for example
+`Archipelago`), and the admin schema can override it per router. The suffix is
+shared by the guest and private SSIDs and survives reinstalls.
 
 The prefix case is deliberate on both sides: the captive SSID keeps `TollGate-`
 (reseller-mode upstream discovery in the module matches `TollGate-*`

@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -92,8 +93,13 @@ var (
 	// at a fixture dropbear on an ephemeral port, so the whole
 	// scan -> refusal -> Trust -> remember path can be driven without hardware
 	// and without needing a privileged port 22 on the test host.
-	sshPort    = flag.String("ssh-port", "22", "SSH port to dial on the router (default 22; the E2E harness points this at a fixture)")
-	listenAddr string
+	sshPort = flag.String("ssh-port", "22", "SSH port to dial on the router (default 22; the E2E harness points this at a fixture)")
+	// operatorToken is the brand/operator build input for the private SSID:
+	// Private-<operator>-<suffix>. c08r4d0r is leetspeak for cobrador, Spanish
+	// for the person who collects the toll/fare — the TollGate operator.
+	// TOLLGATE_OPERATOR_TOKEN carries the same value for wrapper builds.
+	operatorToken = flag.String("operator-token", "", "operator token for the private SSID (default c08r4d0r; env TOLLGATE_OPERATOR_TOKEN)")
+	listenAddr    string
 )
 
 // defaultBindHost is the loopback interface the wizard serves on by default.
@@ -2063,6 +2069,11 @@ func allRadiosUp(statusJSON string) bool {
 
 func Main() {
 	flag.Parse()
+	token := strings.TrimSpace(*operatorToken)
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("TOLLGATE_OPERATOR_TOKEN"))
+	}
+	SetOperatorToken(token)
 	sshDialPort = *sshPort
 	listenAddr = listenAddress(*listenBind, *listenPort)
 	mux := http.NewServeMux()

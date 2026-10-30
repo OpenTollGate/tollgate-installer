@@ -1,12 +1,10 @@
 {
   "title": "Programma di installazione TollGate — Configurazione del router",
   "tagline": "Configura il router in 60 secondi",
-
   "scan.scanning": "Ricerca di router sulla tua rete...",
   "scan.none": "Nessun router ha risposto. Ecco cosa è stato provato.",
   "scan.timeout": "La ricerca non è terminata in tempo. Ecco cosa è stato provato.",
   "scan.unreadable": "Non è stato possibile leggere la ricerca. Ecco cosa è stato provato.",
-
   "scan.fail.heading": "Perché la ricerca non ha potuto riferire",
   "scan.fail.timeoutBody": "Il programma di installazione non ha risposto entro 20 secondi, quindi questa pagina non sa nulla della tua rete.",
   "scan.fail.unreadableBody": "Non è stato possibile leggere la risposta del programma di installazione, quindi questa pagina non sa nulla della tua rete.",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "Nota: la rotta predefinita appartiene all'interfaccia tunnel {iface} (via {ip}): il router sulla tua LAN è raggiungibile solo nella sua sottorete.",
   "scan.fail.step1": "1. Usa la porta LAN: sul GL-MT3000 la porta 2,5 GbE è WAN e la porta 1 GbE è LAN — collegato alla WAN non ottieni né lease DHCP né rotta.",
   "scan.fail.step2": "2. Dagli tempo: dopo un flash o un riavvio un router impiega 60-120 s prima di rispondere.",
-  "scan.fail.step3": "3. Forza un nuovo lease sull'interfaccia cablata: dhclient -v \u003cinterface\u003e.",
+  "scan.fail.step3": "3. Forza un nuovo lease sull'interfaccia cablata: dhclient -v <interface>.",
   "scan.fail.step4": "4. OpenWrt puro risponde solo su :22 — non c'è interfaccia web LuCI su :80 o :8080 finché non la installi.",
-  "scan.fail.step5": "5. Oppure salta la ricerca: bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003ctu@wallet.app\u003e",
+  "scan.fail.step5": "5. Oppure salta la ricerca: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <tu@wallet.app>",
   "scan.note.identified": "router TollGate/OpenWrt (identificato)",
   "scan.note.noAnswer": "non ha risposto",
   "scan.note.vendorIdentified": "router {vendor} (identificato)",
   "scan.note.unverified": "host non verificato sulla tua LAN — risponde su {ports}",
-
   "manual.label": "Indirizzo del router",
   "manual.use": "Usa questo indirizzo",
   "manual.hint": "Conosci l'indirizzo IP del router? Digitalo: la procedura guidata lo identifica direttamente.",
@@ -54,12 +51,10 @@
   "manual.selected": "{ip} selezionato. Continua qui sotto.",
   "manual.selectedNote": "{ip} selezionato — {note}. Continua qui sotto.",
   "manual.unreachable": "Impossibile raggiungere il programma di installazione per identificare {ip}.",
-
   "select.label": "Seleziona il tuo router",
   "select.routerFallback": "Router",
   "select.custom": "Inserisci un altro indirizzo…",
   "select.customTitle": "Digita l'indirizzo del router quando la ricerca non l'ha trovato, ad esempio se è su un'altra sottorete",
-
   "trust.button": "Considera affidabile la chiave host SSH di questo router",
   "trust.lead": "In attesa di te: la chiave SSH di questo router non è ancora considerata affidabile, quindi non gli è stato inviato nulla.",
   "trust.fingerprint": "Impronta: {fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "Il router presenta ora {fp}: verifica QUELLA sulla console del router, poi fai clic di nuovo su Affidabile per confermarla.",
   "trust.remembered": "Chiave host del router considerata affidabile e ricordata in {store}.",
   "trust.networkError": "Errore di rete durante l'affidamento della chiave host del router.",
-
   "password.current": "Password attuale del router",
   "password.placeholder": "Password attuale del router (lascia vuoto dopo un ripristino di fabbrica)",
   "password.show": "Mostra password",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ Chiave host del router non affidabile: rendila affidabile e la password verrà verificata.",
   "password.status.unreachable": "● Router non ancora raggiungibile via SSH: controlla l'indirizzo e il cavo.",
   "password.status.unknown": "● Non è ancora stato possibile verificare la password.",
-
   "upstream.label": "Connessione upstream",
   "upstream.wan": "WAN (Ethernet)",
   "upstream.sta": "Ripetitore WiFi",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "Scegli la rete WiFi da ripetere.",
   "upstream.wifiPassLabel": "Password del WiFi upstream",
   "upstream.wifiPassPlaceholder": "Inserisci la password del WiFi upstream",
-
   "wifi.passwordChanged": "Password del router modificata: premi Analizza di nuovo per aggiornare l'elenco delle reti.",
   "wifi.enterPassword": "Inserisci la password WiFi da testare",
   "wifi.testing": "Verifica della connessione WiFi...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "Errore di rete durante la ricerca. Prova Analizza di nuovo.",
   "wifi.movedRouter": "Un router risponde su {ip}. Analizza di nuovo per selezionarlo, poi avvia di nuovo la ricerca.",
   "wifi.rescanForRouters": "Cerca di nuovo i router",
-
   "prestage.running": "Predownload dei pacchetti...",
   "prestage.done": "Pacchetti predownload completato",
   "prestage.failed": "Predownload non riuscito: {error}",
   "prestage.unknownError": "errore sconosciuto",
-
   "lnurl.label": "Indirizzo Lightning",
   "lnurl.placeholder": "tu@wallet.app  oppure  lnurl1...",
   "lnurl.hint": "Indirizzo Lightning (tu@wallet.app) o LNURL grezzo (lnurl1...). Obbligatorio.",
-
   "advanced.summary": "Impostazioni avanzate (facoltativo)",
   "advanced.adminLabel": "Password amministratore del router (facoltativo)",
   "advanced.adminPlaceholder": "Lascia vuoto per il valore predefinito: TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "e scegli la tua al primo accesso.",
   "advanced.adminTooShort": "La password amministratore del router deve avere almeno 8 caratteri (oppure lascia vuoto per il valore predefinito).",
   "advanced.wifiTooShort": "La password del WiFi di gestione deve avere almeno 8 caratteri (oppure lascia vuoto per il valore predefinito).",
-
   "cleanSlate.label": "Stato pulito (avanzato)",
   "cleanSlate.inspect": "Ispeziona l'immagine di stato pulito",
   "cleanSlate.selectBoard": "Seleziona la scheda rilevata per abilitare la scrittura",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "Impossibile risolvere l'immagine di stato pulito.",
   "cleanSlate.refused": "Scrittura di stato pulito rifiutata.",
   "cleanSlate.detail": "Scheda: {board} | Immagine: {image} | sha256: {sha}",
-
   "devsplit.label": "Quota sviluppatore",
   "devsplit.hint": "Quota dei pagamenti destinata al fondo degli sviluppatori TollGate. Predefinito 21%.",
   "margin.label": "Margine",
   "margin.hint": "Ricarico dell'operatore sul costo dei dati. Predefinito 21%.",
-
   "mint.label": "Preferenza mint Cashu",
   "mint.defaultOption": "8333.space (predefinito)",
   "mint.hint": "Quale mint Cashu il router deve preferire per i pagamenti in ecash. Minibits rimosso temporaneamente (bug di rotazione del keyset DLEQ).",
-
   "forceflash.label": "Riscrivi il firmware (CANCELLA la configurazione del router; aggiorna alla versione OpenWrt fissata)",
   "forceflash.hintBefore": "Normalmente saltato se il router esegue già OpenWrt. Attiva per eseguire",
   "forceflash.hintAfter": "sulla versione fissata (ad es. 24.10 → 25.12), poi continua la distribuzione sul sistema pulito.",
-
   "deploy.button": "Distribuisci TollGate",
   "deploy.scanAgain": "Analizza di nuovo",
   "deploy.deploying": "Distribuzione di TollGate...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "Verifica della connessione WiFi upstream…",
   "deploy.fixUpstream": "Correggi la connessione WiFi upstream per sbloccare Distribuisci.",
   "deploy.enterUpstreamPass": "Inserisci la password del WiFi upstream: Distribuisci si sblocca dopo una verifica riuscita.",
-
   "success.title": "TollGate è attivo!",
   "success.subtitle": "Il tuo router è ora un hotspot WiFi Bitcoin.",
   "success.body": "Collegati alla rete WiFi e apri un sito qualsiasi per vedere il portale di pagamento.",
-
   "credential.title": "La nuova password root del router",
   "credential.warnSuccess": "Il tuo router non aveva una password root, quindi è stata impostata quella predefinita. Il valore è mostrato UNA SOLA VOLTA qui, e una copia viene anche salvata in un file su questa macchina (modo 600) prima che tu chiuda o ricarichi questa pagina. Cambiala con una tua dopo aver effettuato l'accesso alla board di amministrazione del router.",
   "credential.warnFailure": "Questa distribuzione non è riuscita DOPO che la password root del router era già stata impostata. Il valore è mostrato UNA SOLA VOLTA qui, e una copia viene anche salvata in un file su questa macchina (modo 600) prima che tu chiuda o ricarichi questa pagina: ti servirà per raggiungere il router.",
@@ -188,7 +170,6 @@
   "credential.copied": "Copiata negli appunti.",
   "credential.copyFailed": "Copia non riuscita. Seleziona la password qui sopra e copiala a mano.",
   "credential.savedTo": "Una copia è salvata su questa macchina: {path}",
-
   "pending.title": "TollGate installato — il merchant si sta ancora avviando",
   "pending.detail": "Il merchant sta ancora caricando il wallet e lo stato del mint.",
   "pending.recheck": "Controlla di nuovo",
@@ -197,13 +178,11 @@
   "pending.starting": "Ancora in avvio: concedi un altro minuto, poi controlla di nuovo.",
   "pending.unreachable": "Impossibile raggiungere il router: potrebbe essere ancora in avvio.",
   "pending.failed": "Controllo non riuscito: {error}",
-
   "error.title": "Configurazione non riuscita",
   "error.retry": "Riprova",
   "error.generic": "Qualcosa è andato storto.",
   "error.unknown": "Errore sconosciuto. Controlla il log qui sopra.",
   "error.versionUnavailable": "informazioni sulla versione non disponibili in questa build del programma di installazione",
-
   "step.verify": "Verifica dell'accesso SSH al router...",
   "step.stage": "Predownload di pacchetti e firmware...",
   "step.flash": "Scrittura di OpenWrt sul GL.iNet originale...",
@@ -219,10 +198,8 @@
   "step.identity": "Conferma l'identità del router",
   "step.image": "Verifica l'immagine OpenWrt",
   "step.flashVanilla": "Scrivi OpenWrt originale",
-
   "lang.label": "Lingua",
   "lang.saved": "La tua scelta viene ricordata in questo browser.",
-
   "error.invalidJSON": "JSON non valido",
   "error.ipRequired": "IP richiesto",
   "error.methodNotAllowed": "metodo non consentito",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "attività non trovata",
   "error.ipVersion": "IP e versione richiesti",
   "error.fingerprint": "è richiesta un'impronta, ad es. SHA256:AbCdEf…",
-
   "jobError.cpuArch": "Impossibile determinare l'architettura della CPU del router",
   "jobError.target": "Impossibile determinare il target del router",
   "jobError.notOpenWrt": "Il router non esegue ancora il firmware OpenWrt",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "opkg ha rifiutato il downgrade del pacchetto: il router esegue ancora il binario tollgate-wrt PRECEDENTE con la nuova configurazione. Installa una versione accettata da opkg, oppure rimuovi prima il tollgate-wrt installato (opkg remove tollgate-wrt) e riprova.",
   "jobError.initScriptMissing": "Script di init di tollgate-wrt mancante — installazione del pacchetto non riuscita",
   "jobError.noWifiDevice": "Nessun wifi-device trovato in UCI — impossibile configurare l'uplink STA",
-  "jobError.imagePush": "invio dell'immagine OpenWrt al router non riuscito"
+  "jobError.imagePush": "invio dell'immagine OpenWrt al router non riuscito",
+  "cobrador.intro": "Ogni casello ha un Cobrador.",
+  "cobrador.infoLabel": "Cos'è un Cobrador?",
+  "cobrador.infoBody": "L'isola Cobrador è il luogo in cui gli operatori TollGate si incontrano, eseguono peering e impilano SATs. Tu sei il Cobrador di questo cancello.",
+  "cobrador.success": "Bentornato a casa, Cobrador."
 }

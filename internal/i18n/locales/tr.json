@@ -1,12 +1,10 @@
 {
   "title": "TollGate Yükleyici — Yönlendirici Kurulumu",
   "tagline": "Yönlendiricinizi 60 saniyede kurun",
-
   "scan.scanning": "Ağınızdaki yönlendiriciler taranıyor...",
   "scan.none": "Hiçbir yönlendirici yanıt vermedi. Denenenler aşağıda.",
   "scan.timeout": "Tarama zamanında tamamlanmadı. Denenenler aşağıda.",
   "scan.unreadable": "Tarama okunamadı. Denenenler aşağıda.",
-
   "scan.fail.heading": "Tarama neden rapor veremedi",
   "scan.fail.timeoutBody": "Yükleyici 20 saniye içinde yanıt vermedi, bu yüzden bu sayfa ağınız hakkında hiçbir şey bilmiyor.",
   "scan.fail.unreadableBody": "Yükleyicinin yanıtı okunamadı, bu yüzden bu sayfa ağınız hakkında hiçbir şey bilmiyor.",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "Not: varsayılan yol {iface} tünel arayüzüne ait ({ip} üzerinden) — LAN'indeki yönlendiriciye yalnızca kendi alt ağında ulaşılabilir.",
   "scan.fail.step1": "1. LAN portunu kullan: GL-MT3000'de 2,5 GbE portu WAN, 1 GbE portu LAN'dır — WAN'a takarsan DHCP kiralaması da yol da alamazsın.",
   "scan.fail.step2": "2. Zaman ver: flash veya yeniden başlatmadan sonra bir yönlendiricinin yanıt vermesi 60-120 s sürer.",
-  "scan.fail.step3": "3. Kablolu arayüzde yeni bir kiralama zorla: dhclient -v \u003cinterface\u003e.",
+  "scan.fail.step3": "3. Kablolu arayüzde yeni bir kiralama zorla: dhclient -v <interface>.",
   "scan.fail.step4": "4. Sade OpenWrt yalnızca :22 üzerinde yanıt verir — kurulmadan önce :80 veya :8080'de LuCI web arayüzü yoktur.",
-  "scan.fail.step5": "5. Ya da taramayı tümüyle atla: bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003csen@wallet.app\u003e",
+  "scan.fail.step5": "5. Ya da taramayı tümüyle atla: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <sen@wallet.app>",
   "scan.note.identified": "TollGate/OpenWrt yönlendiricisi (tanımlandı)",
   "scan.note.noAnswer": "yanıt vermedi",
   "scan.note.vendorIdentified": "{vendor} yönlendiricisi (tanımlandı)",
   "scan.note.unverified": "LAN'indeki doğrulanmamış makine — {ports} üzerinde yanıt veriyor",
-
   "manual.label": "Yönlendirici adresi",
   "manual.use": "Bu adresi kullan",
   "manual.hint": "Yönlendiricinin IP adresini biliyor musunuz? Yazın — sihirbaz onu doğrudan tanımlar.",
@@ -54,12 +51,10 @@
   "manual.selected": "{ip} seçildi. Aşağıdan devam edin.",
   "manual.selectedNote": "{ip} seçildi — {note}. Aşağıdan devam edin.",
   "manual.unreachable": "{ip} adresini tanımlamak için yükleyiciye ulaşılamadı.",
-
   "select.label": "Yönlendiricinizi seçin",
   "select.routerFallback": "Yönlendirici",
   "select.custom": "Başka bir adres girin…",
   "select.customTitle": "Tarama onu bulamadığında yönlendiricinin adresini yazın — örneğin başka bir alt ağdaysa",
-
   "trust.button": "Bu yönlendiricinin SSH ana makine anahtarına güven",
   "trust.lead": "Sizi bekliyor: bu yönlendiricinin SSH anahtarı henüz güvenilir değil, bu yüzden ona hiçbir şey gönderilmedi.",
   "trust.fingerprint": "Parmak izi: {fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "Yönlendirici artık {fp} sunuyor — ONU yönlendirici konsolunda doğrulayın, sonra onaylamak için tekrar Güven'e tıklayın.",
   "trust.remembered": "Yönlendirici ana makine anahtarına güvenildi ve {store} içinde hatırlandı.",
   "trust.networkError": "Yönlendirici ana makine anahtarına güvenilirken ağ hatası.",
-
   "password.current": "Mevcut yönlendirici parolası",
   "password.placeholder": "Mevcut yönlendirici parolası (fabrika sıfırlamasından sonra boş bırakın)",
   "password.show": "Parolayı göster",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ Yönlendirici ana makine anahtarı güvenilir değil — güvenin, sonra parola denetlenir.",
   "password.status.unreachable": "● Yönlendiriciye henüz SSH ile ulaşılamıyor — adresi ve kabloyu kontrol edin.",
   "password.status.unknown": "● Parola henüz doğrulanamadı.",
-
   "upstream.label": "Üst akış bağlantısı",
   "upstream.wan": "WAN (Ethernet)",
   "upstream.sta": "WiFi Tekrarlayıcı",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "Tekrarlanacak WiFi ağını seçin.",
   "upstream.wifiPassLabel": "Üst akış WiFi parolası",
   "upstream.wifiPassPlaceholder": "Üst akış WiFi parolasını girin",
-
   "wifi.passwordChanged": "Yönlendirici parolası değişti — ağ listesini yenilemek için Yeniden tara'ya basın.",
   "wifi.enterPassword": "Test etmek için WiFi parolasını girin",
   "wifi.testing": "WiFi bağlantısı test ediliyor...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "Tarama sırasında ağ hatası. Yeniden tara'yı deneyin.",
   "wifi.movedRouter": "{ip} adresinde bir yönlendirici yanıt veriyor. Seçmek için yeniden tarayın, sonra taramayı tekrar çalıştırın.",
   "wifi.rescanForRouters": "Yönlendiricileri yeniden tara",
-
   "prestage.running": "Paketler önceden indiriliyor...",
   "prestage.done": "Paketler önceden indirildi",
   "prestage.failed": "Ön indirme başarısız: {error}",
   "prestage.unknownError": "bilinmeyen hata",
-
   "lnurl.label": "Lightning adresi",
   "lnurl.placeholder": "siz@wallet.app  veya  lnurl1...",
   "lnurl.hint": "Lightning adresi (siz@wallet.app) veya ham LNURL (lnurl1...). Zorunlu.",
-
   "advanced.summary": "Gelişmiş ayarlar (isteğe bağlı)",
   "advanced.adminLabel": "Yönlendirici yönetici parolası (isteğe bağlı)",
   "advanced.adminPlaceholder": "Varsayılan için boş bırakın: TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "ve ilk girişte kendinizinkini seçin.",
   "advanced.adminTooShort": "Yönlendirici yönetici parolası en az 8 karakter olmalıdır (veya varsayılan için boş bırakın).",
   "advanced.wifiTooShort": "Yönetim WiFi parolası en az 8 karakter olmalıdır (veya varsayılan için boş bırakın).",
-
   "cleanSlate.label": "Temiz sayfa (gelişmiş)",
   "cleanSlate.inspect": "Temiz sayfa imajını incele",
   "cleanSlate.selectBoard": "Yazmayı etkinleştirmek için algılanan kartı seçin",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "Temiz sayfa imajı çözümlenemedi.",
   "cleanSlate.refused": "Temiz sayfa yazma reddedildi.",
   "cleanSlate.detail": "Kart: {board} | İmaj: {image} | sha256: {sha}",
-
   "devsplit.label": "Geliştirici payı",
   "devsplit.hint": "Ödemelerin TollGate geliştirici fonuna ayrılan payı. Varsayılan %21.",
   "margin.label": "Marj",
   "margin.hint": "Operatörün veri maliyetinin üzerine eklediği kâr payı. Varsayılan %21.",
-
   "mint.label": "Cashu mint tercihi",
   "mint.defaultOption": "8333.space (varsayılan)",
   "mint.hint": "Yönlendiricinin ecash ödemeleri için hangi Cashu mint'i tercih edeceği. Minibits geçici olarak kaldırıldı (DLEQ anahtar seti döndürme hatası).",
-
   "forceflash.label": "Ürün yazılımını zorla yeniden yaz (YÖNLENDİRİCİ yapılandırmasını SİLER; sabitlenmiş OpenWrt sürümüne yükseltir)",
   "forceflash.hintBefore": "Yönlendirici zaten OpenWrt çalıştırıyorsa genellikle atlanır. Çalıştırmak için etkinleştirin",
   "forceflash.hintAfter": "sabitlenmiş sürüme (ör. 24.10 → 25.12), sonra temiz sistemde dağıtıma devam edin.",
-
   "deploy.button": "TollGate'i dağıt",
   "deploy.scanAgain": "Yeniden tara",
   "deploy.deploying": "TollGate dağıtılıyor...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "Üst akış WiFi bağlantısı test ediliyor…",
   "deploy.fixUpstream": "Dağıt'ı açmak için üst akış WiFi bağlantısını düzeltin.",
   "deploy.enterUpstreamPass": "Üst akış WiFi parolasını girin — Dağıt başarılı bir testten sonra açılır.",
-
   "success.title": "TollGate yayında!",
   "success.subtitle": "Yönlendiriciniz artık bir Bitcoin WiFi erişim noktası.",
   "success.body": "WiFi ağına bağlanın ve ödeme portalını görmek için herhangi bir web sitesini açın.",
-
   "credential.title": "Yönlendiricinin yeni root parolası",
   "credential.warnSuccess": "Yönlendiricinizde root parolası yoktu, bu yüzden varsayılan ayarlandı. Değer burada YALNIZCA BİR KEZ gösterilir ve bu sayfayı kapatmadan veya yenilemeden önce bir kopyası bu makinedeki bir dosyaya (kiplem 600) da kaydedilir. Yönlendiricinin yönetim panosuna giriş yaptıktan sonra kendinizinkiyle değiştirin.",
   "credential.warnFailure": "Bu dağıtım, yönlendiricinin root parolası zaten ayarlandıktan SONRA başarısız oldu. Değer burada YALNIZCA BİR KEZ gösterilir ve bu sayfayı kapatmadan veya yenilemeden önce bir kopyası bu makinedeki bir dosyaya (kiplem 600) da kaydedilir — yönlendiriciye ulaşmak için buna ihtiyacınız olacak.",
@@ -188,7 +170,6 @@
   "credential.copied": "Panoya kopyalandı.",
   "credential.copyFailed": "Kopyalanamadı. Yukarıdaki parolayı seçip elle kopyalayın.",
   "credential.savedTo": "Bir kopya bu makinede kayıtlı: {path}",
-
   "pending.title": "TollGate kuruldu — satıcı hâlâ başlıyor",
   "pending.detail": "Satıcı hâlâ cüzdanını ve mint durumunu yüklüyor.",
   "pending.recheck": "Yeniden denetle",
@@ -197,13 +178,11 @@
   "pending.starting": "Hâlâ başlıyor — bir dakika daha verin, sonra yeniden denetleyin.",
   "pending.unreachable": "Yönlendiriciye ulaşılamadı — hâlâ açılıyor olabilir.",
   "pending.failed": "Yeniden denetim başarısız: {error}",
-
   "error.title": "Kurulum başarısız",
   "error.retry": "Yeniden dene",
   "error.generic": "Bir şeyler ters gitti.",
   "error.unknown": "Bilinmeyen hata. Yukarıdaki günlüğe bakın.",
   "error.versionUnavailable": "sürüm bilgisi bu yükleyici derlemesinde yok",
-
   "step.verify": "Yönlendiriciye SSH erişimi doğrulanıyor...",
   "step.stage": "Paketler ve ürün yazılımı önceden indiriliyor...",
   "step.flash": "Fabrika GL.iNet'e OpenWrt yazılıyor...",
@@ -219,10 +198,8 @@
   "step.identity": "Yönlendirici kimliğini doğrula",
   "step.image": "OpenWrt imajını doğrula",
   "step.flashVanilla": "Orijinal OpenWrt yaz",
-
   "lang.label": "Dil",
   "lang.saved": "Seçiminiz bu tarayıcıda hatırlanır.",
-
   "error.invalidJSON": "geçersiz JSON",
   "error.ipRequired": "IP gerekli",
   "error.methodNotAllowed": "yönteme izin verilmiyor",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "görev bulunamadı",
   "error.ipVersion": "IP ve sürüm gerekli",
   "error.fingerprint": "bir parmak izi gerekli, örn. SHA256:AbCdEf…",
-
   "jobError.cpuArch": "Yönlendiricinin CPU mimarisi belirlenemedi",
   "jobError.target": "Yönlendiricinin hedefi belirlenemedi",
   "jobError.notOpenWrt": "Yönlendirici henüz OpenWrt yazılımını çalıştırmıyor",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "opkg paketin sürümünü düşürmeyi reddetti: yönlendirici yeni yapılandırmayla birlikte hâlâ ÖNCEKİ tollgate-wrt ikili dosyasını çalıştırıyor. opkg'nin kabul ettiği bir sürüm kurun veya önce kurulu tollgate-wrt'yi kaldırıp (opkg remove tollgate-wrt) yeniden deneyin.",
   "jobError.initScriptMissing": "tollgate-wrt başlangıç betiği eksik — paket kurulumu başarısız oldu",
   "jobError.noWifiDevice": "UCI'da wifi-device bulunamadı — STA bağlantısı yapılandırılamıyor",
-  "jobError.imagePush": "OpenWrt imajı yönlendiriciye gönderilemedi"
+  "jobError.imagePush": "OpenWrt imajı yönlendiriciye gönderilemedi",
+  "cobrador.intro": "Her TollGate'in bir Cobrador'u vardır.",
+  "cobrador.infoLabel": "__KOBRADOR__ nedir?",
+  "cobrador.infoBody": "Cobrador Adası, TollGate operatörlerinin buluştuğu, eşleştiği ve SATs'yi yığınladığı yerdir. Siz bu kapının __KOBRADOR__'susunuz.",
+  "cobrador.success": "Evine hoş geldin, Cobrador."
 }

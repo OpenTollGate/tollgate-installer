@@ -1,12 +1,10 @@
 {
   "title": "TollGate インストーラー — ルーターのセットアップ",
   "tagline": "60 秒でルーターをセットアップ",
-
   "scan.scanning": "ネットワーク上のルーターをスキャンしています...",
   "scan.none": "どのルーターも応答しませんでした。試した内容は以下のとおりです。",
   "scan.timeout": "スキャンが時間内に終わりませんでした。試した内容は以下のとおりです。",
   "scan.unreadable": "スキャン結果を読み取れませんでした。試した内容は以下のとおりです。",
-
   "scan.fail.heading": "スキャンが結果を報告できなかった理由",
   "scan.fail.timeoutBody": "インストーラーが 20 秒以内に応答しなかったため、このページはお使いのネットワークについて何も把握していません。",
   "scan.fail.unreadableBody": "インストーラーの応答を読み取れなかったため、このページはお使いのネットワークについて何も把握していません。",
@@ -37,14 +35,13 @@
   "scan.fail.tunnelNote": "注: デフォルトルートはトンネルインターフェース {iface} ({ip} 経由) が持っています。LAN 上のルーターには、そのサブネット内からしか到達できません。",
   "scan.fail.step1": "1. LAN ポートを使ってください。GL-MT3000 では 2.5 GbE ポートが WAN、1 GbE ポートが LAN です。WAN に接続すると DHCP のリースもルートも得られません。",
   "scan.fail.step2": "2. 少し待ってください。フラッシュや再起動のあと、ルーターが応答するまで 60-120 秒かかります。",
-  "scan.fail.step3": "3. 有線インターフェースでリースを取り直してください: dhclient -v \u003cinterface\u003e。",
+  "scan.fail.step3": "3. 有線インターフェースでリースを取り直してください: dhclient -v <interface>。",
   "scan.fail.step4": "4. 素の OpenWrt は :22 にしか応答しません。LuCI の Web UI は、インストールするまで :80 にも :8080 にもありません。",
-  "scan.fail.step5": "5. あるいは探索を完全に省いてください: bash \u003c(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) \u003cROUTER-IP\u003e '' \u003cyou@wallet.app\u003e",
+  "scan.fail.step5": "5. あるいは探索を完全に省いてください: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> '' <you@wallet.app>",
   "scan.note.identified": "TollGate/OpenWrt ルーター (判別済み)",
   "scan.note.noAnswer": "応答なし",
   "scan.note.vendorIdentified": "{vendor} ルーター (判別済み)",
   "scan.note.unverified": "LAN 上の未確認ホスト — {ports} に応答しています",
-
   "manual.label": "ルーターのアドレス",
   "manual.use": "このアドレスを使う",
   "manual.hint": "ルーターの IP アドレスがわかりますか？入力してください。ウィザードが直接識別します。",
@@ -54,12 +51,10 @@
   "manual.selected": "{ip} を選択しました。下に進んでください。",
   "manual.selectedNote": "{ip} を選択しました — {note}。下に進んでください。",
   "manual.unreachable": "{ip} を識別するためにインストーラーへ接続できませんでした。",
-
   "select.label": "ルーターを選択",
   "select.routerFallback": "ルーター",
   "select.custom": "別のアドレスを入力…",
   "select.customTitle": "スキャンで見つからなかった場合はルーターのアドレスを入力してください（別のサブネットにある場合など）",
-
   "trust.button": "このルーターの SSH ホスト鍵を信頼する",
   "trust.lead": "確認待ちです。このルーターの SSH 鍵はまだ信頼されていないため、まだ何も送信していません。",
   "trust.fingerprint": "フィンガープリント: {fp}",
@@ -75,7 +70,6 @@
   "trust.staleKey": "ルーターは現在 {fp} を提示しています。ルーターのコンソールでそちらを確認し、もう一度「信頼」を押して確定してください。",
   "trust.remembered": "ルーターのホスト鍵を信頼し、{store} に記憶しました。",
   "trust.networkError": "ルーターのホスト鍵を信頼する際にネットワークエラーが発生しました。",
-
   "password.current": "現在のルーターのパスワード",
   "password.placeholder": "現在のルーターのパスワード（初期化直後は空欄）",
   "password.show": "パスワードを表示",
@@ -88,7 +82,6 @@
   "password.status.untrusted": "⚠ ルーターのホスト鍵が信頼されていません。信頼するとパスワードが確認されます。",
   "password.status.unreachable": "● ルーターはまだ SSH で到達できません。アドレスとケーブルを確認してください。",
   "password.status.unknown": "● パスワードはまだ確認できていません。",
-
   "upstream.label": "上流接続",
   "upstream.wan": "WAN（イーサネット）",
   "upstream.sta": "WiFi リピーター",
@@ -99,7 +92,6 @@
   "upstream.ssidHint": "中継する WiFi ネットワークを選択してください。",
   "upstream.wifiPassLabel": "上流 WiFi のパスワード",
   "upstream.wifiPassPlaceholder": "上流 WiFi のパスワードを入力",
-
   "wifi.passwordChanged": "ルーターのパスワードが変更されました。「再スキャン」を押してネットワーク一覧を更新してください。",
   "wifi.enterPassword": "テストする WiFi パスワードを入力",
   "wifi.testing": "WiFi 接続をテストしています...",
@@ -125,16 +117,13 @@
   "wifi.networkError": "スキャン中にネットワークエラーが発生しました。再スキャンを試してください。",
   "wifi.movedRouter": "ルーターが {ip} で応答しています。再スキャンして選択し、それからもう一度スキャンしてください。",
   "wifi.rescanForRouters": "ルーターを再スキャン",
-
   "prestage.running": "パッケージを事前ダウンロードしています...",
   "prestage.done": "パッケージを事前ダウンロードしました",
   "prestage.failed": "事前ダウンロードに失敗しました: {error}",
   "prestage.unknownError": "不明なエラー",
-
   "lnurl.label": "Lightning アドレス",
   "lnurl.placeholder": "you@wallet.app  または  lnurl1...",
   "lnurl.hint": "Lightning アドレス（you@wallet.app）または生の LNURL（lnurl1...）。必須。",
-
   "advanced.summary": "詳細設定（任意）",
   "advanced.adminLabel": "ルーターの管理者パスワード（任意）",
   "advanced.adminPlaceholder": "空欄で既定値: TollGate",
@@ -145,7 +134,6 @@
   "advanced.wifiHintAfter": "初回ログイン時にご自身のものを設定します。",
   "advanced.adminTooShort": "ルーターの管理者パスワードは 8 文字以上にしてください（または空欄で既定値を使用）。",
   "advanced.wifiTooShort": "管理用 WiFi のパスワードは 8 文字以上にしてください（または空欄で既定値を使用）。",
-
   "cleanSlate.label": "クリーンな状態（詳細）",
   "cleanSlate.inspect": "クリーンイメージを確認",
   "cleanSlate.selectBoard": "書き込みを有効にするには検出されたボードを選択してください",
@@ -154,20 +142,16 @@
   "cleanSlate.unresolved": "クリーンイメージを解決できませんでした。",
   "cleanSlate.refused": "クリーン書き込みは拒否されました。",
   "cleanSlate.detail": "ボード: {board} | イメージ: {image} | sha256: {sha}",
-
   "devsplit.label": "開発者配分",
   "devsplit.hint": "TollGate 開発者基金に回される支払いの割合。既定 21%。",
   "margin.label": "マージン",
   "margin.hint": "データ費用に上乗せする運用者の利幅。既定 21%。",
-
   "mint.label": "Cashu mint の優先設定",
   "mint.defaultOption": "8333.space（既定）",
   "mint.hint": "ecash 決済でルーターが優先する Cashu mint。Minibits は一時的に削除されました（DLEQ キーセットローテーションの不具合）。",
-
   "forceflash.label": "ファームウェアを強制再書き込み（ルーター設定を消去し、固定の OpenWrt リリースへ更新します）",
   "forceflash.hintBefore": "ルーターがすでに OpenWrt を実行している場合は通常スキップされます。有効にすると実行します",
   "forceflash.hintAfter": "固定リリース（例: 24.10 → 25.12）へ書き込み、その後クリーンなシステムでデプロイを続行します。",
-
   "deploy.button": "TollGate をデプロイ",
   "deploy.scanAgain": "再スキャン",
   "deploy.deploying": "TollGate をデプロイしています...",
@@ -175,11 +159,9 @@
   "deploy.testingUpstream": "上流 WiFi 接続をテストしています…",
   "deploy.fixUpstream": "上流 WiFi 接続を修正して「デプロイ」を有効にしてください。",
   "deploy.enterUpstreamPass": "上流 WiFi のパスワードを入力してください。テストに成功すると「デプロイ」が有効になります。",
-
   "success.title": "TollGate が稼働しました！",
   "success.subtitle": "お使いのルーターは Bitcoin WiFi ホットスポットになりました。",
   "success.body": "WiFi ネットワークに接続し、任意のウェブサイトを開くと決済ポータルが表示されます。",
-
   "credential.title": "ルーターの新しい root パスワード",
   "credential.warnSuccess": "このルーターには root パスワードがなかったため、既定値が設定されました。この値はここで一度だけ表示され、このページを閉じるか再読み込みする前に、コピーがこのマシンのファイル（モード 600）にも保存されます。ルーターの管理ボードにログインしたらご自身のものに変更してください。",
   "credential.warnFailure": "このデプロイは、ルーターの root パスワードがすでに設定された後に失敗しました。この値はここで一度だけ表示され、このページを閉じるか再読み込みする前に、コピーがこのマシンのファイル（モード 600）にも保存されます。ルーターに到達するために必要になります。",
@@ -188,7 +170,6 @@
   "credential.copied": "クリップボードにコピーしました。",
   "credential.copyFailed": "コピーに失敗しました。上のパスワードを選択して手動でコピーしてください。",
   "credential.savedTo": "コピーはこのマシンに保存されています: {path}",
-
   "pending.title": "TollGate をインストールしました — マーチャントはまだ起動中です",
   "pending.detail": "マーチャントはまだウォレットと mint の状態を読み込んでいます。",
   "pending.recheck": "再確認",
@@ -197,13 +178,11 @@
   "pending.starting": "まだ起動中です。もう 1 分待ってから再確認してください。",
   "pending.unreachable": "ルーターに到達できませんでした。まだ起動中の可能性があります。",
   "pending.failed": "再確認に失敗しました: {error}",
-
   "error.title": "セットアップに失敗しました",
   "error.retry": "再試行",
   "error.generic": "問題が発生しました。",
   "error.unknown": "不明なエラーです。上のログを確認してください。",
   "error.versionUnavailable": "このインストーラービルドではバージョン情報を利用できません",
-
   "step.verify": "ルーターへの SSH アクセスを検証しています...",
   "step.stage": "パッケージとファームウェアを事前ダウンロードしています...",
   "step.flash": "純正 GL.iNet に OpenWrt を書き込んでいます...",
@@ -219,10 +198,8 @@
   "step.identity": "ルーターの識別情報を確認",
   "step.image": "OpenWrt イメージを検証",
   "step.flashVanilla": "純正 OpenWrt を書き込む",
-
   "lang.label": "言語",
   "lang.saved": "選択内容はこのブラウザーに記憶されます。",
-
   "error.invalidJSON": "JSON が不正です",
   "error.ipRequired": "IP アドレスが必要です",
   "error.methodNotAllowed": "許可されていないメソッドです",
@@ -235,7 +212,6 @@
   "error.jobNotFound": "ジョブが見つかりません",
   "error.ipVersion": "IP アドレスとバージョンが必要です",
   "error.fingerprint": "フィンガープリントが必要です（例: SHA256:AbCdEf…）",
-
   "jobError.cpuArch": "ルーターの CPU アーキテクチャを特定できませんでした",
   "jobError.target": "ルーターのターゲットを特定できませんでした",
   "jobError.notOpenWrt": "ルーターはまだ OpenWrt ファームウェアで動作していません",
@@ -244,5 +220,9 @@
   "jobError.opkgDowngrade": "opkg がパッケージのダウングレードを拒否しました: ルーターは新しい設定のまま、以前の tollgate-wrt バイナリで動作し続けています。opkg が受け入れるバージョンをインストールするか、インストール済みの tollgate-wrt を先に削除して（opkg remove tollgate-wrt）再実行してください。",
   "jobError.initScriptMissing": "tollgate-wrt の init スクリプトがありません — パッケージのインストールに失敗しました",
   "jobError.noWifiDevice": "UCI に wifi-device が見つかりません — STA アップリンクを設定できません",
-  "jobError.imagePush": "OpenWrt イメージをルーターへ転送できませんでした"
+  "jobError.imagePush": "OpenWrt イメージをルーターへ転送できませんでした",
+  "cobrador.intro": "すべての料金所には Cobrador があります。",
+  "cobrador.infoLabel": "__コブラドール__とは何ですか?",
+  "cobrador.infoBody": "Cobrador アイランドは、TollGate オペレーターが出会い、ピアリングし、SATs をスタックする場所です。あなたはこの門のCobradorです。",
+  "cobrador.success": "お帰りなさい、__コブラドール__。"
 }
