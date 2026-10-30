@@ -2,7 +2,9 @@ package app
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -123,6 +125,29 @@ func TestDeviceIdentityScriptAdoptsArchipelagoNames(t *testing.T) {
 	}
 	if id.PrivateSSID != "noderunner-private-ABCD" {
 		t.Errorf("private SSID = %q, want noderunner-private-ABCD", id.PrivateSSID)
+	}
+}
+
+func TestDeviceIdentityScriptAdoptsConfiguredPrefix(t *testing.T) {
+	prefixFile := filepath.Join(t.TempDir(), "ssid-prefixes")
+	if err := os.WriteFile(prefixFile, []byte("# custom skins\nCustomSkin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env, statePath, _ := uciStubEnv(t, []string{
+		"system.@system[0].hostname=CustomSkin-ABCD",
+		"wireless.private_radio0.ssid=noderunner-private-ABCD",
+	})
+	env = append(env,
+		"TOLLGATE_SSID_PREFIXES_FILE="+prefixFile,
+		"PRIVATE_NYM=noderunner-private",
+	)
+
+	id, out := runIdentityScript(t, env, statePath)
+	if id.Code != "ABCD" {
+		t.Fatalf("code = %q, want ABCD (resolver output:\n%s)", id.Code, out)
+	}
+	if id.Source != "hostname" {
+		t.Errorf("source = %q, want hostname", id.Source)
 	}
 }
 

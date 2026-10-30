@@ -695,10 +695,26 @@ code_from_name() {
     p=$(trim_ws "${1%%-*}" | tr 'A-Z' 'a-z')
     p=${p#\!}
     s=${1#*-}
-    brand=${BRAND_TOKEN:-$(cat /etc/tollgate/brand 2>/dev/null | tr -d ' \011\015\012' | tr 'A-Z' 'a-z')}
-    case "$p" in
-        tollgate|net4sats|"$brand") code_norm "$s" ;;
-    esac
+    brand=${BRAND_TOKEN:-$(cat "${TOLLGATE_BRAND_FILE:-/etc/tollgate/brand}" 2>/dev/null | tr -d ' \011\015\012' | tr 'A-Z' 'a-z')}
+    known=0
+    if [ "$p" = "tollgate" ] || [ "$p" = "$brand" ]; then
+        known=1
+    else
+        pf=${TOLLGATE_SSID_PREFIXES_FILE:-/etc/tollgate/ssid-prefixes}
+        if [ -r "$pf" ]; then
+            while IFS= read -r line; do
+                line=$(printf '%s' "$line" | tr -d ' \011\015\012')
+                case "$line" in ''|'#'*) continue ;; esac
+                line=${line#\!}
+                line=${line%-}
+                if [ "$(printf '%s' "$line" | tr 'A-Z' 'a-z')" = "$p" ]; then
+                    known=1
+                    break
+                fi
+            done < "$pf"
+        fi
+    fi
+    [ "$known" = 1 ] && code_norm "$s"
 }
 trim_ws() {
     printf '%s' "$1" | tr -d ' \011\015\012'
