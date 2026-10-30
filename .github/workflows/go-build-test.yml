@@ -1,0 +1,90 @@
+name: Go build, vet and test
+
+# WHY THIS EXISTS
+#
+#   Nothing in this repository ran `go build` or `go test`. The only workflows were
+#   `feed-release-smoke.yml` and `frozen-v060-launcher.yml`, neither of which compiles the
+#   wizard. The consequence is visible today: `internal/app` carries a test that fails on
+#   `main`, and `main` has been that way without anyone noticing.
+#
+#   It is also why every open PR here reports "no checks reported" — for a cross-repository
+#   PR that phrase does not mean "nothing failed", it means "nothing ran". Reviewers had no
+#   mechanical signal at all.
+#
+# WHY `build` AND `vet` BLOCK BUT `test` DOES NOT (YET)
+#
+#   A gate that is already red is a gate nobody reads. `TestPrivateBridgeMoveNeverDials
+#   TheRelocatedBridgeAddress` fails roughly nine runs in ten on `main` (measured: pass=1
+#   fail=9 of 10 on an identical tree). Making `go test` blocking today would paint every
+#   PR red for a defect this change does not cause, and the usual response to that is to
+#   re-run until green or delete the step — the exact behaviour that let the failure sit.
+#
+#   So: compilation and vet BLOCK (they are green today and catch the cheapest class of
+#   regression), and the test step runs ADVISORY with its output visible in the run. When
+#   the intermittent failure is fixed, delete `continue-on-error` and this becomes a real
+#   gate. See the linked issue.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-vet:
+    name: go build + go vet (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go build ./...
+        run: go build ./...
+
+      - name: go vet ./...
+        run: go vet ./...
+
+      - name: gofmt (advisory on formatting, fatal on syntax)
+        run: |
+          # gofmt -l lists files that would be reformatted. A file that fails to PARSE is a
+          # real error; a file that merely wants different spacing is style. Report the first
+          # as fatal, the second as a warning, so this cannot block on cosmetics.
+          out="$(gofmt -l . | grep -v '^vendor/' || true)"
+          if [ -n "$out" ]; then
+            echo "::warning::gofmt would reformat: $out"
+          fi
+          gofmt -e ./internal/app >/dev/null
+
+  test:
+    name: go test (advisory until the intermittent failure is fixed)
+    runs-on: ubuntu-latest
+    # Delete this line when the intermittent failure is fixed; it is the only thing that
+    # makes this job non-blocking.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test ./...
+        run: go test ./... -count=1
+
+      - name: name the intermittent failure explicitly
+        if: failure()
+        run: |
+          echo "::warning::The suite is not reliably green on main. If the only failure is \
+          TestPrivateBridgeMoveNeverDialsTheRelocatedBridgeAddress, it is the known intermittent \
+          defect, not your change — it fails about nine runs in ten. Do not re-run until green."
