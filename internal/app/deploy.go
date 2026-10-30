@@ -707,6 +707,10 @@ code_from_name() {
                 case "$line" in ''|'#'*) continue ;; esac
                 line=${line#\!}
                 line=${line%-}
+                case "$line" in
+                    ''|*[!A-Za-z0-9_]*) continue ;;
+                esac
+                [ ${#line} -ge 3 ] && [ ${#line} -le 32 ] || continue
                 if [ "$(printf '%s' "$line" | tr 'A-Z' 'a-z')" = "$p" ]; then
                     known=1
                     break
