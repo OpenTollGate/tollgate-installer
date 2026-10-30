@@ -1,9 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TollGate Installer — Router Setup</title>
+<title data-i18n="title">TollGate Installer — Router Setup</title>
+<!-- Language + catalogue payload. The server REPLACES this comment with an
+     inline script carrying window.__LANG, window.__DIR and window.__I18N, and
+     rewrites the <html> element's lang/dir to match (see i18n_surface.go).
+     Unrolled, this page is the English reference: every translatable node keeps
+     its English text as the fallback and names its catalogue key in
+     data-i18n, so a catalogue that loses a key degrades to the sentence we
+     shipped before rather than to a blank. Nothing here is interpolated into
+     HTML: applyI18n() writes textContent only (dom_sink_test.go). -->
+<!--I18N-PAYLOAD-->
     <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2031%2031%22%3E%3Crect%20width%3D%2231%22%20height%3D%2231%22%20rx%3D%227%22%20fill%3D%22%230a0e27%22%2F%3E%3Cg%3E%3Cpath%20d%3D%22M5.83361%2022.6677C5.83361%2023.5146%205.14707%2024.2012%204.30017%2024.2012C3.45327%2024.2012%202.76672%2023.5146%202.76672%2022.6677C2.76672%2021.8208%203.45327%2021.1343%204.30017%2021.1343C5.14707%2021.1343%205.83361%2021.8208%205.83361%2022.6677Z%22%20fill%3D%22%23FF6961%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M2%2016.7895C2%2016.0837%202.57212%2015.5116%203.27787%2015.5116C7.79466%2015.5116%2011.4562%2019.1732%2011.4562%2023.69C11.4562%2024.3957%2010.8841%2024.9678%2010.1784%2024.9678C9.47262%2024.9678%208.9005%2024.3957%208.9005%2023.69C8.9005%2020.5847%206.38316%2018.0673%203.27787%2018.0673C2.57212%2018.0673%202%2017.4952%202%2016.7895Z%22%20fill%3D%22%23FF6961%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M2%2011.4224C2%2010.7167%202.57212%2010.1445%203.27787%2010.1445C10.7588%2010.1445%2016.8233%2016.209%2016.8233%2023.69C16.8233%2024.3957%2016.2512%2024.9678%2015.5454%2024.9678C14.8397%2024.9678%2014.2676%2024.3957%2014.2676%2023.69C14.2676%2017.6205%209.34731%2012.7003%203.27787%2012.7003C2.57212%2012.7003%202%2012.1282%202%2011.4224Z%22%20fill%3D%22%23FF6961%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M2%206.05534C2%205.34959%202.57212%204.77747%203.27787%204.77747C13.7229%204.77747%2022.1904%2013.2449%2022.1904%2023.6899C22.1904%2024.3957%2021.6182%2024.9678%2020.9125%2024.9678C20.2067%2024.9678%2019.6346%2024.3957%2019.6346%2023.6899C19.6346%2014.6564%2012.3115%207.33321%203.27787%207.33321C2.57212%207.33321%202%206.76108%202%206.05534Z%22%20fill%3D%22%23FF6961%22%2F%3E%3C%2Fg%3E%3Cg%3E%3Cpath%20d%3D%22M25.2575%2022.6677C25.2575%2023.5146%2025.944%2024.2012%2026.7909%2024.2012C27.6378%2024.2012%2028.3243%2023.5146%2028.3243%2022.6677C28.3243%2021.8208%2027.6378%2021.1343%2026.7909%2021.1343C25.944%2021.1343%2025.2575%2021.8208%2025.2575%2022.6677Z%22%20fill%3D%22%237ABD7E%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M29.0911%2016.7895C29.0911%2016.0837%2028.5189%2015.5116%2027.8132%2015.5116C23.2964%2015.5116%2019.6348%2019.1732%2019.6348%2023.69C19.6348%2024.3957%2020.2069%2024.9678%2020.9127%2024.9678C21.6184%2024.9678%2022.1906%2024.3957%2022.1906%2023.69C22.1906%2020.5847%2024.7079%2018.0673%2027.8132%2018.0673C28.5189%2018.0673%2029.0911%2017.4952%2029.0911%2016.7895Z%22%20fill%3D%22%237ABD7E%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M29.0911%2011.4224C29.0911%2010.7167%2028.5189%2010.1445%2027.8132%2010.1445C20.3323%2010.1445%2014.2678%2016.209%2014.2678%2023.69C14.2678%2024.3957%2014.8399%2024.9678%2015.5456%2024.9678C16.2514%2024.9678%2016.8235%2024.3957%2016.8235%2023.69C16.8235%2017.6205%2021.7438%2012.7003%2027.8132%2012.7003C28.5189%2012.7003%2029.0911%2012.1282%2029.0911%2011.4224Z%22%20fill%3D%22%237ABD7E%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M29.0911%206.05534C29.0911%205.34959%2028.5189%204.77747%2027.8132%204.77747C17.3681%204.77747%208.90071%2013.2449%208.90071%2023.6899C8.90071%2024.3957%209.47283%2024.9678%2010.1786%2024.9678C10.8843%2024.9678%2011.4565%2024.3957%2011.4565%2023.6899C11.4565%2014.6564%2018.7796%207.33321%2027.8132%207.33321C28.5189%207.33321%2029.0911%206.76108%2029.0911%206.05534Z%22%20fill%3D%22%237ABD7E%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <style>
   :root {
@@ -212,21 +221,120 @@
   .pw-toggle[aria-pressed="true"] { color: var(--tg-red); }
   .pw-toggle[aria-pressed="true"] .pw-icon-show { display: none; }
   .pw-toggle[aria-pressed="true"] .pw-icon-hide { display: block; }
+
+  /* ---- Language picker (see i18n_surface.go) ---- */
+  /* Sits above the first card so a returning reader can switch immediately.
+     The <select> shows each language in its own script, which is the only way
+     to make the picker usable to someone who cannot read the current UI. */
+  .lang-bar {
+    display: flex; align-items: center; gap: 0.6rem;
+    justify-content: flex-end; margin: 0 0 0.9rem;
+  }
+  .lang-bar label {
+    font-size: 0.78rem; color: #8892b0; margin: 0; white-space: nowrap;
+  }
+  .lang-bar select {
+    width: auto; max-width: 15rem; margin: 0; padding: 0.4rem 0.6rem;
+    font-size: 0.85rem; background: #131a3d; color: #e6e9f5;
+    border: 1px solid #2a3560; border-radius: 8px; cursor: pointer;
+  }
+  .lang-bar select:focus-visible {
+    outline: 2px solid var(--tg-red); outline-offset: 2px;
+  }
+  /* Visible but recessive: the sentence explains persistence, which is worth
+     saying once and not worth competing with the picker for attention. */
+  .lang-hint {
+    font-size: 0.72rem; color: #6b7495; max-width: 18rem;
+  }
+
+  /* ---- RTL (Arabic, Urdu) ---------------------------------------------- */
+  /* Translated strings alone do not make an RTL layout: the page still
+     left-aligns, the password toggle still sits on the right (over the text it
+     is supposed to reveal) and the range readout still floats the wrong way.
+     Direction comes from <html dir> set by the server, so these rules do not
+     depend on a script having run. */
+
+  [dir="rtl"] body { text-align: right; }
+
+  /* The reveal button is absolutely positioned at right:6px, and the input's
+     padding-right reserves room for it. In RTL both move to the left edge. */
+  [dir="rtl"] .pw-wrap input { padding-right: 12px; padding-left: 52px; }
+  [dir="rtl"] .pw-toggle { right: auto; left: 6px; }
+
+  /* A floated readout must flip, or the value sits on the wrong side of its
+     slider in a right-aligned row. */
+  [dir="rtl"] .range-val { float: left; }
+
+  /* The disclosure triangle points along the reading direction. */
+  [dir="rtl"] .advanced > summary::before { content: '◂ '; }
+  [dir="rtl"] .advanced[open] > summary::before { content: '◃ '; }
+
+  /* Icons that encode a direction (arrows, chevrons) are mirrored; the logo and
+     the password eye are not — mirroring the eye reads as a different icon. */
+  [dir="rtl"] svg.tg-dir-icon { transform: scaleX(-1); }
+
+  /* The picker bar follows the reading direction too. */
+  [dir="rtl"] .lang-bar { justify-content: flex-start; }
+
+  /* The step icons carry a margin-right that becomes margin-LEFT in RTL, or the
+     label is pushed away from its icon. */
+  [dir="rtl"] .step-icon { margin-right: 0; margin-left: 0.8rem; }
+
+  /* Status/step text that starts with a bullet or check glyph keeps the glyph
+     on the leading side, which dir=rtl already handles; this pins alignment for
+     the boxes that set an explicit left border as an accent. */
+  [dir="rtl"] .error-msg { text-align: right; border-left: none; border-right: 4px solid #f6ad55; }
+  .cobrador-note { font-size: 0.78rem; color: #8892b0; margin: 0.35rem 0 0; }
+  .cobrador-welcome { color: var(--tg-red); font-weight: 600; margin-top: 0.6rem; }
+  .info-dot {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 1.05rem; height: 1.05rem; margin-left: 0.25rem; border-radius: 50%;
+    border: 1px solid #2a3560; color: #e6e9f5; font-size: 0.68rem; font-weight: 700;
+    cursor: help; vertical-align: middle;
+  }
+  .info-dot:focus-visible { outline: 2px solid var(--tg-red); outline-offset: 2px; }
+  .info-dot .info-tip {
+    display: none; position: absolute; z-index: 20; inset-inline-start: 50%;
+    transform: translateX(-50%); top: 1.5rem; width: min(24rem, 80vw);
+    padding: 0.65rem 0.8rem; border-radius: 8px; border: 1px solid #2a3560;
+    background: #131a3d; color: #e6e9f5; font-size: 0.74rem; font-weight: 400;
+    line-height: 1.45; text-align: start; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+  .info-dot:hover .info-tip, .info-dot:focus .info-tip, .info-dot:focus-within .info-tip { display: block; }
+  [dir="rtl"] .info-dot { margin-left: 0; margin-right: 0.25rem; }
+  /* Secondary text stays subordinate but readable on the dark wizard. */
+  .hint, .lang-bar label, .lang-hint, #scan-status, #build-info, .cobrador-note { color: #b3c2d1; }
+  #scan-status { color: #c7d3df; }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="logo">
     <h1 aria-label="TollGate"><svg class="tg-logo" viewBox="0 0 138 28" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M129.588 24.7123C128.004 24.7123 126.63 24.3879 125.466 23.7391C124.302 23.0712 123.396 22.1647 122.747 21.0198C122.117 19.8557 121.802 18.5294 121.802 17.041C121.802 15.3617 122.136 13.9305 122.804 12.7473C123.491 11.5451 124.379 10.6291 125.466 9.99941C126.554 9.35059 127.709 9.02618 128.93 9.02618C129.865 9.02618 130.752 9.21701 131.592 9.59867C132.432 9.96124 133.176 10.4765 133.825 11.1444C134.492 11.7932 135.017 12.5661 135.399 13.4629C135.781 14.3408 135.981 15.3044 136 16.354C135.981 16.7357 135.828 17.0505 135.542 17.2986C135.256 17.5467 134.922 17.6707 134.54 17.6707H123.405L122.718 15.2376H133.481L132.937 15.7529V15.0373C132.899 14.3694 132.68 13.7874 132.279 13.2912C131.878 12.776 131.382 12.3848 130.79 12.1176C130.199 11.8314 129.579 11.6882 128.93 11.6882C128.357 11.6882 127.804 11.7837 127.27 11.9745C126.754 12.1462 126.287 12.4325 125.867 12.8332C125.466 13.234 125.142 13.7683 124.894 14.4362C124.665 15.085 124.55 15.896 124.55 16.8692C124.55 17.9188 124.77 18.8348 125.209 19.6172C125.648 20.3996 126.239 21.0102 126.983 21.4491C127.728 21.8689 128.548 22.0788 129.445 22.0788C130.151 22.0788 130.733 22.0121 131.191 21.8785C131.649 21.7258 132.031 21.5445 132.336 21.3346C132.641 21.1247 132.909 20.9243 133.138 20.7335C133.424 20.5618 133.71 20.4759 133.996 20.4759C134.34 20.4759 134.626 20.5999 134.855 20.848C135.084 21.077 135.199 21.3537 135.199 21.6781C135.199 22.0979 134.989 22.4796 134.569 22.8231C134.054 23.3192 133.338 23.7581 132.422 24.1398C131.525 24.5215 130.58 24.7123 129.588 24.7123Z" fill="white"/><path d="M112.046 9.54134H118.772C119.154 9.54134 119.469 9.67492 119.717 9.94208C119.984 10.1902 120.118 10.505 120.118 10.8867C120.118 11.2493 119.984 11.5546 119.717 11.8027C119.469 12.0507 119.154 12.1748 118.772 12.1748H112.046C111.664 12.1748 111.34 12.0507 111.072 11.8027C110.824 11.5355 110.7 11.2206 110.7 10.8581C110.7 10.4764 110.824 10.1615 111.072 9.91346C111.34 9.66538 111.664 9.54134 112.046 9.54134ZM115.051 5.82019C115.471 5.82019 115.815 5.96331 116.082 6.24955C116.349 6.51671 116.482 6.8602 116.482 7.28003V20.5617C116.482 20.9052 116.54 21.1819 116.654 21.3918C116.769 21.6017 116.921 21.7448 117.112 21.8212C117.322 21.8975 117.532 21.9357 117.742 21.9357C117.952 21.9357 118.133 21.8975 118.286 21.8212C118.457 21.7448 118.658 21.7067 118.887 21.7067C119.116 21.7067 119.326 21.8116 119.517 22.0215C119.707 22.2314 119.803 22.5177 119.803 22.8803C119.803 23.3382 119.555 23.7104 119.059 23.9966C118.562 24.2828 118.028 24.426 117.456 24.426C117.131 24.426 116.75 24.3973 116.311 24.3401C115.872 24.2828 115.442 24.1397 115.023 23.9107C114.622 23.6817 114.288 23.3192 114.021 22.823C113.754 22.3078 113.62 21.5922 113.62 20.6762V7.28003C113.62 6.8602 113.754 6.51671 114.021 6.24955C114.307 5.96331 114.65 5.82019 115.051 5.82019Z" fill="white"/><path d="M107.377 9.14068C107.797 9.14068 108.141 9.2838 108.408 9.57004C108.675 9.83721 108.809 10.1807 108.809 10.6005V22.9662C108.809 23.386 108.675 23.7391 108.408 24.0253C108.141 24.2925 107.797 24.426 107.377 24.426C106.977 24.426 106.633 24.2925 106.347 24.0253C106.08 23.7391 105.946 23.386 105.946 22.9662V20.9053L106.547 20.9911C106.547 21.3346 106.404 21.7163 106.118 22.1361C105.851 22.5559 105.479 22.9662 105.002 23.3669C104.524 23.7486 103.962 24.073 103.313 24.3402C102.664 24.5882 101.967 24.7123 101.223 24.7123C99.9064 24.7123 98.7233 24.3783 97.6737 23.7104C96.6242 23.0234 95.7941 22.0884 95.1834 20.9053C94.5728 19.7221 94.2675 18.3768 94.2675 16.8692C94.2675 15.3235 94.5728 13.9686 95.1834 12.8046C95.7941 11.6215 96.6146 10.6959 97.6451 10.028C98.6947 9.36013 99.8587 9.02618 101.137 9.02618C101.958 9.02618 102.712 9.15976 103.399 9.42692C104.105 9.69408 104.715 10.0376 105.231 10.4574C105.746 10.8772 106.137 11.3257 106.404 11.8027C106.69 12.2607 106.834 12.6996 106.834 13.1195L105.946 13.2053V10.6005C105.946 10.1998 106.08 9.85629 106.347 9.57004C106.633 9.2838 106.977 9.14068 107.377 9.14068ZM101.538 22.0788C102.435 22.0788 103.227 21.8499 103.914 21.3919C104.601 20.9339 105.135 20.3137 105.517 19.5313C105.898 18.7298 106.089 17.8425 106.089 16.8692C106.089 15.8769 105.898 14.9896 105.517 14.2072C105.135 13.4248 104.601 12.8046 103.914 12.3466C103.227 11.8886 102.435 11.6596 101.538 11.6596C100.66 11.6596 99.8778 11.8886 99.1908 12.3466C98.5229 12.8046 97.9886 13.4248 97.5879 14.2072C97.2062 14.9896 97.0154 15.8769 97.0154 16.8692C97.0154 17.8425 97.2062 18.7298 97.5879 19.5313C97.9886 20.3137 98.5229 20.9339 99.1908 21.3919C99.8778 21.8499 100.66 22.0788 101.538 22.0788Z" fill="white"/><path d="M84.9081 24.7122C83.4578 24.7122 82.1029 24.4546 80.8434 23.9393C79.5839 23.405 78.4771 22.6703 77.523 21.7353C76.5879 20.7811 75.8533 19.6839 75.3189 18.4435C74.7846 17.2031 74.5175 15.8578 74.5175 14.4075C74.5175 12.9572 74.7846 11.6118 75.3189 10.3714C75.8533 9.13105 76.5879 8.04333 77.523 7.10827C78.4771 6.15413 79.5839 5.41944 80.8434 4.9042C82.1029 4.36988 83.4578 4.10272 84.9081 4.10272C85.8431 4.10272 86.7496 4.20768 87.6274 4.41759C88.5052 4.6275 89.2971 4.93283 90.0032 5.33356C90.2513 5.46715 90.4325 5.64843 90.547 5.87743C90.6615 6.08734 90.7188 6.29725 90.7188 6.50716C90.7188 6.9079 90.5852 7.26093 90.318 7.56626C90.07 7.8525 89.7551 7.99562 89.3734 7.99562C89.2399 7.99562 89.0967 7.97654 88.9441 7.93837C88.8105 7.90021 88.6865 7.8525 88.572 7.79525C88.0377 7.52809 87.4652 7.32772 86.8545 7.19414C86.2439 7.04148 85.595 6.96515 84.9081 6.96515C83.5341 6.96515 82.2937 7.2991 81.1869 7.967C80.0801 8.61581 79.2023 9.50317 78.5535 10.6291C77.9237 11.7549 77.6089 13.0144 77.6089 14.4075C77.6089 15.7814 77.9237 17.0409 78.5535 18.1859C79.2023 19.3117 80.0801 20.2086 81.1869 20.8765C82.2937 21.5254 83.5341 21.8498 84.9081 21.8498C85.576 21.8498 86.282 21.7734 87.0263 21.6208C87.7705 21.449 88.4002 21.2296 88.9155 20.9624L88.6865 21.7353V16.2967L89.1445 16.6974H85.3947C84.9749 16.6974 84.6218 16.5638 84.3356 16.2967C84.0684 16.0295 83.9348 15.686 83.9348 15.2662C83.9348 14.8464 84.0684 14.5029 84.3356 14.2357C84.6218 13.9686 84.9749 13.835 85.3947 13.835H90.3467C90.7474 13.835 91.0814 13.9781 91.3485 14.2643C91.6348 14.5315 91.7779 14.875 91.7779 15.2948V21.6494C91.7779 21.9547 91.7016 22.2123 91.5489 22.4223C91.3962 22.6322 91.2245 22.8039 91.0337 22.9375C90.1749 23.4718 89.2208 23.9012 88.1712 24.2256C87.1408 24.55 86.053 24.7122 84.9081 24.7122Z" fill="white"/><path d="M72.1617 22.9661C72.1617 23.386 72.0186 23.739 71.7324 24.0252C71.4652 24.2924 71.1313 24.426 70.7305 24.426C70.3298 24.426 69.9863 24.2924 69.7001 24.0252C69.4329 23.739 69.2993 23.386 69.2993 22.9661V4.70386C69.2993 4.28403 69.4424 3.94054 69.7287 3.67338C70.0149 3.38714 70.3584 3.24402 70.7592 3.24402C71.179 3.24402 71.5129 3.38714 71.761 3.67338C72.0282 3.94054 72.1617 4.28403 72.1617 4.70386V22.9661Z" fill="white"/><path d="M65.3824 22.9661C65.3824 23.386 65.2393 23.739 64.9531 24.0252C64.6859 24.2924 64.352 24.426 63.9512 24.426C63.5505 24.426 63.207 24.2924 62.9208 24.0252C62.6536 23.739 62.52 23.386 62.52 22.9661V4.70386C62.52 4.28403 62.6631 3.94054 62.9494 3.67338C63.2356 3.38714 63.5791 3.24402 63.9799 3.24402C64.3997 3.24402 64.7336 3.38714 64.9817 3.67338C65.2489 3.94054 65.3824 4.28403 65.3824 4.70386V22.9661Z" fill="white"/><path d="M59.6238 16.8979C59.6238 18.4245 59.2899 19.7794 58.622 20.9625C57.9541 22.1266 57.0476 23.0425 55.9026 23.7104C54.7577 24.3783 53.4696 24.7123 52.0384 24.7123C50.6072 24.7123 49.3191 24.3783 48.1741 23.7104C47.0291 23.0425 46.1131 22.1266 45.4262 20.9625C44.7583 19.7794 44.4243 18.4245 44.4243 16.8979C44.4243 15.3521 44.7583 13.9973 45.4262 12.8332C46.1131 11.6501 47.0291 10.7246 48.1741 10.0567C49.3191 9.36968 50.6072 9.02618 52.0384 9.02618C53.4696 9.02618 54.7577 9.36968 55.9026 10.0567C57.0476 10.7246 57.9541 11.6501 58.622 12.8332C59.2899 13.9973 59.6238 15.3521 59.6238 16.8979ZM56.7614 16.8979C56.7614 15.8483 56.5515 14.9419 56.1316 14.1786C55.7118 13.3962 55.1393 12.7855 54.4142 12.3466C53.7081 11.8886 52.9162 11.6596 52.0384 11.6596C51.1606 11.6596 50.3591 11.8886 49.6339 12.3466C48.9088 12.7855 48.3363 13.3962 47.9165 14.1786C47.4967 14.9419 47.2867 15.8483 47.2867 16.8979C47.2867 17.9092 47.4967 18.8061 47.9165 19.5885C48.3363 20.3709 48.9088 20.9816 49.6339 21.4205C50.3591 21.8594 51.1606 22.0788 52.0384 22.0788C52.9162 22.0788 53.7081 21.8594 54.4142 21.4205C55.1393 20.9816 55.7118 20.3709 56.1316 19.5885C56.5515 18.8061 56.7614 17.9092 56.7614 16.8979Z" fill="white"/><path d="M38.3264 24.426C37.8685 24.426 37.4963 24.2924 37.2101 24.0252C36.9429 23.739 36.8094 23.3859 36.8094 22.9661V5.82019H39.8722V22.9661C39.8722 23.3859 39.7195 23.739 39.4142 24.0252C39.1279 24.2924 38.7653 24.426 38.3264 24.426ZM31.8287 7.13691C31.428 7.13691 31.0845 7.01287 30.7983 6.76479C30.512 6.49763 30.3689 6.15414 30.3689 5.73432C30.3689 5.33358 30.512 5.00917 30.7983 4.76109C31.0845 4.51302 31.428 4.38898 31.8287 4.38898H44.8528C45.2535 4.38898 45.5875 4.52256 45.8546 4.78972C46.1409 5.03779 46.284 5.3622 46.284 5.76294C46.284 6.18276 46.1409 6.51671 45.8546 6.76479C45.5875 7.01287 45.2535 7.13691 44.8528 7.13691H31.8287Z" fill="white"/><g><path d="M5.83361 22.6677C5.83361 23.5146 5.14707 24.2012 4.30017 24.2012C3.45327 24.2012 2.76672 23.5146 2.76672 22.6677C2.76672 21.8208 3.45327 21.1343 4.30017 21.1343C5.14707 21.1343 5.83361 21.8208 5.83361 22.6677Z" fill="#FF6961"/><path fill-rule="evenodd" clip-rule="evenodd" d="M2 16.7895C2 16.0837 2.57212 15.5116 3.27787 15.5116C7.79466 15.5116 11.4562 19.1732 11.4562 23.69C11.4562 24.3957 10.8841 24.9678 10.1784 24.9678C9.47262 24.9678 8.9005 24.3957 8.9005 23.69C8.9005 20.5847 6.38316 18.0673 3.27787 18.0673C2.57212 18.0673 2 17.4952 2 16.7895Z" fill="#FF6961"/><path fill-rule="evenodd" clip-rule="evenodd" d="M2 11.4224C2 10.7167 2.57212 10.1445 3.27787 10.1445C10.7588 10.1445 16.8233 16.209 16.8233 23.69C16.8233 24.3957 16.2512 24.9678 15.5454 24.9678C14.8397 24.9678 14.2676 24.3957 14.2676 23.69C14.2676 17.6205 9.34731 12.7003 3.27787 12.7003C2.57212 12.7003 2 12.1282 2 11.4224Z" fill="#FF6961"/><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6.05534C2 5.34959 2.57212 4.77747 3.27787 4.77747C13.7229 4.77747 22.1904 13.2449 22.1904 23.6899C22.1904 24.3957 21.6182 24.9678 20.9125 24.9678C20.2067 24.9678 19.6346 24.3957 19.6346 23.6899C19.6346 14.6564 12.3115 7.33321 3.27787 7.33321C2.57212 7.33321 2 6.76108 2 6.05534Z" fill="#FF6961"/></g><g><path d="M25.2575 22.6677C25.2575 23.5146 25.944 24.2012 26.7909 24.2012C27.6378 24.2012 28.3243 23.5146 28.3243 22.6677C28.3243 21.8208 27.6378 21.1343 26.7909 21.1343C25.944 21.1343 25.2575 21.8208 25.2575 22.6677Z" fill="#7ABD7E"/><path fill-rule="evenodd" clip-rule="evenodd" d="M29.0911 16.7895C29.0911 16.0837 28.5189 15.5116 27.8132 15.5116C23.2964 15.5116 19.6348 19.1732 19.6348 23.69C19.6348 24.3957 20.2069 24.9678 20.9127 24.9678C21.6184 24.9678 22.1906 24.3957 22.1906 23.69C22.1906 20.5847 24.7079 18.0673 27.8132 18.0673C28.5189 18.0673 29.0911 17.4952 29.0911 16.7895Z" fill="#7ABD7E"/><path fill-rule="evenodd" clip-rule="evenodd" d="M29.0911 11.4224C29.0911 10.7167 28.5189 10.1445 27.8132 10.1445C20.3323 10.1445 14.2678 16.209 14.2678 23.69C14.2678 24.3957 14.8399 24.9678 15.5456 24.9678C16.2514 24.9678 16.8235 24.3957 16.8235 23.69C16.8235 17.6205 21.7438 12.7003 27.8132 12.7003C28.5189 12.7003 29.0911 12.1282 29.0911 11.4224Z" fill="#7ABD7E"/><path fill-rule="evenodd" clip-rule="evenodd" d="M29.0911 6.05534C29.0911 5.34959 28.5189 4.77747 27.8132 4.77747C17.3681 4.77747 8.90071 13.2449 8.90071 23.6899C8.90071 24.3957 9.47283 24.9678 10.1786 24.9678C10.8843 24.9678 11.4565 24.3957 11.4565 23.6899C11.4565 14.6564 18.7796 7.33321 27.8132 7.33321C28.5189 7.33321 29.0911 6.76108 29.0911 6.05534Z" fill="#7ABD7E"/></g></svg></h1>
-    <p>Setup your router in 60 seconds</p>
+    <p data-i18n="tagline">Setup your router in 60 seconds</p>
+    <p class="cobrador-note"><span data-i18n="cobrador.intro">Every TollGate has a Cobrador.</span>
+      <span class="info-dot" tabindex="0" role="button" aria-label="What is a Cobrador?" data-i18n-aria-label="cobrador.infoLabel">i<span class="info-tip" data-i18n="cobrador.infoBody">Cobrador Island is where TollGate operators meet, peer, and stack SATs. You’re the Cobrador of this gate.</span></span>
+    </p>
     <p class="hint" id="build-info"></p>
+  </div>
+
+  <!-- Language picker. Sits above the first card so a returning German speaker
+       can switch without scrolling, and it is the ONLY control that writes the
+       i18n cookie the server reads on the next request (see i18n_surface.go:
+       saved choice outranks Accept-Language). Native <select> on purpose: it is
+       keyboard- and screen-reader-operable for free, and it shows each language
+       in its own script. -->
+  <div class="lang-bar">
+    <label for="lang-select" data-i18n="lang.label">Language</label>
+    <select id="lang-select" aria-describedby="lang-hint" onchange="onLanguageChange()"></select>
+    <span class="lang-hint" id="lang-hint" data-i18n="lang.saved">Your choice is remembered on this browser.</span>
   </div>
 
   <!-- Scan View -->
   <div id="scan-view" class="card">
     <div class="scanning">
       <div class="spinner"></div>
-      <p id="scan-status">Scanning for routers on your network...</p>
+      <p id="scan-status" data-i18n="scan.scanning">Scanning for routers on your network...</p>
     </div>
     <!-- The failure block. renderScanFailure() fills it from the server's
          structured diagnostics: every interface and its state, the default
@@ -242,34 +350,35 @@
        bypassed entirely. -->
   <div id="manual-view" class="card hidden" style="margin-top:1rem;">
     <div class="field" style="margin-bottom:0;">
-      <label for="manual-ip">Router address</label>
+      <label for="manual-ip" data-i18n="manual.label">Router address</label>
       <div style="display:flex; gap:0.5rem; align-items:center;">
         <input type="text" id="manual-ip" inputmode="decimal" placeholder="192.168.1.1" autocomplete="off"
                onkeydown="if (event.key === 'Enter') useManualIP()">
         <button type="button" class="btn btn-secondary" id="manual-btn"
                 style="width:auto; padding:14px 16px; margin-top:0; white-space:nowrap;"
-                onclick="useManualIP()">Use this address</button>
+                onclick="useManualIP()" data-i18n="manual.use">Use this address</button>
       </div>
-      <div class="hint" id="manual-hint">Know the router's IP address? Type it - the wizard identifies it directly.</div>
+      <div class="hint" id="manual-hint" data-i18n="manual.hint">Know the router's IP address? Type it - the wizard identifies it directly.</div>
     </div>
   </div>
 
   <!-- Select View -->
   <div id="select-view" class="card hidden">
     <div class="field">
-      <label>Select your router</label>
+      <label data-i18n="select.label">Select your router</label>
       <select id="router-select" onchange="onRouterChange()"></select>
       <div class="hint hidden" id="trust-hint"></div>
       <button type="button" class="btn btn-secondary hidden" id="trust-btn"
               style="width:auto; padding:10px 14px; margin-top:0.5rem;"
-              onclick="trustHostKey()">Trust this router's SSH host key</button>
+              onclick="trustHostKey()" data-i18n="trust.button">Trust this router's SSH host key</button>
     </div>
     <div class="field" id="password-field">
-      <label for="password">Current router password</label>
+      <label for="password" data-i18n="password.current">Current router password</label>
       <div class="pw-wrap">
-        <input type="password" id="password" placeholder="Current router password (leave blank on a fresh reset)" autocomplete="off" oninput="onPasswordChange();onPasswordFieldInput('password', 'password-toggle')">
+        <input type="password" id="password" data-i18n-placeholder="password.placeholder" placeholder="Current router password (leave blank on a fresh reset)" autocomplete="off" oninput="onPasswordChange();onPasswordFieldInput('password', 'password-toggle')">
         <button type="button" class="pw-toggle" id="password-toggle"
                 aria-label="Show password" aria-pressed="false" aria-controls="password"
+                data-i18n-aria-label="password.show"
                 onclick="togglePassword('password', 'password-toggle')">
           <svg class="pw-icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           <svg class="pw-icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
@@ -277,32 +386,33 @@
       </div>
       <div class="hint" id="password-status" role="status" aria-live="polite" style="margin-top:0.35rem;"></div>
     </div>
-    <div class="hint hidden" id="password-not-required" role="status" aria-live="polite" style="margin-top:0.35rem; color:#4ade80;">&#10003; This router needs no password &mdash; continue.</div>
+    <div class="hint hidden" id="password-not-required" role="status" aria-live="polite" style="margin-top:0.35rem; color:#4ade80;" data-i18n="password.notRequired">&#10003; This router needs no password &mdash; continue.</div>
     <div class="field">
-      <label>Upstream connection</label>
+      <label data-i18n="upstream.label">Upstream connection</label>
       <div class="radio-group">
-        <div class="radio-card selected" id="mode-wan" onclick="selectMode('wan')">WAN (Ethernet)</div>
-        <div class="radio-card" id="mode-sta" onclick="selectMode('sta')">WiFi Repeater</div>
+        <div class="radio-card selected" id="mode-wan" onclick="selectMode('wan')" data-i18n="upstream.wan">WAN (Ethernet)</div>
+        <div class="radio-card" id="mode-sta" onclick="selectMode('sta')" data-i18n="upstream.sta">WiFi Repeater</div>
       </div>
     </div>
     <div id="sta-fields" class="hidden">
       <div class="field">
-        <label>Upstream WiFi SSID</label>
+        <label data-i18n="upstream.ssidLabel">Upstream WiFi SSID</label>
         <div style="display:flex; gap:0.5rem; align-items:center;">
           <select id="ssid" disabled onchange="onSsidChange()">
-            <option value="">Select router first to scan...</option>
+            <option value="" data-i18n="upstream.ssidSelectFirst">Select router first to scan...</option>
           </select>
-          <button type="button" class="btn btn-secondary" id="rescan-btn" onclick="wifiScan()" style="width:auto; padding:10px 14px; margin-top:0; white-space:nowrap;">Rescan</button>
+          <button type="button" class="btn btn-secondary" id="rescan-btn" onclick="wifiScan()" style="width:auto; padding:10px 14px; margin-top:0; white-space:nowrap;" data-i18n="upstream.rescan">Rescan</button>
         </div>
-        <div class="hint" id="ssid-hint">Choose the WiFi network to repeat.</div>
+        <div class="hint" id="ssid-hint" data-i18n="upstream.ssidHint">Choose the WiFi network to repeat.</div>
       </div>
       <div class="field">
-        <label for="wifi-pass">Upstream WiFi password</label>
+        <label for="wifi-pass" data-i18n="upstream.wifiPassLabel">Upstream WiFi password</label>
         <div class="pw-wrap">
-          <input type="password" id="wifi-pass" placeholder="Enter upstream WiFi password"
+          <input type="password" id="wifi-pass" data-i18n-placeholder="upstream.wifiPassPlaceholder" placeholder="Enter upstream WiFi password"
                  oninput="onWifiPassChange();onPasswordFieldInput('wifi-pass', 'wifi-pass-toggle')" onchange="onWifiPassChange()">
           <button type="button" class="pw-toggle" id="wifi-pass-toggle"
                   aria-label="Show password" aria-pressed="false" aria-controls="wifi-pass"
+                  data-i18n-aria-label="password.show"
                   onclick="togglePassword('wifi-pass', 'wifi-pass-toggle')">
             <svg class="pw-icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             <svg class="pw-icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
@@ -312,64 +422,64 @@
       </div>
     </div>
     <div class="field">
-      <label>Lightning address <span class="req">*</span></label>
-      <input type="text" id="lnurl" placeholder="you@wallet.app  or  lnurl1..." oninput="checkReady()">
-      <div class="hint">Lightning address (you@wallet.app) or raw LNURL (lnurl1...). Required.</div>
+      <label><span data-i18n="lnurl.label">Lightning address</span> <span class="req">*</span></label>
+      <input type="text" id="lnurl" data-i18n-placeholder="lnurl.placeholder" placeholder="you@wallet.app  or  lnurl1..." oninput="checkReady()">
+      <div class="hint" data-i18n="lnurl.hint">Lightning address (you@wallet.app) or raw LNURL (lnurl1...). Required.</div>
     </div>
 
     <details class="advanced">
-      <summary>Advanced settings (optional)</summary>
+      <summary data-i18n="advanced.summary">Advanced settings (optional)</summary>
       <div class="field">
-        <label for="admin-password">Router admin password (optional)</label>
-        <input type="password" id="admin-password" placeholder="Leave blank for the default: TollGate"
+        <label for="admin-password" data-i18n="advanced.adminLabel">Router admin password (optional)</label>
+        <input type="password" id="admin-password" data-i18n-placeholder="advanced.adminPlaceholder" placeholder="Leave blank for the default: TollGate"
                autocomplete="new-password" oninput="checkReady()">
-        <div class="hint">Optional. The router's admin password — you sign in to the board with it. Leave blank to install the default <code>TollGate</code> and choose your own at first login.</div>
+        <div class="hint"><span data-i18n="advanced.adminHintBefore">Optional. The router's admin password — you sign in to the board with it. Leave blank to install the default</span> <code>TollGate</code> <span data-i18n="advanced.adminHintAfter">and choose your own at first login.</span></div>
       </div>
       <div class="field">
-        <label for="private-wifi-password">Management WiFi password (optional)</label>
-        <input type="password" id="private-wifi-password" placeholder="Leave blank for the default: TollGate"
+        <label for="private-wifi-password" data-i18n="advanced.wifiLabel">Management WiFi password (optional)</label>
+        <input type="password" id="private-wifi-password" data-i18n-placeholder="advanced.adminPlaceholder" placeholder="Leave blank for the default: TollGate"
                autocomplete="new-password" oninput="checkReady()">
-        <div class="hint">Optional. The management WiFi that YOU (the operator) join to reach the router. Leave blank to install the default <code>TollGate</code> and choose your own at first login.</div>
+        <div class="hint"><span data-i18n="advanced.wifiHintBefore">Optional. The management WiFi that YOU (the operator) join to reach the router. Leave blank to install the default</span> <code>TollGate</code> <span data-i18n="advanced.wifiHintAfter">and choose your own at first login.</span></div>
       </div>
       <div class="field">
-        <label>Clean slate (advanced)</label>
+        <label data-i18n="cleanSlate.label">Clean slate (advanced)</label>
         <select id="clean-slate-version">
-          <option value="25.12.5">OpenWrt 25.12.5 (apk)</option>
-          <option value="24.10.8">OpenWrt 24.10.8 (ipk)</option>
+          <option value="25.12.5" data-i18n-skip="release identifier, not prose">OpenWrt 25.12.5 (apk)</option>
+          <option value="24.10.8" data-i18n-skip="release identifier, not prose">OpenWrt 24.10.8 (ipk)</option>
         </select>
-        <button type="button" class="btn btn-secondary" onclick="prepareCleanSlate()">Inspect clean-slate image</button>
+        <button type="button" class="btn btn-secondary" onclick="prepareCleanSlate()" data-i18n="cleanSlate.inspect">Inspect clean-slate image</button>
         <div class="hint" id="clean-slate-info"></div>
         <select id="clean-slate-confirm" onchange="checkCleanSlateReady()">
-          <option value="">Select the detected board to enable flashing</option>
+          <option value="" data-i18n="cleanSlate.selectBoard">Select the detected board to enable flashing</option>
         </select>
-        <button type="button" class="btn btn-secondary" id="clean-slate-btn" onclick="startCleanSlate()" disabled>Clean slate: flash vanilla OpenWrt</button>
+        <button type="button" class="btn btn-secondary" id="clean-slate-btn" onclick="startCleanSlate()" disabled data-i18n="cleanSlate.flash">Clean slate: flash vanilla OpenWrt</button>
       </div>
       <div class="field">
-        <label>Dev split <span class="range-val" id="devsplit-val">21%</span></label>
+        <label><span data-i18n="devsplit.label">Dev split <span class="range-val" id="devsplit-val">21%</span></span></label>
         <input type="range" id="devsplit" min="0" max="50" value="21"
                oninput="document.getElementById('devsplit-val').textContent=this.value+'%'">
-        <div class="hint">Share of payments routed to the TollGate developer fund. Default 21%.</div>
+        <div class="hint" data-i18n="devsplit.hint">Share of payments routed to the TollGate developer fund. Default 21%.</div>
       </div>
       <div class="field">
-        <label>Margin <span class="range-val" id="margin-val">21%</span></label>
+        <label><span data-i18n="margin.label">Margin <span class="range-val" id="margin-val">21%</span></span></label>
         <input type="range" id="margin" min="0" max="100" value="21"
                oninput="document.getElementById('margin-val').textContent=this.value+'%'">
-        <div class="hint">Operator markup added on top of data costs. Default 21%.</div>
+        <div class="hint" data-i18n="margin.hint">Operator markup added on top of data costs. Default 21%.</div>
       </div>
       <div class="field">
-        <label>Cashu mint preference</label>
+        <label data-i18n="mint.label">Cashu mint preference</label>
         <select id="mint">
-          <option value="https://8333.space/">8333.space (default)</option>
-          <option value="https://legend.lnbits.com/cashu/api/v1/">LNbits Legend</option>
+          <option value="https://8333.space/" data-i18n="mint.defaultOption">8333.space (default)</option>
+          <option value="https://legend.lnbits.com/cashu/api/v1/" data-i18n-skip="product name, not prose">LNbits Legend</option>
         </select>
-        <div class="hint">Which Cashu mint the router should prefer for ecash payments. Minibits temporarily removed (DLEQ keyset rotation bug).</div>
+        <div class="hint" data-i18n="mint.hint">Which Cashu mint the router should prefer for ecash payments. Minibits temporarily removed (DLEQ keyset rotation bug).</div>
       </div>
       <div class="field">
         <label class="precheck" for="forceflash" style="margin-bottom:0;">
           <input type="checkbox" id="forceflash" onchange="schedulePreStage()">
-          <span class="precheck-text">Force reflash firmware (ERASES router config; upgrades to the pinned OpenWrt release)</span>
+          <span class="precheck-text" data-i18n="forceflash.label">Force reflash firmware (ERASES router config; upgrades to the pinned OpenWrt release)</span>
         </label>
-        <div class="hint">Normally skipped when the router already runs OpenWrt. Enable to run <code>sysupgrade -n</code> onto the pinned release (e.g. 24.10 &rarr; 25.12), then continue the deploy on the clean system.</div>
+        <div class="hint"><span data-i18n="forceflash.hintBefore">Normally skipped when the router already runs OpenWrt. Enable to run</span> <code>sysupgrade -n</code> <span data-i18n="forceflash.hintAfter">onto the pinned release (e.g. 24.10 &rarr; 25.12), then continue the deploy on the clean system.</span></div>
       </div>
     </details>
 
@@ -378,14 +488,14 @@
     </div>
     <div class="hint" id="prestage-status" style="margin:0 0 1rem 0;"></div>
 
-    <button class="btn" id="deploy-btn" onclick="startDeploy()" disabled>Deploy TollGate</button>
+    <button class="btn" id="deploy-btn" onclick="startDeploy()" disabled data-i18n="deploy.button">Deploy TollGate</button>
     <div class="hint" id="deploy-hint" style="text-align:center; margin-top:0.6rem;"></div>
-    <button class="btn btn-secondary" onclick="scanAgain()">Scan again</button>
+    <button class="btn btn-secondary" onclick="scanAgain()" data-i18n="deploy.scanAgain">Scan again</button>
   </div>
 
   <!-- Deploy View -->
   <div id="deploy-view" class="card hidden">
-    <h3 style="font-size:1rem;margin-bottom:1rem;">Deploying TollGate...</h3>
+    <h3 style="font-size:1rem;margin-bottom:1rem;" data-i18n="deploy.deploying">Deploying TollGate...</h3>
     <div class="steps" id="steps-list"></div>
     <div class="log hidden" id="deploy-log"></div>
   </div>
@@ -393,9 +503,10 @@
   <!-- Success View -->
   <div id="success-view" class="card hidden">
     <div class="success-msg">
-      <h2>TollGate is live!</h2>
-      <p>Your router is now a Bitcoin WiFi hotspot.</p>
-      <p style="margin-top:0.5rem;">Connect to the WiFi network and open any website to see the payment portal.</p>
+      <h2 data-i18n="success.title">TollGate is live!</h2>
+      <p data-i18n="success.subtitle">Your router is now a Bitcoin WiFi hotspot.</p>
+      <p class="cobrador-welcome" data-i18n="cobrador.success">Welcome home, Cobrador.</p>
+      <p style="margin-top:0.5rem;" data-i18n="success.body">Connect to the WiFi network and open any website to see the payment portal.</p>
     </div>
     <!-- One-time root credential. Only rendered when the deploy set the
          router's root password (the router had none and none was supplied, so
@@ -404,8 +515,8 @@
          to an owner-only file whose PATH arrives as credential_file on every
          poll (see showCredentialFile). -->
     <div class="credential hidden" id="generated-credential" role="alert">
-      <h3>The router's new root password</h3>
-      <p class="credential-warn">
+      <h3 data-i18n="credential.title">The router's new root password</h3>
+      <p class="credential-warn" data-i18n="credential.warnSuccess">
         Your router had no root password, so it was set to the default. The value is shown ONCE here,
         and a copy is also saved to a file on this machine (mode 600) before you close or reload this
         page. Change it to your own after you log in to the router's admin board.
@@ -414,7 +525,8 @@
         <code id="generated-password"></code>
         <button type="button" class="btn btn-secondary" id="copy-generated-password"
                 aria-label="Copy root password to clipboard"
-                onclick="copyGeneratedPassword()">Copy</button>
+                data-i18n-aria-label="credential.copyAria"
+                onclick="copyGeneratedPassword()" data-i18n="credential.copy">Copy</button>
       </div>
       <p class="hint" id="copy-generated-status" role="status"></p>
       <p class="hint" id="generated-credential-file" role="status"></p>
@@ -426,9 +538,9 @@
        wallet/mint health is still loading, so no price is advertised yet. -->
   <div id="pending-view" class="card hidden">
     <div class="error-msg" style="border-left:4px solid #f6ad55; text-align:left;">
-      <h2 style="color:#f6ad55;">TollGate installed — the merchant is still starting</h2>
+      <h2 style="color:#f6ad55;" data-i18n="pending.title">TollGate installed — the merchant is still starting</h2>
       <p id="pending-detail" style="margin-top:0.5rem; white-space:pre-wrap;"></p>
-      <button class="btn" style="margin-top:1rem;" id="recheck-btn" onclick="recheck()">Re-check</button>
+      <button class="btn" style="margin-top:1rem;" id="recheck-btn" onclick="recheck()" data-i18n="pending.recheck">Re-check</button>
       <p class="hint" id="recheck-status" role="status" style="margin-top:0.6rem;"></p>
     </div>
   </div>
@@ -436,9 +548,9 @@
   <!-- Error View -->
   <div id="error-view" class="card hidden">
     <div class="error-msg">
-      <h2>Setup failed</h2>
+      <h2 data-i18n="error.title">Setup failed</h2>
       <p id="error-detail" style="margin-top:0.5rem;"></p>
-      <button class="btn" style="margin-top:1rem;" onclick="location.reload()">Try again</button>
+      <button class="btn" style="margin-top:1rem;" onclick="location.reload()" data-i18n="error.retry">Try again</button>
     </div>
     <!-- One-time root credential, FAILURE path. A deploy can fail AFTER the
          router's root password had already been set (the package download, the
@@ -452,8 +564,8 @@
          secret) is persisted and served on every poll, so a missed one-shot
          read is still recoverable. -->
     <div class="credential hidden" id="failed-generated-credential" role="alert">
-      <h3>The router's new root password</h3>
-      <p class="credential-warn">
+      <h3 data-i18n="credential.title">The router's new root password</h3>
+      <p class="credential-warn" data-i18n="credential.warnFailure">
         This deploy failed AFTER the router's root password had already been set. The value is
         shown ONCE here, and a copy is also saved to a file on this machine (mode 600) before you close
         or reload this page — you will need it to reach the router.
@@ -462,7 +574,8 @@
         <code id="failed-generated-password"></code>
         <button type="button" class="btn btn-secondary" id="copy-failed-generated-password"
                 aria-label="Copy root password to clipboard"
-                onclick="copyFailedGeneratedPassword()">Copy</button>
+                data-i18n-aria-label="credential.copyAria"
+                onclick="copyFailedGeneratedPassword()" data-i18n="credential.copy">Copy</button>
       </div>
       <p class="hint" id="copy-failed-generated-status" role="status"></p>
       <p class="hint" id="failed-credential-file" role="status"></p>
@@ -471,6 +584,80 @@
 </div>
 
 <script>
+// ── i18n ───────────────────────────────────────────────────────────────────
+// Text comes from the server (window.__I18N, written into this page at request
+// time by i18n_surface.go) and from nowhere else. t() is the ONLY way this
+// script produces a human-readable sentence; a bare string here is a defect
+// that i18n_lint_test.go fails on.
+//
+// {placeholder} substitution replaces the LAST occurrence of each named token,
+// so a translation may reorder them freely ("{ip} selected" vs "Sélectionné :
+// {ip}") without the call site caring.
+const I18N = (window.__I18N && typeof window.__I18N === 'object') ? window.__I18N : {};
+const LANG = window.__LANG || 'en';
+
+function t(key) {
+  const s = I18N[key];
+  if (typeof s !== 'string') return key;
+  if (arguments.length < 2) return s;
+  let out = s;
+  const vars = arguments[1] || {};
+  Object.keys(vars).forEach(function (name) {
+    out = out.split('{' + name + '}').join(String(vars[name]));
+  });
+  return out;
+}
+
+// applyI18n writes every keyed node's text as TEXT, never as markup: several of
+// these strings sit next to router-supplied values, and the page is served from
+// the origin that holds the router password (dom_sink_test.go).
+function applyI18n(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(function (el) {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+    el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder')));
+  });
+  scope.querySelectorAll('[data-i18n-aria-label]').forEach(function (el) {
+    el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria-label')));
+  });
+  document.documentElement.lang = LANG;
+  document.documentElement.dir = window.__DIR || 'ltr';
+  document.title = t('title');
+}
+
+// buildLanguagePicker offers ONLY locales that have a catalogue: the list comes
+// from the server, so the picker can never advertise a language the wizard
+// cannot render (see i18n.ShippedLanguages).
+function buildLanguagePicker() {
+  const sel = document.getElementById('lang-select');
+  if (!sel) return;
+  sel.textContent = '';
+  (window.__LANGS || []).forEach(function (l) {
+    const opt = document.createElement('option');
+    opt.value = l.tag;
+    // The label is the language's OWN name, so a reader who cannot read the
+    // current UI language can still find theirs.
+    opt.textContent = l.label;
+    if (l.tag === LANG) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// onLanguageChange persists the explicit choice and reloads. The cookie is what
+// the SERVER reads on the next request, and it outranks Accept-Language there —
+// a picker that only re-rendered client-side would reset on the next navigation
+// and read as broken (i18n.Resolve, "saved" rung).
+function onLanguageChange() {
+  const sel = document.getElementById('lang-select');
+  if (!sel || !sel.value) return;
+  const secure = location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = 'tollgate_i18n=' + encodeURIComponent(sel.value) +
+    '; Path=/; Max-Age=31536000; SameSite=Lax' + secure;
+  location.reload();
+}
+
 let detectedRouters = [];
 let pollTimer = null;
 // Default WAN (ethernet) — STA/repeater requires a successful WiFi scan
@@ -504,10 +691,12 @@ async function loadBuildInfo() {
     el.textContent = `tollgate-wrt ${c.feed_pkg_version}${modulePart} · ${c.feed_repo} `
       + `(${c.feed_release_tag}) — installer build ${c.installer_version} (${c.installer_commit})`;
   } catch (e) {
-    el.textContent = 'version info unavailable on this installer build';
+    el.textContent = t('error.versionUnavailable');
   }
 }
 loadBuildInfo();
+applyI18n();
+buildLanguagePicker();
 
 function selectMode(mode) {
   upstreamMode = mode;
@@ -548,7 +737,7 @@ function togglePassword(inputId, buttonId) {
   }
   // The label always describes what the NEXT click does.
   button.setAttribute('aria-pressed', wasHidden ? 'true' : 'false');
-  button.setAttribute('aria-label', wasHidden ? 'Hide password' : 'Show password');
+  button.setAttribute('aria-label', wasHidden ? t('password.hide') : t('password.show'));
 }
 
 // Force one field back to hidden and its toggle back to "Show password".
@@ -558,7 +747,7 @@ function resetPasswordReveal(inputId, buttonId) {
   if (!input || !button) return;
   if (input.type !== 'password') input.type = 'password';
   button.setAttribute('aria-pressed', 'false');
-  button.setAttribute('aria-label', 'Show password');
+  button.setAttribute('aria-label', t('password.show'));
 }
 
 // A password field that is emptied must never stay revealed.
@@ -579,7 +768,7 @@ function onPasswordChange() {
     // Keep the list that is already on screen; just say it may be stale.
     if (scannedSSIDs.length > 0) {
       const ssidHint = document.getElementById('ssid-hint');
-      if (ssidHint) ssidHint.textContent = 'Router password changed — press Rescan to refresh the network list.';
+      if (ssidHint) ssidHint.textContent = t('wifi.passwordChanged');
     }
   }
   // Re-identify the selected router with the new password (debounced) so the
@@ -589,6 +778,20 @@ function onPasswordChange() {
   // The router password is also what pre-staging SSHes with — restart it.
   schedulePreStage();
   checkReady();
+}
+
+// setOptionPlaceholder replaces a <select>'s options with ONE placeholder that
+// carries `text`. It exists instead of assigning option markup as a string,
+// because the text is now translated, and dom_sink_test.go (rightly) allows
+// raw markup only for a STATIC literal — anything that varies must be built as
+// nodes.
+function setOptionPlaceholder(sel, text) {
+  if (!sel) return;
+  sel.textContent = '';
+  const opt = document.createElement('option');
+  opt.value = '';
+  opt.textContent = text;
+  sel.appendChild(opt);
 }
 
 function onRouterChange() {
@@ -608,7 +811,7 @@ function onRouterChange() {
     wifiTestState = 'idle';
     setWifiTestStatus('idle', '');
     const ssidSelect = document.getElementById('ssid');
-    ssidSelect.innerHTML = '<option value="">Select router, then Rescan...</option>';
+    setOptionPlaceholder(ssidSelect, t('upstream.ssidSelectRouterFirst'));
     ssidSelect.disabled = true;
   }
   // Re-identify the newly selected router (password if already typed).
@@ -631,7 +834,7 @@ async function startPreStage() {
   const ip = selectedRouterIP();
   if (!ip) { setPrestageStatus('idle', ''); return; }
   prestageJobId = '';
-  setPrestageStatus('running', 'Pre-downloading packages...', 0, 0);
+  setPrestageStatus('running', t('prestage.running'), 0, 0);
   try {
     const resp = await fetch('/api/prestage', {
       method: 'POST',
@@ -658,17 +861,17 @@ function pollPreStage(id) {
       if (st.status === 'done') {
         clearInterval(window._prestagePoll);
         const tot = st.progressTotal || 0;
-        setPrestageStatus('done', 'Packages pre-downloaded', tot, tot);
+        setPrestageStatus('done', t('prestage.done'), tot, tot);
       } else if (st.status === 'failed') {
         clearInterval(window._prestagePoll);
         prestageJobId = '';
-        setPrestageStatus('failed', 'Pre-download failed: ' + (st.error || 'unknown error'),
+        setPrestageStatus('failed', t('prestage.failed', { error: st.error || t('prestage.unknownError') }),
                           st.progressCurrent || 0, st.progressTotal || 0);
       } else {
         const running = (st.steps || []).find(s => s.status === 'running');
         const cur = st.progressCurrent || 0;
         const tot = st.progressTotal || 0;
-        const base = running ? running.desc : 'Pre-downloading packages...';
+        const base = running ? running.desc : t('prestage.running');
         const msg = tot > 0 ? base + ' (' + cur + '/' + tot + ')' : base;
         setPrestageStatus('running', msg, cur, tot);
       }
@@ -727,9 +930,9 @@ async function testUpstreamWifi() {
   const ssid = document.getElementById('ssid').value;
   if (!ip || !ssid) return;
   const wifiPass = document.getElementById('wifi-pass').value;
-  if (!wifiPass) { setWifiTestStatus('idle', 'Enter the WiFi password to test'); checkReady(); return; }
+  if (!wifiPass) { setWifiTestStatus('idle', t('wifi.enterPassword')); checkReady(); return; }
   wifiTestState = 'testing';
-  setWifiTestStatus('testing', 'Testing WiFi connection...');
+  setWifiTestStatus('testing', t('wifi.testing'));
   checkReady();
   try {
     const resp = await fetch('/api/wifi-test', {
@@ -746,9 +949,9 @@ async function testUpstreamWifi() {
     const data = await resp.json();
     if (data.ok) {
       wifiTestState = 'ok';
-      setWifiTestStatus('ok', 'WiFi OK: ' + (data.message || ssid));
+      setWifiTestStatus('ok', t('wifi.ok', { detail: data.message || ssid }));
     } else {
-      const msg = data.error || 'WiFi test failed';
+      const msg = data.error || t('wifi.failed');
       if (/not running OpenWrt/i.test(msg)) {
         // Stock firmware: the check only works after flashing — not a failure.
         wifiTestState = 'unavailable';
@@ -760,7 +963,7 @@ async function testUpstreamWifi() {
     }
   } catch (e) {
     wifiTestState = 'failed';
-    setWifiTestStatus('failed', 'WiFi test failed — is the router reachable?');
+    setWifiTestStatus('failed', t('wifi.failedReachable'));
   }
   checkReady();
 }
@@ -782,25 +985,25 @@ async function wifiScan() {
 
   // Password may be empty — fresh-reset OpenWrt routers have no root password.
   if (!ip) {
-    ssidSelect.innerHTML = '<option value="">Select a router first...</option>';
+    setOptionPlaceholder(ssidSelect, t('wifi.scanSelectFirst'));
     ssidSelect.disabled = true;
-    ssidHint.textContent = 'Select a router to enable WiFi scan.';
+    ssidHint.textContent = t('wifi.scanSelectRouter');
     return;
   }
 
   // Latch: never run two scans at once (see wifiScanInFlight).
   if (wifiScanInFlight) {
-    ssidHint.textContent = 'A scan is already running — waiting for it to finish...';
+    ssidHint.textContent = t('wifi.scanInFlight');
     return;
   }
   wifiScanInFlight = true;
   const scanToken = ++wifiScanToken;
 
   // Show scanning state
-  ssidSelect.innerHTML = '<option value="">Scanning...</option>';
+  setOptionPlaceholder(ssidSelect, t('wifi.scanStart'));
   ssidSelect.disabled = true;
   rescanBtn.disabled = true;
-  ssidHint.textContent = 'Scanning for nearby WiFi networks...';
+  ssidHint.textContent = t('wifi.scanning');
 
   try {
     const resp = await fetch('/api/wifi-scan', {
@@ -822,7 +1025,7 @@ async function wifiScan() {
       // problem, and reporting it as "no networks detected" is what sent the
       // operator hunting for one.
       const evidence = data.log || data.debug;
-      ssidSelect.innerHTML = '<option value="">Scan failed</option>';
+      setOptionPlaceholder(ssidSelect, t('wifi.scanFailed'));
       if (isHostKeyRefusal(data.error)) {
         // Not a password problem: show the refusal as-is and surface the trust
         // control next to the router, which is the only thing that can fix it.
@@ -839,7 +1042,7 @@ async function wifiScan() {
       } else {
         ssidHint.textContent = evidence
           ? data.error
-          : data.error + ' — check router password and try Rescan.';
+          : t('wifi.scanCheckPassword', { error: data.error });
       }
       ssidSelect.disabled = true;
       wifiScanned = false;
@@ -848,14 +1051,14 @@ async function wifiScan() {
 
     scannedSSIDs = data.ssids || [];
     if (scannedSSIDs.length === 0) {
-      ssidSelect.innerHTML = '<option value="">No networks found</option>';
+      setOptionPlaceholder(ssidSelect, t('wifi.noNetworks'));
       // The server now reports which strategies it tried (data.log) and what
       // the router last said (data.debug) — show them instead of a bare
       // "not detected", so the real refusal is visible to the operator.
       const detail = data.log || data.debug;
       ssidHint.textContent = detail
-        ? 'Scan returned no network list. Attempts: ' + detail
-        : 'Scan returned no network list. Try Rescan.';
+        ? t('wifi.noNetworkListAttempts', { detail: detail })
+        : t('wifi.noNetworkList');
       ssidSelect.disabled = true;
       wifiScanned = true;
       return;
@@ -865,7 +1068,7 @@ async function wifiScan() {
     ssidSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = 'Select a network...';
+    placeholder.textContent = t('wifi.selectNetwork');
     ssidSelect.appendChild(placeholder);
 
     scannedSSIDs.forEach(s => {
@@ -882,27 +1085,28 @@ async function wifiScan() {
 
     ssidSelect.disabled = false;
     wifiScanned = true;
-    ssidHint.textContent = 'Found ' + scannedSSIDs.length + ' network(s)'
-      + (data.strategy ? ' via ' + data.strategy : '') + '. Select one to repeat.';
+    ssidHint.textContent = data.strategy
+      ? t('wifi.foundVia', { n: scannedSSIDs.length, strategy: data.strategy })
+      : t('wifi.found', { n: scannedSSIDs.length });
     ssidSelect.onchange = function() {
       const sel = ssidSelect.options[ssidSelect.selectedIndex];
       const enc = sel ? sel.dataset.encryption : '';
       const band = sel ? sel.dataset.band : '';
       const bandTxt = band ? ' \u00b7 ' + band + ' GHz' : '';
       if (enc && enc !== 'unknown' && enc !== 'none') {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Encryption: ' + enc + bandTxt;
+        ssidHint.textContent = t('wifi.selectedEnc', { ssid: ssidSelect.value, enc: enc }) + bandTxt;
       } else if (enc === 'none') {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + ' — Open network (no password needed)' + bandTxt;
+        ssidHint.textContent = t('wifi.selectedOpen', { ssid: ssidSelect.value }) + bandTxt;
       } else {
-        ssidHint.textContent = 'Selected: ' + ssidSelect.value + bandTxt;
+        ssidHint.textContent = t('wifi.selected', { ssid: ssidSelect.value }) + bandTxt;
       }
       // Selecting a network re-runs the proactive WiFi check (which is also
       // debounced on password typing).
       onSsidChange();
     };
   } catch (e) {
-    ssidSelect.innerHTML = '<option value="">Scan failed</option>';
-    ssidHint.textContent = 'Network error during scan. Try Rescan.';
+    setOptionPlaceholder(ssidSelect, t('wifi.scanFailed'));
+    ssidHint.textContent = t('wifi.networkError');
     ssidSelect.disabled = true;
     wifiScanned = false;
   } finally {
@@ -923,14 +1127,14 @@ function showMovedRouterHint(ip) {
   box.className = 'hint-action';
 
   const line = document.createElement('div');
-  line.textContent = 'A router answers at ' + ip + '. Rescan to select it, then run the scan again.';
+  line.textContent = t('wifi.movedRouter', { ip: ip });
   box.appendChild(line);
 
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'use-suggested-router';
   btn.className = 'btn btn-secondary';
-  btn.textContent = 'Rescan for routers';
+  btn.textContent = t('wifi.rescanForRouters');
   btn.addEventListener('click', async function () {
     btn.disabled = true;
     try {
@@ -993,7 +1197,7 @@ async function scan() {
   setManualAddressVisible(true);
   clearScanFailure();
   const status = document.getElementById('scan-status');
-  if (status) status.textContent = 'Scanning for routers on your network...';
+  if (status) status.textContent = t('scan.scanning');
 
   // A client-side watchdog as well as the server-side fix: an aborted fetch is a
   // state we can explain, an indefinite wait is not.
@@ -1005,7 +1209,7 @@ async function scan() {
     detectedRouters = data.routers || [];
 
     if (detectedRouters.length === 0) {
-      if (status) status.textContent = 'No routers answered. Here is what was tried.';
+      if (status) status.textContent = t('scan.none');
       renderScanFailure(data.diagnostics);
       return;
     }
@@ -1016,9 +1220,7 @@ async function scan() {
     // JSON, or the watchdog fired - reaches the SAME diagnostic path instead of
     // a bare sentence that names nothing.
     const timedOut = !!(e && e.name === 'AbortError');
-    if (status) status.textContent = timedOut
-      ? 'The scan did not finish in time. Here is what was tried.'
-      : 'The scan could not be read. Here is what was tried.';
+    if (status) status.textContent = timedOut ? t('scan.timeout') : t('scan.unreadable');
     renderScanFailure(null, timedOut);
   } finally {
     clearTimeout(timer);
@@ -1054,56 +1256,54 @@ function renderScanFailure(diag, timedOut) {
   };
 
   if (!diag) {
-    heading('Why the scan could not report');
-    row(timedOut
-      ? 'The installer did not answer within 20 seconds, so nothing is known about your network from this page.'
-      : 'The installer\u2019s answer could not be read, so nothing is known about your network from this page.');
-    heading('What to try');
-    row('1. Type the router\u2019s IP address in the box below and press "Use this address" - the wizard identifies it directly, without discovery.');
-    row('2. Then check the cable: on the GL-MT3000 the 2.5 GbE port is WAN and the 1 GbE port is LAN - plug into LAN.');
-    row('3. Or run the headless installer: bash <(curl -fsSL https://raw.githubusercontent.com/OpenTollGate/tollgate-installer/main/install-and-test.sh) <ROUTER-IP> \'\' <you@wallet.app>');
+    heading(t('scan.fail.heading'));
+    row(timedOut ? t('scan.fail.timeoutBody') : t('scan.fail.unreadableBody'));
+    heading(t('scan.fail.tryHeading'));
+    row(t('scan.fail.try1'));
+    row(t('scan.fail.try2'));
+    row(t('scan.fail.try3'));
     return;
   }
 
-  heading(diag.summary || 'The scan found nothing.');
+  heading(diag.summary || t('scan.fail.foundNothing'));
 
   const ifaces = diag.interfaces || [];
   if (ifaces.length) {
-    heading('Interfaces');
+    heading(t('scan.fail.interfaces'));
     ifaces.forEach(function (i) {
       let text = '  ' + i.name + '  ' + i.state + '  carrier=' + i.carrier;
       if (i.ipv4 && i.ipv4.length) text += '  ' + i.ipv4.join(' ');
-      if (i.virtual) text += '  [virtual: not scanned]';
+      if (i.virtual) text += '  ' + t('scan.fail.virtual');
       if (i.problem) text += '  \u2014 ' + i.problem;
       row(text);
     });
   }
 
   const gws = diag.gateways || [];
-  heading('Default gateway(s) from the routing table');
-  if (!gws.length) row('  (none \u2014 this host has no default route at all)');
+  heading(t('scan.fail.gateways'));
+  if (!gws.length) row('  ' + t('scan.fail.noGateway'));
   gws.forEach(function (g) { row('  ' + g); });
 
   const probes = diag.probes || [];
-  heading('Addresses probed: ' + probes.length);
+  heading(t('scan.fail.probed', { n: probes.length }));
   probes.forEach(function (p) {
     let text = '  ' + p.ip + '  [' + p.source + ']';
     if (p.detail) text += '  ' + p.detail;
     text += '  ssh=' + (p.ssh ? 'yes' : 'no') + '  http=' + (p.httpPort ? p.httpPort : 'none');
-    if (p.demoted) text += '  (not on your local subnet)';
+    if (p.demoted) text += '  ' + t('scan.fail.offSubnet');
     if (p.note) text += '  \u2014 ' + p.note;
     row(text);
   });
 
   const sources = diag.sources || [];
   if (sources.length) {
-    heading('Where the candidates came from');
+    heading(t('scan.fail.sources'));
     sources.forEach(function (s) { row('  ' + s); });
   }
 
   const rem = diag.remediation || [];
   if (rem.length) {
-    heading('What to try, in this order');
+    heading(t('scan.fail.remediation'));
     rem.forEach(function (s) { row('  ' + s); });
   }
 
@@ -1128,10 +1328,10 @@ async function useManualIP() {
   const ip = (document.getElementById('manual-ip').value || '').trim();
   const hint = document.getElementById('manual-hint');
   if (!validIPv4(ip)) {
-    if (hint) hint.textContent = 'That is not an IPv4 address. Use four numbers separated by dots, e.g. 192.168.1.1.';
+    if (hint) hint.textContent = t('manual.invalid');
     return;
   }
-  if (hint) hint.textContent = 'Identifying ' + ip + '...';
+  if (hint) hint.textContent = t('manual.identifying', { ip: ip });
   try {
     const resp = await fetch('/api/identify', {
       method: 'POST',
@@ -1140,7 +1340,7 @@ async function useManualIP() {
     });
     const info = await resp.json();
     if (!info || info.error) {
-      if (hint) hint.textContent = 'No answer from ' + ip + ' - check the cable, the port and the address.';
+      if (hint) hint.textContent = t('manual.noAnswer', { ip: ip });
       return;
     }
     const existing = detectedRouters.find(function (r) { return r.ip === ip; });
@@ -1155,11 +1355,13 @@ async function useManualIP() {
     // The address is a real dropdown entry now; collapse the manual card.
     setManualAddressVisible(false);
     showTrustHint(info);
-    if (hint) hint.textContent = ip + ' selected'
-      + ((info.note && !info.identified) ? ' - ' + info.note : '')
-      + '. Continue below.';
+    if (hint) {
+      hint.textContent = (info.note && !info.identified)
+        ? t('manual.selectedNote', { ip: ip, note: info.note })
+        : t('manual.selected', { ip: ip });
+    }
   } catch (e) {
-    if (hint) hint.textContent = 'Could not reach the installer to identify ' + ip + '.';
+    if (hint) hint.textContent = t('manual.unreachable', { ip: ip });
   }
 }
 
@@ -1183,8 +1385,8 @@ function showSelectView() {
   // card is already open (below), so the operator is never stranded.
   const customOpt = document.createElement('option');
   customOpt.value = CUSTOM_ADDRESS;
-  customOpt.textContent = 'Enter a different address…';
-  customOpt.title = 'Type the router’s address when the scan missed it — for example the router is on a different subnet';
+  customOpt.textContent = t('select.custom');
+  customOpt.title = t('select.customTitle');
   select.appendChild(customOpt);
   setManualAddressVisible(detectedRouters.length === 0);
   // If the password was already typed (e.g. scan re-run), identify now.
@@ -1200,7 +1402,7 @@ function showSelectView() {
 function formatRouterLabel(r) {
   let name = (r.name && r.name !== 'unknown') ? r.name : '';
   if (!name) name = ((r.vendor || '') + ' ' + (r.model || '')).trim();
-  if (!name || name === 'unknown unknown' || name === 'unknown') name = 'Router';
+  if (!name || name === 'unknown unknown' || name === 'unknown') name = t('select.routerFallback');
   const fw = (r.firmware && r.firmware !== 'unknown') ? ' \u2014 ' + r.firmware : '';
   // The server classifies what answered: only a device that identified itself
   // (OpenWrt / GL.iNet firmware) is offered as a router, and identified ones are
@@ -1243,22 +1445,22 @@ function showTrustHint(r) {
     const fingerprint = (r && r.ssh_fingerprint) ? r.ssh_fingerprint : '';
     const lead = document.createElement('div');
     lead.className = 'hint-lead';
-    lead.textContent = "Waiting for you: this router's SSH key is not trusted yet, so nothing has been sent to it.";
+    lead.textContent = t('trust.lead');
     el.appendChild(lead);
     if (fingerprint) {
       const fpLine = document.createElement('div');
       fpLine.className = 'hint-fp';
-      fpLine.textContent = 'Fingerprint: ' + fingerprint;
+      fpLine.textContent = t('trust.fingerprint', { fp: fingerprint });
       el.appendChild(fpLine);
     }
     const next = document.createElement('div');
     next.textContent = fingerprint
-      ? 'Check that fingerprint on the router\'s own console, then press Deploy: the wizard asks once, remembers the key, and only then sends your router password.'
-      : 'Verify the router on its own console, then press Deploy.';
+      ? t('trust.nextWithFp')
+      : t('trust.nextNoFp');
     el.appendChild(next);
     const det = document.createElement('details');
     const sum = document.createElement('summary');
-    sum.textContent = "Installer's full message";
+    sum.textContent = t('trust.rawSummary');
     const rawEl = document.createElement('div');
     rawEl.className = 'hint-raw';
     rawEl.textContent = msg; // textContent: router-supplied strings never reach the parser
@@ -1305,7 +1507,7 @@ function clearTrustHint() {
 // confirmation made the error view visible — it did not.)
 function showError(msg) {
   const detail = document.getElementById('error-detail');
-  if (detail) detail.textContent = msg || 'Something went wrong.';
+  if (detail) detail.textContent = msg || t('error.generic');
   const view = document.getElementById('error-view');
   if (view) view.classList.remove('hidden');
 }
@@ -1319,7 +1521,7 @@ function showError(msg) {
 function showCredentialFile(path) {
   for (const id of ['generated-credential-file', 'failed-credential-file']) {
     const el = document.getElementById(id);
-    if (el) el.textContent = path ? ('A copy is saved on this machine: ' + path) : '';
+    if (el) el.textContent = path ? t('credential.savedTo', { path: path }) : '';
   }
 }
 
@@ -1328,7 +1530,7 @@ function showCredentialFile(path) {
 // no price is advertised yet. Re-check re-probes without re-deploying.
 function showPending(note) {
   const el = document.getElementById('pending-detail');
-  if (el) el.textContent = note || 'The merchant is still loading its wallet and mint health.';
+  if (el) el.textContent = note || t('pending.detail');
   const v = document.getElementById('pending-view');
   if (v) v.classList.remove('hidden');
 }
@@ -1340,7 +1542,7 @@ async function recheck() {
   const btn = document.getElementById('recheck-btn');
   const st = document.getElementById('recheck-status');
   if (btn) btn.disabled = true;
-  if (st) { st.textContent = 'Re-checking the router...'; st.style.color = '#8892b0'; }
+  if (st) { st.textContent = t('pending.rechecking'); st.style.color = '#8892b0'; }
   try {
     const resp = await fetch('/api/recheck', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1352,20 +1554,20 @@ async function recheck() {
     });
     const info = await resp.json().catch(() => ({}));
     if (info && info.state === 'healthy') {
-      if (st) { st.textContent = 'The merchant is up — the board and the captive portal are live.'; st.style.color = 'var(--tg-green)'; }
+      if (st) { st.textContent = t('pending.up'); st.style.color = 'var(--tg-green)'; }
       setTimeout(() => {
         document.getElementById('pending-view').classList.add('hidden');
         document.getElementById('success-view').classList.remove('hidden');
       }, 1200);
     } else if (info && info.state === 'starting') {
-      if (st) { st.textContent = 'Still starting — give it another minute, then Re-check again.'; st.style.color = '#f6ad55'; }
+      if (st) { st.textContent = t('pending.starting'); st.style.color = '#f6ad55'; }
     } else if (info && info.error) {
       if (st) { st.textContent = info.error; st.style.color = '#ff8a80'; }
     } else {
-      if (st) { st.textContent = 'Could not reach the router — it may still be coming up.'; st.style.color = '#f6ad55'; }
+      if (st) { st.textContent = t('pending.unreachable'); st.style.color = '#f6ad55'; }
     }
   } catch (e) {
-    if (st) { st.textContent = 'Re-check failed: ' + e.message; st.style.color = '#ff8a80'; }
+    if (st) { st.textContent = t('pending.failed', { error: e.message }); st.style.color = '#ff8a80'; }
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -1404,15 +1606,11 @@ async function ensureRouterHostKeyTrusted(ip, password) {
   if (!refusal || !fingerprint) return true;
 
   const ok = window.confirm(
-    "Trust this router's SSH host key, then continue?\n\n" +
-    fingerprint + "\n\n" +
-    "Verify this exact fingerprint on the router's console first, e.g.\n" +
-    "  ssh-keygen -lf /etc/dropbear/dropbear_ed25519_host_key.pub\n\n" +
-    "It is remembered, so you will not be asked again for this router.\n\n" +
-    "Trusting a key you have not verified would send your router password to " +
-    "an impostor on the LAN.");
+    t('trust.confirmTitle') + '\n\n' +
+    fingerprint + '\n\n' +
+    t('trust.confirmBody'));
   if (!ok) {
-    showError("Cancelled: the router's SSH host key was not confirmed. Nothing was sent to the router.");
+    showError(t('trust.cancelled'));
     return false;
   }
 
@@ -1424,12 +1622,11 @@ async function ensureRouterHostKeyTrusted(ip, password) {
     });
     const data = await resp.json();
     if (!resp.ok || !data || data.trusted !== true) {
-      showError((data && data.error) ? data.error :
-        "Could not trust the router's host key. Nothing was sent to the router.");
+      showError((data && data.error) ? data.error : t('trust.failed'));
       return false;
     }
   } catch (e) {
-    showError("Could not reach the installer to record the trust decision. Nothing was sent to the router.");
+    showError(t('trust.installerUnreachable'));
     return false;
   }
   clearTrustHint();
@@ -1456,12 +1653,9 @@ async function trustHostKey() {
   if (!ip || !fingerprint) return;
 
   const ok = window.confirm(
-    "Trust this router's SSH host key?\n\n" +
-    fingerprint + "\n\n" +
-    "Verify this exact fingerprint on the router's console first, e.g.\n" +
-    "  ssh-keygen -lf /etc/dropbear/dropbear_ed25519_host_key.pub\n\n" +
-    "Trusting a key you have not verified would send your router password to " +
-    "an impostor on the LAN.");
+    t('trust.confirmTitlePlain') + '\n\n' +
+    fingerprint + '\n\n' +
+    t('trust.confirmBody'));
   if (!ok) return;
 
   const btn = document.getElementById('trust-btn');
@@ -1475,7 +1669,7 @@ async function trustHostKey() {
     const data = await resp.json();
     if (!resp.ok) {
       const hint = document.getElementById('trust-hint');
-      if (hint) hint.textContent = data.error || 'Could not trust the router host key.';
+      if (hint) hint.textContent = data.error || t('trust.failed');
       // The router is presenting a key that differs from the one this prompt was
       // built with (re-keyed, a different device on this address, or an
       // impostor). Cache the CURRENT one so the next click confirms what is
@@ -1488,9 +1682,8 @@ async function trustHostKey() {
       if (data.ssh_fingerprint && data.ssh_fingerprint !== fingerprint) {
         window._trustFingerprint = data.ssh_fingerprint;
         if (hint) {
-          hint.textContent = (data.error || '') +
-            '\n\nThe router now presents ' + data.ssh_fingerprint +
-            ' — verify THAT on the router console, then click Trust again to confirm it.';
+          hint.textContent = (data.error || '') + '\n\n' +
+            t('trust.staleKey', { fp: data.ssh_fingerprint });
         }
       }
       return;
@@ -1508,7 +1701,7 @@ async function trustHostKey() {
     // stand.
     const hint = document.getElementById('trust-hint');
     if (hint && !hint.textContent && data && data.store) {
-      hint.textContent = 'Router host key trusted and remembered in ' + data.store + '.';
+      hint.textContent = t('trust.remembered', { store: data.store });
       hint.classList.remove('hidden');
     }
     // Restart the pre-download that selection-time pre-staging had to skip while
@@ -1516,7 +1709,7 @@ async function trustHostKey() {
     schedulePreStage();
   } catch (e) {
     const hint = document.getElementById('trust-hint');
-    if (hint) hint.textContent = 'Network error while trusting the router host key.';
+    if (hint) hint.textContent = t('trust.networkError');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -1573,13 +1766,13 @@ function renderPasswordStatus(status) {
   const el = document.getElementById('password-status');
   if (!el) return;
   const map = {
-    not_required: ['\u2713', '#4ade80', 'This router needs no password \u2014 continue.'],
-    accepted:    ['\u2713', '#4ade80', 'Router password accepted.'],
-    refused:     ['\u2717', '#ff8a80', 'Wrong router password \u2014 the router refused the login.'],
-    missing:     ['\u2717', '#ff8a80', 'This router needs a root password (it refused an empty one).'],
-    untrusted:   ['\u26A0', '#f6ad55', 'Router host key not trusted \u2014 trust it, then the password is checked.'],
-    unreachable: ['\u25CF', '#8892b0', 'Router not reachable over SSH yet \u2014 check the address and cable.'],
-    unknown:     ['\u25CF', '#8892b0', 'Could not verify the password yet.'],
+    not_required: ['\u2713', '#4ade80', t('password.status.notRequired')],
+    accepted:    ['\u2713', '#4ade80', t('password.status.accepted')],
+    refused:     ['\u2717', '#ff8a80', t('password.status.refused')],
+    missing:     ['\u2717', '#ff8a80', t('password.status.missing')],
+    untrusted:   ['\u26A0', '#f6ad55', t('password.status.untrusted')],
+    unreachable: ['\u25CF', '#8892b0', t('password.status.unreachable')],
+    unknown:     ['\u25CF', '#8892b0', t('password.status.unknown')],
   };
   const m = map[status];
   if (!m) { el.textContent = ''; return; }
@@ -1626,10 +1819,10 @@ function checkReady() {
   const wifiPw = (document.getElementById('private-wifi-password') || {}).value || '';
   if (ready && adminPw !== '' && adminPw.length < 8) {
     ready = false;
-    hint = 'The router admin password must be at least 8 characters (or leave it blank for the default).';
+    hint = t('advanced.adminTooShort');
   } else if (ready && wifiPw !== '' && wifiPw.length < 8) {
     ready = false;
-    hint = 'The management WiFi password must be at least 8 characters (or leave it blank for the default).';
+    hint = t('advanced.wifiTooShort');
   }
   // STA (WiFi repeater) mode: the router's uplink IS the upstream WiFi, so
   // Deploy stays greyed out until that connection is CONFIRMED. "unavailable"
@@ -1641,18 +1834,18 @@ function checkReady() {
     const ssidVal = document.getElementById('ssid').value;
     if (!ssidVal) {
       ready = false;
-      hint = 'Select the upstream WiFi network.';
+      hint = t('deploy.selectUpstream');
     } else if (wifiTestState === 'ok' || wifiTestState === 'unavailable') {
       // confirmed — or deferred until after flashing for a stock router
     } else if (wifiTestState === 'testing') {
       ready = false;
-      hint = 'Testing the upstream WiFi connection…';
+      hint = t('deploy.testingUpstream');
     } else if (wifiTestState === 'failed') {
       ready = false;
-      hint = 'Fix the upstream WiFi connection to unlock Deploy.';
+      hint = t('deploy.fixUpstream');
     } else {
       ready = false;
-      hint = 'Enter the upstream WiFi password — Deploy unlocks after a successful test.';
+      hint = t('deploy.enterUpstreamPass');
     }
   }
   document.getElementById('deploy-btn').disabled = !ready;
@@ -1666,23 +1859,23 @@ async function prepareCleanSlate() {
   const version = document.getElementById('clean-slate-version').value;
   const info = document.getElementById('clean-slate-info');
   if (!ip) return;
-  info.textContent = 'Resolving board and published checksum...';
+  info.textContent = t('cleanSlate.resolving');
   const resp = await fetch('/api/clean-slate-info', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip, password, version}) });
   const data = await resp.json();
-  if (!resp.ok || data.error) { info.textContent = data.error || 'Unable to resolve clean-slate image.'; return; }
+  if (!resp.ok || data.error) { info.textContent = data.error || t('cleanSlate.unresolved'); return; }
   window._cleanSlateBoard = data.board;
   // Populate the confirm dropdown with the board the router reported, so the
   // operator PICKS it instead of typing the exact OpenWrt board string (a typo
   // there silently disables flashing). Left unselected so it stays a deliberate
   // confirmation, not an auto-filled no-op.
   const sel = document.getElementById('clean-slate-confirm');
-  sel.innerHTML = '<option value="">Select the detected board to enable flashing</option>';
+  setOptionPlaceholder(sel, t('cleanSlate.selectBoard'));
   const opt = document.createElement('option');
   opt.value = data.board;
   opt.textContent = data.board;
   sel.appendChild(opt);
   sel.value = '';
-  info.textContent = 'Board: ' + data.board + ' | Image: ' + data.image_url + ' | sha256: ' + data.sha256;
+  info.textContent = t('cleanSlate.detail', { board: data.board, image: data.image_url, sha: data.sha256 });
   checkCleanSlateReady();
 }
 function checkCleanSlateReady() {
@@ -1701,7 +1894,7 @@ async function startCleanSlate() {
   document.getElementById('deploy-view').classList.remove('hidden');
   const resp = await fetch('/api/clean-slate-flash', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ip, password, version, confirmation}) });
   const data = await resp.json();
-  if (!resp.ok || data.error) { showError(data.error || 'Clean-slate flash refused.'); return; }
+  if (!resp.ok || data.error) { showError(data.error || t('cleanSlate.refused')); return; }
   currentJobId = data.job_id;
   pollTimer = setInterval(() => pollStatus(data.job_id), 1000);
 }
@@ -1717,8 +1910,8 @@ async function startDeploy() {
   // which the admin board forces the operator to change at first login. A value
   // that IS supplied must still meet the length floor, so the wizard never sends
   // a too-short one.
-  if (adminPassword !== '' && adminPassword.length < 8) { showError('The router admin password must be at least 8 characters (or leave it blank for the default).'); return; }
-  if (privateWifiPassword !== '' && privateWifiPassword.length < 8) { showError('The management WiFi password must be at least 8 characters (or leave it blank for the default).'); return; }
+  if (adminPassword !== '' && adminPassword.length < 8) { showError(t('advanced.adminTooShort')); return; }
+  if (privateWifiPassword !== '' && privateWifiPassword.length < 8) { showError(t('advanced.wifiTooShort')); return; }
 
   // The host-key decision belongs to the action that sends the password. Ask
   // ONCE, here, naming the fingerprint — instead of letting the job fail later
@@ -1785,8 +1978,8 @@ function copyGeneratedPassword() {
   const code = document.getElementById('generated-password');
   const status = document.getElementById('copy-generated-status');
   if (!code || !code.textContent) return;
-  const ok = () => { if (status) status.textContent = 'Copied to clipboard.'; };
-  const fail = () => { if (status) status.textContent = 'Copy failed. Select the password above and copy it manually.'; };
+  const ok = () => { if (status) status.textContent = t('credential.copied'); };
+  const fail = () => { if (status) status.textContent = t('credential.copyFailed'); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(code.textContent).then(ok, fail);
   } else {
@@ -1820,8 +2013,8 @@ function copyFailedGeneratedPassword() {
   const code = document.getElementById('failed-generated-password');
   const status = document.getElementById('copy-failed-generated-status');
   if (!code || !code.textContent) return;
-  const ok = () => { if (status) status.textContent = 'Copied to clipboard.'; };
-  const fail = () => { if (status) status.textContent = 'Copy failed. Select the password above and copy it manually.'; };
+  const ok = () => { if (status) status.textContent = t('credential.copied'); };
+  const fail = () => { if (status) status.textContent = t('credential.copyFailed'); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(code.textContent).then(ok, fail);
   } else {
@@ -1859,7 +2052,16 @@ async function pollStatus(jobId) {
 
     const descEl = document.createElement('div');
     descEl.className = 'step-desc ' + step.status;
+    // The server has no idea which language this page was rendered in, so
+    // step.desc is always English. Write it first — it is the fallback — then
+    // replace it with the catalogue's step.<name> when that key exists. t()
+    // returns the key itself when a key is missing, so the assignment is
+    // guarded: without the guard a missing key would print "step.flash" into
+    // the operator's step list.
     descEl.textContent = step.desc;
+    const stepKey = 'step.' + step.name;
+    const stepLabel = step.name ? t(stepKey) : '';
+    if (stepLabel && stepLabel !== stepKey) descEl.textContent = stepLabel;
     if (step.detail) {
       const detailEl = document.createElement('div');
       detailEl.className = 'step-detail';
@@ -1907,7 +2109,7 @@ async function pollStatus(jobId) {
     showCredentialFile(job.credential_file);
     setTimeout(() => {
       document.getElementById('deploy-view').classList.add('hidden');
-      showError(job.error || 'Unknown error. Check the log above.');
+      showError(job.error || t('error.unknown'));
     }, 1500);
   } else if (job.status === 'pending') {
     clearInterval(pollTimer);

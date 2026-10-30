@@ -643,9 +643,11 @@ func TestScanUiNeverClaimsNoNetworks(t *testing.T) {
 	if !strings.Contains(html, "const evidence = data.log || data.debug;") {
 		t.Error("index.html does not gate the password hint on router evidence: a refusal is not a credential problem")
 	}
-	if !strings.Contains(html, "data.error + ' — check router password and try Rescan.'") {
+	// The hint text lives in the catalogue now; the page must still reach for it.
+	if !strings.Contains(html, "t('wifi.scanCheckPassword'") {
 		t.Error("index.html lost the password hint for responses with no router evidence at all")
 	}
+	requireCatalogueString(t, "wifi.scanCheckPassword", "check router password")
 }
 
 // legacyScanChain is the PRE-FIX chain, kept in the test file ONLY as the

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/OpenTollGate/tollgate-installer/internal/i18n"
 )
 
 // discover_diagnostics_test.go pins the two halves of the second half of the
@@ -429,12 +431,19 @@ func TestHandleScanReturnsDiagnostics(t *testing.T) {
 	}
 
 	// 2. Nothing found: the diagnostic block AND its rendered text travel.
+	//    The block's own sentences are translated server-side (i18n_diag.go), so
+	//    the fixture uses a catalogued sentence and this asserts the translation
+	//    rather than the English literal — otherwise this test would pin the
+	//    behaviour that a German operator sees English here.
+	englishSummary := "The scan found nothing."
 	scanNetworkFn = func() ScanResult {
-		d := ScanDiagnostics{Summary: "nothing answered", Text: "FULL FAILURE BLOCK"}
+		d := ScanDiagnostics{Summary: englishSummary, Text: "FULL FAILURE BLOCK"}
 		return ScanResult{Routers: []RouterInfo{}, Probes: []candidateProbe{{IP: "192.168.1.1"}}, Diagnostics: &d}
 	}
 	rr = httptest.NewRecorder()
-	handleScan(rr, httptest.NewRequest(http.MethodGet, "/api/scan", nil))
+	deReq := httptest.NewRequest(http.MethodGet, "/api/scan", nil)
+	deReq.Header.Set("Accept-Language", "de-DE,de;q=0.9")
+	handleScan(rr, deReq)
 	var failBody struct {
 		Routers     []RouterInfo     `json:"routers"`
 		Diagnostics *ScanDiagnostics `json:"diagnostics"`
@@ -443,11 +452,17 @@ func TestHandleScanReturnsDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &failBody); err != nil {
 		t.Fatalf("decode: %v (body %s)", err, rr.Body.String())
 	}
-	if failBody.Diagnostics == nil || failBody.Diagnostics.Summary != "nothing answered" {
-		t.Errorf("failed scan body = %s, want the structured diagnostics", rr.Body.String())
+	if failBody.Diagnostics == nil {
+		t.Fatalf("failed scan body = %s, want the structured diagnostics", rr.Body.String())
+	}
+	if failBody.Diagnostics.Summary == englishSummary {
+		t.Errorf("the diagnostics summary came back untranslated for a German request: %q", failBody.Diagnostics.Summary)
+	}
+	if want := i18n.T("de", "scan.fail.foundNothing"); failBody.Diagnostics.Summary != want {
+		t.Errorf("diagnostics summary = %q, want the German catalogue value %q", failBody.Diagnostics.Summary, want)
 	}
 	if failBody.Failure != "FULL FAILURE BLOCK" {
-		t.Errorf("failure = %q, want the rendered block", failBody.Failure)
+		t.Errorf("failure = %q, want the UNTRANSLATED rendered block (it is the deploy log's copy-pasteable text, not a page string)", failBody.Failure)
 	}
 	if failBody.Routers == nil {
 		t.Error("routers must serialise as [] and not null")

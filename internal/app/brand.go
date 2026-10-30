@@ -55,6 +55,29 @@ func sanitizeBrandToken(in string) string {
 	return t
 }
 
+// operatorTokenPattern matches the private-SSID operator token: letters, digits,
+// '-' and '_', at most 32 characters. The module accepts the same shape; the
+// token is a display name, not the device code.
+var operatorTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+
+// sanitizeOperatorToken returns the token when it is safe to carry in an SSID,
+// or "" when it is not. Empty means "use the shipped default".
+func sanitizeOperatorToken(in string) string {
+	t := strings.TrimSpace(in)
+	if t == "" || !operatorTokenPattern.MatchString(t) {
+		return ""
+	}
+	return t
+}
+
+// SetOperatorToken records the brand/operator build input for this process.
+// It is called from flag parsing, after the flag and env are merged.
+func SetOperatorToken(token string) {
+	if t := sanitizeOperatorToken(token); t != "" {
+		deviceIdentityDefaultOperator = t
+	}
+}
+
 // brandDisplaySpelling is the SSID-facing form of a token: first letter capitalised,
 // the same rule load_brand() applies to BRAND_HOSTNAME. Kept here so the installer and
 // the module agree on what a brand looks like without sharing code.
@@ -74,14 +97,16 @@ func brandedDeviceIdentity(code, token string) deviceIdentity {
 			Code:        code,
 			Hostname:    "tollgate-" + code,
 			SSID:        "!TollGate-" + code,
-			PrivateSSID: deviceIdentityDefaultNym + "-" + code,
+			Nym:         deviceIdentityDefaultOperator,
+			PrivateSSID: "Private-" + deviceIdentityDefaultOperator + "-" + code,
 		}
 	}
 	return deviceIdentity{
 		Code:        code,
 		Hostname:    t + "-" + code,
 		SSID:        "!" + brandDisplaySpelling(t) + "-" + code,
-		PrivateSSID: deviceIdentityDefaultNym + "-" + code,
+		Nym:         deviceIdentityDefaultOperator,
+		PrivateSSID: "Private-" + deviceIdentityDefaultOperator + "-" + code,
 	}
 }
 
