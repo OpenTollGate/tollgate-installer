@@ -170,6 +170,62 @@ func TestPollStatusPinsTheCredentialOnFailure(t *testing.T) {
 	}
 }
 
+// TestPollStatusNamesTheCredentialFileOnBothTerminalBranches pins the recovery
+// PATH wiring: credential_file is served on every /api/status read, and it is
+// the only thing that survives a missed one-shot read (closed tab, reload, a
+// poll that consumed the value). Deleting either showCredentialFile call used to
+// leave the whole suite green — an operator whose one-shot screen was missed
+// would then be told nothing about the file that holds the password.
+func TestPollStatusNamesTheCredentialFileOnBothTerminalBranches(t *testing.T) {
+	html := string(indexHTML)
+	poll := funcBody(t, html, "pollStatus")
+
+	doneStart := strings.Index(poll, "job.status === 'done'")
+	failStart := strings.Index(poll, "job.status === 'failed'")
+	if doneStart < 0 || failStart < 0 || failStart < doneStart {
+		t.Fatalf("could not isolate pollStatus's done/failed branches\n%s", poll)
+	}
+	doneBranch := poll[doneStart:failStart]
+	failBranch := poll[failStart:]
+
+	for name, branch := range map[string]string{"done": doneBranch, "failed": failBranch} {
+		if !strings.Contains(branch, "showCredentialFile(job.credential_file)") {
+			t.Errorf("the %s branch never names the recovery file — a missed one-shot read then leaves the operator with no way to find the credential\n--- %s branch ---\n%s", name, name, branch)
+		}
+		// Naming the path is useless if the value is not pinned first: the path
+		// is what makes the one-shot value recoverable, so it must be on screen
+		// in the same reveal.
+		if name == "failed" {
+			pin := strings.Index(branch, "pinFailedGeneratedCredential(")
+			show := strings.Index(branch, "showCredentialFile(")
+			if pin < 0 || show < 0 || show < pin {
+				t.Errorf("the failed branch names the recovery file before pinning the credential it belongs to\n--- failed branch ---\n%s", branch)
+			}
+		}
+	}
+
+	// The helper must render the PATH as text into both views' status lines and
+	// must not fabricate a claim when no path was written (a failed persist
+	// leaves credential_file empty).
+	show := funcBody(t, html, "showCredentialFile")
+	for _, want := range []string{
+		"getElementById(id)",
+		"'generated-credential-file'",
+		"'failed-credential-file'",
+		"textContent",
+		"path ?",
+	} {
+		if !strings.Contains(show, want) {
+			t.Errorf("showCredentialFile missing %s\n%s", want, show)
+		}
+	}
+	for _, forbidden := range []string{"innerHTML", "localStorage", "sessionStorage"} {
+		if strings.Contains(show, forbidden) {
+			t.Errorf("showCredentialFile must not use %s\n%s", forbidden, show)
+		}
+	}
+}
+
 // TestFailedGeneratedCredentialHelpersAreSafe pins the failure view's two helpers
 // the way TestGeneratedCredentialHelpersAreSafe pins the success view's: the value
 // is written as text (never markup), nothing persists it, and the copy control
