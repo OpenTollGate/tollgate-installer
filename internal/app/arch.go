@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -541,6 +542,83 @@ func pkgVersionMatches(installed, want string) bool {
 		return false
 	}
 	return installed == want || strings.HasPrefix(installed, want+"-")
+}
+
+// pkgVersionNewer reports whether installed is strictly newer than wanted.
+//
+// Only used for the downgrade guard: a router carrying a build newer than the
+// installer's resolved stable pin must be left alone unless the operator
+// explicitly asks for --allow-downgrade. The comparison is deliberately
+// conservative — numeric core first, then the pre-release rule (a final
+// release is newer than the same core's rc/alpha). Anything unparseable
+// returns false, so the installer keeps its historical behaviour instead of
+// guessing.
+func pkgVersionNewer(installed, wanted string) bool {
+	ic, ipre, ok := splitPkgVersion(installed)
+	if !ok {
+		return false
+	}
+	wc, wpre, ok := splitPkgVersion(wanted)
+	if !ok {
+		return false
+	}
+	n := len(ic)
+	if len(wc) > n {
+		n = len(wc)
+	}
+	for i := 0; i < n; i++ {
+		var a, b int
+		if i < len(ic) {
+			a = ic[i]
+		}
+		if i < len(wc) {
+			b = wc[i]
+		}
+		if a != b {
+			return a > b
+		}
+	}
+	if ipre == wpre {
+		return false
+	}
+	if ipre == "" {
+		return true // final release > same-core pre-release
+	}
+	if wpre == "" {
+		return false
+	}
+	return ipre > wpre
+}
+
+// splitPkgVersion extracts the numeric core and the pre-release suffix from an
+// OpenWrt package version. `0.6.0_alpha4_pre15-r1` → ([0,6,0], "alpha4_pre15").
+func splitPkgVersion(v string) ([]int, string, bool) {
+	v = normalizePkgVersionSpelling(v)
+	if v == "" {
+		return nil, "", false
+	}
+	// Drop the OpenWrt packaging counter (-r1/-r2).
+	if i := strings.LastIndex(v, "-r"); i > 0 {
+		suffix := v[i+2:]
+		if suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+			v = v[:i]
+		}
+	}
+	core := v
+	pre := ""
+	if i := strings.IndexAny(v, "-_"); i >= 0 {
+		core, pre = v[:i], v[i+1:]
+	}
+	parts := strings.Split(core, ".")
+	nums := make([]int, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, "", false
+		}
+		nums = append(nums, n)
+	}
+	return nums, pre, true
 }
 
 // pkgArchTupleRe matches a plausible canonical OpenWrt arch tuple: at least one

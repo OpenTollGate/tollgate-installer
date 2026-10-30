@@ -74,14 +74,14 @@ func brandedDeviceIdentity(code, token string) deviceIdentity {
 			Code:        code,
 			Hostname:    "tollgate-" + code,
 			SSID:        "!TollGate-" + code,
-			PrivateSSID: deviceIdentityDefaultNym + "-" + code,
+			PrivateSSID: privateSSIDPrefix + "-" + code,
 		}
 	}
 	return deviceIdentity{
 		Code:        code,
 		Hostname:    t + "-" + code,
 		SSID:        "!" + brandDisplaySpelling(t) + "-" + code,
-		PrivateSSID: deviceIdentityDefaultNym + "-" + code,
+		PrivateSSID: privateSSIDPrefix + "-" + code,
 	}
 }
 

@@ -14,8 +14,6 @@ import (
 // deployment must ship — and the ONLY set when test_mints is off.
 var wantProdMintURLs = []string{
 	"https://mint.coinos.io",
-	"https://mint.minibits.cash/Bitcoin",
-	"https://mint.lnserver.com",
 	"https://mint.macadamia.cash",
 	"https://mint.westernbtc.com",
 	"https://kashu.me",
@@ -37,7 +35,7 @@ func mintURLs(t *testing.T, raw string) []string {
 
 // TestDeployPayloadTestMintsDefaultOff is the core opt-in guarantee: a deploy
 // payload WITHOUT the test_mints field (or with it false) must produce a mint
-// config containing EXACTLY the 7 production mints and ZERO testnut entries.
+// config containing EXACTLY the 5 production mints and ZERO testnut entries.
 func TestDeployPayloadTestMintsDefaultOff(t *testing.T) {
 	payloads := []string{
 		// field absent entirely (legacy UI payloads)
@@ -56,8 +54,8 @@ func TestDeployPayloadTestMintsDefaultOff(t *testing.T) {
 			t.Errorf("payload %d: TestMints = true, want false (opt-in flag must default to false)", i)
 		}
 		got := mintURLs(t, defaultMintsJSON(req.TestMints))
-		if len(got) != 7 {
-			t.Errorf("payload %d: default mints count = %d, want exactly 7 (got %v)", i, len(got), got)
+		if len(got) != 5 {
+			t.Errorf("payload %d: default mints count = %d, want exactly 5 (got %v)", i, len(got), got)
 		}
 		for _, u := range got {
 			if strings.Contains(u, "testnut") {
@@ -71,7 +69,7 @@ func TestDeployPayloadTestMintsDefaultOff(t *testing.T) {
 }
 
 // TestDeployPayloadTestMintsOptIn: test_mints=true appends BOTH testnut
-// entries after the 7 production mints (9 total, order preserved).
+// entries after the 5 production mints (7 total, order preserved).
 func TestDeployPayloadTestMintsOptIn(t *testing.T) {
 	var req deployRequest
 	if err := json.Unmarshal([]byte(`{"ip":"192.168.1.1","password":"pw","lnurl":"test@wallet.app","test_mints":true}`), &req); err != nil {
@@ -81,18 +79,18 @@ func TestDeployPayloadTestMintsOptIn(t *testing.T) {
 		t.Fatal("TestMints = false, want true when payload sets test_mints:true")
 	}
 	got := mintURLs(t, defaultMintsJSON(req.TestMints))
-	if len(got) != 9 {
-		t.Fatalf("mints count = %d, want 9 (7 production + 2 testnut); got %v", len(got), got)
+	if len(got) != 7 {
+		t.Fatalf("mints count = %d, want 7 (5 production + 2 testnut); got %v", len(got), got)
 	}
 	want := append(append([]string{}, wantProdMintURLs...),
-		"https://nofee.testnut.cashu.space",
-		"https://testnut.cashu.space")
+		"https://testnut.cashu.space",
+		"https://testnut.cashu.exchange")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("mints = %v, want %v", got, want)
 	}
 	testnut := 0
 	for _, u := range got {
-		if strings.Contains(u, "testnut.cashu.space") {
+		if strings.Contains(u, "testnut") {
 			testnut++
 		}
 	}
@@ -111,7 +109,11 @@ func TestDefaultMintsJSONFieldValues(t *testing.T) {
 			t.Fatalf("include=%v: %v", include, err)
 		}
 		for _, m := range mints {
-			if m.PriceUnit != "sats" || m.PricePerStep != 1 || m.MinPurchaseSteps != 0 {
+			wantPrice := 10
+			if strings.Contains(m.URL, "testnut") {
+				wantPrice = 1
+			}
+			if m.PriceUnit != "sats" || m.PricePerStep != wantPrice || m.PurchaseMinSteps != 1 {
 				t.Errorf("mint %s: unexpected pricing fields %+v", m.URL, m)
 			}
 			if strings.Contains(m.URL, "testnut") {
@@ -220,7 +222,6 @@ func TestMintConfigJqMerge(t *testing.T) {
 			// $dm merge skips it ($have already includes it): same SET as the
 			// production list, but kashu sits at its appended slot.
 			want: []string{"https://mint.coinos.io", "https://kashu.me",
-				"https://mint.minibits.cash/Bitcoin", "https://mint.lnserver.com",
 				"https://mint.macadamia.cash", "https://mint.westernbtc.com",
 				"https://mint.cubabitcoin.org"},
 			wantMargin: 5, wantOwnerF: 0.9, wantDevF: 0.1,
@@ -239,8 +240,8 @@ func TestMintConfigJqMerge(t *testing.T) {
 			mintArg: "",
 			testnut: true,
 			want: append(append([]string{}, wantProdMintURLs...),
-				"https://nofee.testnut.cashu.space",
-				"https://testnut.cashu.space"),
+				"https://testnut.cashu.space",
+				"https://testnut.cashu.exchange"),
 			wantMargin: 5, wantOwnerF: 0.9, wantDevF: 0.1,
 		},
 	}
@@ -292,20 +293,20 @@ func TestMintConfigJqMerge(t *testing.T) {
 // must embed the operator mint as a shell-SINGLE-QUOTED jq --arg so an
 // empty/spacey mint cannot consume the filter or corrupt the command.
 func TestConfigJqCmdQuotesOperatorMint(t *testing.T) {
-	cmd := configJqCmd(5, "0.9000", "0.1000", "", false)
+	cmd := configJqCmd(5, "0.9000", "0.1000", "", false, nil, 60000, nil)
 	// Empty mint must still be single-quoted: `--arg mu ''`.
 	if !strings.Contains(cmd, "--arg mu '' ") {
 		t.Errorf("empty mint must be single-quoted (--arg mu ''):\n%s", cmd)
 	}
 	// A mint with a space/shell char must be fully single-quoted.
 	spacey := "https://mint.example.com/foo bar"
-	cmd2 := configJqCmd(5, "0.9000", "0.1000", spacey, false)
+	cmd2 := configJqCmd(5, "0.9000", "0.1000", spacey, false, nil, 60000, nil)
 	if !strings.Contains(cmd2, "--arg mu 'https://mint.example.com/foo bar' ") {
 		t.Errorf("spacey mint must be single-quoted verbatim:\n%s", cmd2)
 	}
 	// Embedded single quote must be escaped so it cannot break out.
 	quote := "https://mint.example.com/x'y"
-	cmd3 := configJqCmd(5, "0.9000", "0.1000", quote, false)
+	cmd3 := configJqCmd(5, "0.9000", "0.1000", quote, false, nil, 60000, nil)
 	if strings.Contains(cmd3, "--arg mu 'https://mint.example.com/x'y' ") {
 		t.Errorf("mint with a single quote must be escaped (not raw-interpolated):\n%s", cmd3)
 	}

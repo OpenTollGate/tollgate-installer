@@ -329,11 +329,11 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 		{
 			name: "the store is authoritative over every other name",
 			seed: []string{
-				"tollgate.device=device", "tollgate.device.code=OQ3Q", "tollgate.device.nym=c08r4d0r",
+				"tollgate.device=device", "tollgate.device.code=OQ3Q", "tollgate.device.nym=noderunner-private",
 				"system.@system[0].hostname=tollgate-ZZZZ",
 				"wireless.tollgate_2g_open.ssid=TollGate-1111",
 			},
-			wantCode: "OQ3Q", wantSource: "store", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "store", wantNym: "noderunner-private", wantPrivate: "noderunner-private-OQ3Q",
 		},
 		{
 			name: "a lowercase store value is normalised",
@@ -341,7 +341,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"tollgate.device=device", "tollgate.device.code=oq3q",
 				"system.@system[0].hostname=tollgate-ZZZZ",
 			},
-			wantCode: "OQ3Q", wantSource: "store", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "store", wantNym: "noderunner-private", wantPrivate: "noderunner-private-OQ3Q",
 		},
 		{
 			name: "a junk store value is re-derived, never trusted",
@@ -349,7 +349,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"tollgate.device=device", "tollgate.device.code=nope!",
 				"system.@system[0].hostname=tollgate-7Q7Q",
 			},
-			wantCode: "7Q7Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7Q7Q",
+			wantCode: "7Q7Q", wantSource: "hostname", wantNym: "noderunner-private", wantPrivate: "noderunner-private-7Q7Q",
 		},
 		{
 			// The bench box: the installer wrote the hostname, a later deploy
@@ -359,7 +359,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-OQ3Q",
 				"wireless.tollgate_2g_open.ssid=tollgate-0GLK",
 			},
-			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "noderunner-private", wantPrivate: "noderunner-private-OQ3Q",
 		},
 		{
 			name: "a custom hostname is not a code source, the captive SSID is",
@@ -367,7 +367,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=OperatorBox",
 				"wireless.tollgate_2g_open.ssid=TollGate-9K2M",
 			},
-			wantCode: "9K2M", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-9K2M",
+			wantCode: "9K2M", wantSource: "captive-ssid", wantNym: "noderunner-private", wantPrivate: "noderunner-private-9K2M",
 		},
 		{
 			// The guest-facing captive SSID now carries a leading '!' so it
@@ -381,7 +381,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=OperatorBox",
 				"wireless.tollgate_2g_open.ssid=!TollGate-7F3A",
 			},
-			wantCode: "7F3A", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7F3A",
+			wantCode: "7F3A", wantSource: "captive-ssid", wantNym: "noderunner-private", wantPrivate: "noderunner-private-7F3A",
 		},
 		{
 			name: "a stock default_radio0 SSID is a code source too",
@@ -389,7 +389,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=myrouter",
 				"wireless.default_radio0.ssid=tollgate-7Q7Q",
 			},
-			wantCode: "7Q7Q", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7Q7Q",
+			wantCode: "7Q7Q", wantSource: "captive-ssid", wantNym: "noderunner-private", wantPrivate: "noderunner-private-7Q7Q",
 		},
 		{
 			// The module mints <nym>-<suffix> with the operator's own nym; the
@@ -409,7 +409,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-OQ3Q",
 				"wireless.private_radio0.ssid=MyNewNetwork",
 			},
-			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "MyNewNetwork",
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "noderunner-private", wantPrivate: "MyNewNetwork",
 		},
 		{
 			// The private SSID is interpolated into a single-quoted shell line
@@ -421,7 +421,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-OQ3Q",
 				"wireless.private_radio0.ssid=x';reboot #-1234",
 			},
-			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "noderunner-private", wantPrivate: "noderunner-private-OQ3Q",
 		},
 	}
 
@@ -576,7 +576,7 @@ func TestBrandingWritesAllThreeIdentifiers(t *testing.T) {
 // everything after it — including the commits.
 func TestPrivateSSIDCommandIsANoOpWithoutTheSection(t *testing.T) {
 	env, statePath, _ := uciStubEnv(t, []string{"wireless.private_radio0=wifi-iface", "wireless.private_radio0.ssid=old"})
-	out := shRunEnv(t, env, privateSSIDCommand("private_radio9", "c08r4d0r-TEST")+" && echo CHAIN_OK")
+	out := shRunEnv(t, env, privateSSIDCommand("private_radio9", "noderunner-private-TEST")+" && echo CHAIN_OK")
 	if !strings.Contains(out, "CHAIN_OK") {
 		t.Fatalf("a missing private section truncated the chain:\n%s", out)
 	}
@@ -603,7 +603,7 @@ func TestPrivateSSIDCommandRefusesAValueItCannotQuote(t *testing.T) {
 	if !strings.Contains(unsafe, "not written") {
 		t.Errorf("expected a refusal for an unquotable value, got %q", unsafe)
 	}
-	if !ssidSafeForShell("c08r4d0r-OQ3Q") || ssidSafeForShell("x'y") || ssidSafeForShell("") {
+	if !ssidSafeForShell("noderunner-private-OQ3Q") || ssidSafeForShell("x'y") || ssidSafeForShell("") {
 		t.Errorf("ssidSafeForShell disagrees with the refusal above")
 	}
 	// The captive SSID now carries a leading '!' so it sorts first in an
@@ -618,8 +618,8 @@ func TestPrivateSSIDCommandRefusesAValueItCannotQuote(t *testing.T) {
 	if ssidSafeForShell("x'y") || ssidSafeForShell("") {
 		t.Errorf("ssidSafeForShell stopped refusing a quote / the empty string")
 	}
-	safe := privateSSIDCommand("private_radio0", "c08r4d0r-OQ3Q")
-	if !strings.Contains(safe, "uci -q set wireless.private_radio0.ssid='c08r4d0r-OQ3Q'") {
+	safe := privateSSIDCommand("private_radio0", "noderunner-private-OQ3Q")
+	if !strings.Contains(safe, "uci -q set wireless.private_radio0.ssid='noderunner-private-OQ3Q'") {
 		t.Errorf("a quotable value was not written: %q", safe)
 	}
 	// The refusal must still leave the " && " chain intact.
