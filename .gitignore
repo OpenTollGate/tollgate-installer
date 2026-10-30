@@ -15,3 +15,7 @@ test-results
 # decision is made from, so a reviewer must be able to see them. The blanket
 # *.png above is for throwaway screenshots.
 !docs/design/theme-mockups/*.png
+
+# Locale screenshots are the acceptance evidence for the i18n catalogue (the ar
+# shot proves RTL), so they are committed for the same reason.
+!e2e/screenshots/*.png

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenTollGate/tollgate-installer/internal/i18n"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -453,7 +454,10 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 	res := scanNetworkFn()
 	body := map[string]any{"routers": res.Routers}
 	if res.Diagnostics != nil {
-		body["diagnostics"] = res.Diagnostics
+		// Localized on a COPY: the diagnostics value belongs to the scan, and
+		// writing one requester's language into it would serve that language to
+		// the next one. See i18n_diag.go.
+		body["diagnostics"] = localizeDiagnostics(r, res.Diagnostics)
 		body["failure"] = res.Diagnostics.Text
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -534,12 +538,12 @@ func recheckCandidates(reqIP, jobIP string) []string {
 // one SSH connect and one GET / probe; it never changes the router.
 func handleRecheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, 405, "method not allowed")
+		writeError(w, r, 405, "method not allowed")
 		return
 	}
 	var req recheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	var job *Job
@@ -557,7 +561,7 @@ func handleRecheck(w http.ResponseWriter, r *http.Request) {
 	}
 	cands := recheckCandidates(req.IP, jobIP)
 	if len(cands) == 0 {
-		writeError(w, 400, "IP required")
+		writeError(w, r, 400, "IP required")
 		return
 	}
 	var client *ssh.Client
@@ -578,7 +582,7 @@ func handleRecheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if client == nil {
-		writeRouterDialFailure(w, cands[0], "", "cannot connect to router via SSH")
+		writeRouterDialFailure(w, r, cands[0], "", "cannot connect to router via SSH")
 		return
 	}
 	defer client.Close()
@@ -604,16 +608,16 @@ func handleRecheck(w http.ResponseWriter, r *http.Request) {
 // unidentified host is never labelled a router.
 func handleIdentify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, 405, "method not allowed")
+		writeError(w, r, 405, "method not allowed")
 		return
 	}
 	var req identifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	if req.IP == "" {
-		writeError(w, 400, "IP required")
+		writeError(w, r, 400, "IP required")
 		return
 	}
 	info := probeRouterWithPasswordFn(req.IP, req.Password)
@@ -1385,18 +1389,18 @@ func buildScanResponse(res scanResult) (int, map[string]any) {
 
 func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, 405, "method not allowed")
+		writeError(w, r, 405, "method not allowed")
 		return
 	}
 	var req wifiScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	// Password is optional: a fresh-reset OpenWrt router ships with an
 	// EMPTY root password (see sshConnect's auth chain).
 	if req.IP == "" {
-		writeError(w, 400, "IP required")
+		writeError(w, r, 400, "IP required")
 		return
 	}
 
@@ -1407,7 +1411,7 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	if client == nil {
 		// Prefer the host-key refusal: it names the fingerprint and the exact
 		// way to trust it, which a generic message would hide.
-		writeRouterDialFailure(w, req.IP, req.MAC, "cannot connect to router via SSH")
+		writeRouterDialFailure(w, r, req.IP, req.MAC, "cannot connect to router via SSH")
 		return
 	}
 	defer client.Close()
@@ -1438,21 +1442,21 @@ func handleWifiScan(w http.ResponseWriter, r *http.Request) {
 // cached bytes. The router is not modified.
 func handlePreStage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, 405, "method not allowed")
+		writeError(w, r, 405, "method not allowed")
 		return
 	}
 	var req prestageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	if req.IP == "" {
-		writeError(w, 400, "IP required")
+		writeError(w, r, 400, "IP required")
 		return
 	}
 	jobID, err := newJobID()
 	if err != nil {
-		writeError(w, 500, "cannot generate a job id")
+		writeError(w, r, 500, "cannot generate a job id")
 		return
 	}
 	job := newPreStageJob(req.IP)
@@ -1483,16 +1487,16 @@ type wifiTestRequest struct {
 // router's wireless config is restored before returning.
 func handleWifiTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, 405, "method not allowed")
+		writeError(w, r, 405, "method not allowed")
 		return
 	}
 	var req wifiTestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	if req.IP == "" || req.SSID == "" {
-		writeError(w, 400, "ip and ssid are required")
+		writeError(w, r, 400, "ip and ssid are required")
 		return
 	}
 	ok, msg := testSTAConfig(req.IP, req.Password, req.SSID, req.WifiPass, req.Band)
@@ -1612,7 +1616,7 @@ func validateDeployPasswords(admin, wifi string) string {
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	var req deployRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	// Password is optional: a fresh-reset OpenWrt router ships with an
@@ -1624,21 +1628,21 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 	// operator password. A value the operator DOES supply is applied verbatim
 	// and must meet the length floor.
 	if req.IP == "" {
-		writeError(w, 400, "IP required")
+		writeError(w, r, 400, "IP required")
 		return
 	}
 	if msg := validateDeployPasswords(req.AdminPassword, req.PrivateWiFiPassword); msg != "" {
-		writeError(w, 400, msg)
+		writeError(w, r, 400, msg)
 		return
 	}
 	if !validLightningAddress(req.LNURL) {
-		writeError(w, 400, "a valid Lightning address is required")
+		writeError(w, r, 400, "a valid Lightning address is required")
 		return
 	}
 
 	jobID, err := newJobID()
 	if err != nil {
-		writeError(w, 500, "cannot generate a job id")
+		writeError(w, r, 500, "cannot generate a job id")
 		return
 	}
 	job := newJob(req.IP)
@@ -1691,7 +1695,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	job, ok := jobs[jobID]
 	jobsMutex.RUnlock()
 	if !ok {
-		writeError(w, 404, "job not found")
+		writeError(w, r, 404, "job not found")
 		return
 	}
 	// Return a snapshot for thread-safe JSON
@@ -1720,6 +1724,20 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		job.generatedPasswordServed = true
 		job.generatedPassword = ""
 	}
+	// Step details and the job error are authored in Go (jobFail, setStep) and
+	// rendered by the page — pollStatus writes step.detail under each step and
+	// job.error into the failure banner. They are therefore a translated
+	// surface too, and they are localized here, OUTSIDE the lock, on a COPY:
+	// the snapshot shares job.Steps' backing array, so translating in place
+	// would burn one requester's language into the job's own state and a later
+	// request in another language would render it.
+	//
+	// A detail that is not in the catalogue (a raw sysupgrade line, a path, a
+	// fingerprint) is relayed verbatim by localizeMessage — see writeError. That
+	// is most of them by design; i18n_goprogress_test.go keeps the set of
+	// untranslated ones from growing without a decision.
+	steps := make([]Step, len(job.Steps))
+	copy(steps, job.Steps)
 	snapshot := struct {
 		IP                string     `json:"ip"`
 		Status            string     `json:"status"`
@@ -1732,9 +1750,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		ProgressCurrent   int        `json:"progressCurrent"`
 		ProgressTotal     int        `json:"progressTotal"`
 		ProgressLabel     string     `json:"progressLabel,omitempty"`
-	}{job.IP, job.Status, job.Step, job.Steps, job.Log, job.Error, generatedPassword,
+	}{job.IP, job.Status, job.Step, steps, job.Log, localizeMessage(r, job.Error), generatedPassword,
 		job.credentialFile, job.progressCurrent, job.progressTotal, job.progressLabel}
 	job.mu.Unlock()
+
+	for i := range snapshot.Steps {
+		snapshot.Steps[i].Detail = localizeMessage(r, snapshot.Steps[i].Detail)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(snapshot)
@@ -1747,8 +1769,21 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	// an older wizard than the binary that is running — the operator clicks a
 	// control that the current binary no longer serves, or talks to an endpoint
 	// whose request shape has since changed. Never store it.
+	//
+	// This also carries the language decision: the response is per-request and
+	// depends on the Accept-Language header and the saved cookie, so a shared
+	// cache would serve one visitor's language to the next (see
+	// i18n_surface.go).
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(indexHTML)
+	// Echo the decision back so a diagnostic and a test can see WHICH language a
+	// response was rendered in without parsing the body.
+	lang, dir := pageLanguage(r)
+	w.Header().Set("Content-Language", lang)
+	w.Header().Set("Vary", "Accept-Language, Cookie")
+	if dir == "rtl" {
+		w.Header().Set("X-Content-Direction", dir)
+	}
+	w.Write(renderIndex(lang, dir))
 }
 
 // configResponse is the installer's build + feed identity, served at
@@ -1772,7 +1807,7 @@ type configResponse struct {
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		writeError(w, r, http.StatusMethodNotAllowed, "GET only")
 		return
 	}
 	// The module pin comes from the feed recipe at the effective tag (cached,
@@ -1797,10 +1832,41 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
+// writeError writes a failure the PAGE will display.
+//
+// The text is translated here, not by the caller, and not in JavaScript: the
+// handler resolves once per request and knows the request's language, while the
+// page's showError() only has a string. Returning the English literal and
+// translating client-side would also mean the same string had two sources of
+// truth — the Go literal and the catalogue entry it is supposed to match.
+//
+// The caller keeps writing plain English, which is also the catalogue's key for
+// that sentence (i18n.KeyForText). A message with no catalogue entry (a wrapped
+// upstream error, a path, a fingerprint) is passed through unchanged: it is a
+// DIAGNOSTIC, and mangling it into a translated half-sentence would hide the
+// detail the operator needs. So the rule is: translate what we authored, pass
+// through what we merely relayed.
+func writeError(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	msg = localizeMessage(r, msg)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// localizeMessage translates one of our own messages into the request's
+// language, leaving anything else untouched. It is the single translation point
+// for the JSON error surface, so a handler cannot accidentally bypass it by
+// formatting its own string.
+func localizeMessage(r *http.Request, msg string) string {
+	if r == nil {
+		return msg
+	}
+	key, ok := i18n.KeyForText(msg)
+	if !ok {
+		return msg
+	}
+	lang, _ := pageLanguage(r)
+	return i18n.T(lang, key)
 }
 
 // writeErrorExtra is writeError with fields the UI can act on, for a failure that
