@@ -245,6 +245,12 @@ func runCleanSlate(job *Job, req cleanSlateRequest) {
 		jobFail(job, 2, "sysupgrade failed", parseSysupgradeError(upgradeOut))
 		return
 	}
+	// The operator explicitly chose to re-image this router. `sysupgrade -n`
+	// regenerates its SSH host key, so accept the NEW key when it comes back
+	// instead of failing the clean-slate job on a CHANGED-key refusal. Mark
+	// the logged-in IP and the LAN defaults the router may reappear on (see
+	// waitForRouterAfterFlash). See reimagedRouters in hostkey.go.
+	markRouterReimaged(req.IP, "192.168.1.1", "192.168.8.1")
 	job.addLog("Router rebooting; waiting for vanilla OpenWrt to return")
 	client.Close()
 	newIP, newClient, err := waitForRouterAfterFlash(req.IP, req.Password, 3*time.Minute)

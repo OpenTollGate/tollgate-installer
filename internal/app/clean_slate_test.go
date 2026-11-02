@@ -238,6 +238,52 @@ func TestCleanSlateFlashVerdictUsesSharedSysupgradePredicate(t *testing.T) {
 	}
 }
 
+// A clean-slate `sysupgrade -n` regenerates the router's host key. The
+// post-flash wait must run inside the operator-confirmed re-image window, or
+// the new key is refused as CHANGED and the job falsely times out even though
+// the router is reachable. This is the same window the deploy flash path opens.
+func TestCleanSlateOpensReimageWindowBeforeWaiting(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "clean_slate.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse clean_slate.go: %v", err)
+	}
+	markLine, waitLine := 0, 0
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := ""
+		switch fn := call.Fun.(type) {
+		case *ast.Ident:
+			name = fn.Name
+		case *ast.SelectorExpr:
+			name = fn.Sel.Name
+		}
+		switch name {
+		case "markRouterReimaged":
+			if markLine == 0 {
+				markLine = fset.Position(call.Pos()).Line
+			}
+		case "waitForRouterAfterFlash":
+			if waitLine == 0 {
+				waitLine = fset.Position(call.Pos()).Line
+			}
+		}
+		return true
+	})
+	if markLine == 0 {
+		t.Fatal("runCleanSlate never opens a re-image host-key window")
+	}
+	if waitLine == 0 {
+		t.Fatal("runCleanSlate never waits for the router after flash")
+	}
+	if markLine > waitLine {
+		t.Fatalf("markRouterReimaged (line %d) must run before waitForRouterAfterFlash (line %d)", markLine, waitLine)
+	}
+}
+
 // ─── the inspect chain, which is what actually unlocks the flash button ───────
 //
 // `cleanSlateInfo` resolves the router's board name and hands the result to the
