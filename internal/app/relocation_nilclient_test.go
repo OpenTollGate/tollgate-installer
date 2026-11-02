@@ -179,6 +179,19 @@ func collisionRouter(t *testing.T, brLan, brPrivate, src, lease string) *cannedR
 	})
 }
 
+// stubManagementAlive replaces the post-move liveness probe for the duration
+// of a test. The probe normally opens a fresh SSH session on the existing
+// transport; in a full-suite run that transport is shared with unrelated
+// canned servers and teardown goroutines, so a healthy-session assertion must
+// not depend on it. Tests that exercise the dead-transport branch stub an
+// error explicitly instead.
+func stubManagementAlive(t *testing.T, probe func(*ssh.Client) error) {
+	t.Helper()
+	old := relocationManagementAlive
+	relocationManagementAlive = probe
+	t.Cleanup(func() { relocationManagementAlive = old })
+}
+
 // stubReconnect replaces the post-relocation dial for the duration of a test.
 // dial receives the 1-based attempt number and the address being dialled, and
 // returns the client that answer represents (nil = nothing answered). The
