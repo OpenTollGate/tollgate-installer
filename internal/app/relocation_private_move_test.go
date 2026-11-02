@@ -92,6 +92,11 @@ func TestPrivateBridgeMoveNeverDialsTheRelocatedBridgeAddress(t *testing.T) {
 		"192.168.7.50",
 		"1700000000 aa:bb:cc:dd:ee:ff 192.168.7.50 laptop *\n")
 	dials := stubReconnect(t, func(int, string) *ssh.Client { return nil })
+	// The healthy-session half of the contract: the management transport is
+	// still answering after the private move, so no reconnect may be attempted.
+	// The dead-transport half is covered by
+	// TestPrivateBridgeMoveReconnectsOnlyOnTheManagementAddressWhenItDies.
+	stubManagementAlive(t, func(*ssh.Client) error { return nil })
 
 	job := newJob("192.168.7.1")
 	client := router.dial(t)

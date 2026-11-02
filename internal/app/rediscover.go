@@ -93,7 +93,7 @@ func movedRouterMessage(want, mac string) (string, string, bool) {
 // The status stays 502 and the `error` string stays the primary field, so an older
 // index.html is unaffected; the address rides along in suggestedIp for a UI that
 // can offer it.
-func writeRouterDialFailure(w http.ResponseWriter, ip, mac, fallback string) {
+func writeRouterDialFailure(w http.ResponseWriter, r *http.Request, ip, mac, fallback string) {
 	msg := sshConnectFailureMessage(ip, fallback)
 	if sshFailureIsAMovedAddress(ip) {
 		if suffix, moved, ok := movedRouterMessage(ip, mac); ok {
@@ -101,5 +101,5 @@ func writeRouterDialFailure(w http.ResponseWriter, ip, mac, fallback string) {
 			return
 		}
 	}
-	writeError(w, 502, msg)
+	writeError(w, r, 502, msg)
 }

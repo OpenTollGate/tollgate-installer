@@ -74,9 +74,11 @@ func TestTrustHintReadsAsAPendingDecisionNotAFailure(t *testing.T) {
 	if !strings.Contains(body, "ssh_refusal") {
 		t.Error("showTrustHint no longer renders the server's refusal: the operator would lose the fingerprint and the --trust-host-key instruction")
 	}
-	if !strings.Contains(body, "not trusted yet") {
+	if !strings.Contains(body, "trust.lead") {
 		t.Error("the panel must say the key is not trusted YET and that nothing has been sent — otherwise it reads as a failure")
 	}
+	requireCatalogueString(t, "trust.lead", "not trusted yet")
+	requireCatalogueString(t, "trust.lead", "nothing has been sent")
 	if strings.Contains(body, "innerHTML") {
 		t.Error("showTrustHint must never use innerHTML: the refusal carries router-supplied strings")
 	}

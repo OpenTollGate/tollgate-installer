@@ -655,6 +655,14 @@ type ScanDiagnostics struct {
 	Remediation []string         `json:"remediation"`
 	ManualHint  string           `json:"manualHint"`
 	Text        string           `json:"text"`
+	// TunnelIface and TunnelVia name the tunnel interface that owns the default
+	// route and the gateway behind it, when one does (e.g. "wg0" via
+	// "10.8.8.1"). They are recorded as FIELDS rather than left inside the
+	// tunnel note's sentence so the note can be translated without parsing the
+	// interface name and address back out of translated prose: those two values
+	// are runtime data and must survive translation verbatim.
+	TunnelIface string `json:"tunnelIface,omitempty"`
+	TunnelVia   string `json:"tunnelVia,omitempty"`
 }
 
 // collectInterfaceStates returns every non-loopback interface with its state,
@@ -749,7 +757,7 @@ func buildScanDiagnostics(ifaces []ifaceState, gateways []gatewayRoute, probes [
 		d.Gateways = append(d.Gateways, g.IP)
 	}
 	d.Sources = sourceSummary(probes)
-	d.Remediation = remediationSteps(gateways)
+	d.Remediation, d.TunnelIface, d.TunnelVia = remediationSteps(gateways)
 	d.ManualHint = "Enter your router's address in the box above — the wizard identifies it directly, bypassing discovery entirely."
 	d.Text = formatScanFailure(d)
 	return d
@@ -778,8 +786,8 @@ func sourceSummary(probes []candidateProbe) []string {
 // headless form that always works. A default route owned by a tunnel interface
 // is called out in addition to the list, because that is a case where the
 // operator's laptop is not on the LAN at all.
-func remediationSteps(gateways []gatewayRoute) []string {
-	steps := []string{
+func remediationSteps(gateways []gatewayRoute) (steps []string, tunnelIface, tunnelVia string) {
+	steps = []string{
 		"1. Use the LAN port: on the GL-MT3000 the 2.5 GbE port is WAN and the 1 GbE port is LAN — plugged into WAN you get no DHCP lease and no route.",
 		"2. Give it time: after a flash or a reboot a router needs 60-120 s before it answers.",
 		"3. Force a fresh lease on the wired interface: dhclient -v <interface>.",
@@ -788,13 +796,18 @@ func remediationSteps(gateways []gatewayRoute) []string {
 	}
 	for _, g := range gateways {
 		if isVirtualIface(g.Iface) {
+			// The interface and address are returned SEPARATELY as well as being
+			// interpolated here: the page translates this note, and it must be
+			// able to re-insert the same two runtime values into a translated
+			// sentence instead of parsing them back out of English prose.
+			tunnelIface, tunnelVia = g.Iface, g.IP
 			steps = append(steps, fmt.Sprintf(
-				"Note: the default route is owned by the tunnel interface %s (via %s) — the router on your LAN is only reachable on its own subnet.",
-				g.Iface, g.IP))
+				"%s%s (via %s) — the router on your LAN is only reachable on its own subnet.",
+				scanTunnelNotePrefix, g.Iface, g.IP))
 			break
 		}
 	}
-	return steps
+	return steps, tunnelIface, tunnelVia
 }
 
 // formatScanFailure renders the failure block as copy-pasteable plain text, for

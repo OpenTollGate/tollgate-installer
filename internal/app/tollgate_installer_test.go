@@ -92,7 +92,9 @@ func TestSetStep(t *testing.T) {
 func TestWriteError(t *testing.T) {
 	w := httptest.NewRecorder()
 
-	writeError(w, 400, "test error")
+	// No request: writeError must still work (and leave the message as authored),
+	// because a handler can be reached from a path that does not carry one.
+	writeError(w, nil, 400, "test error")
 
 	resp := w.Result()
 	if resp.StatusCode != 400 {

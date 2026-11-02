@@ -159,12 +159,15 @@ func TestPasswordFieldsKeepTheirWiring(t *testing.T) {
 		"input.type = 'password'",
 		"aria-pressed",
 		`'false'`,
-		"Show password",
+		"password.show",
 	} {
 		if !strings.Contains(reset, want) {
 			t.Errorf("resetPasswordReveal missing %s\n%s", want, reset)
 		}
 	}
+	// The label itself lives in the catalogue now; it must still exist there,
+	// otherwise the reset silently writes the key name into the aria-label.
+	requireCatalogueString(t, "password.show", "Show password")
 
 	// Restarting the step must not leave a password visible.
 	if !strings.Contains(funcBody(t, html, "scanAgain"), "resetPasswordReveal(") {
@@ -184,14 +187,15 @@ func TestPasswordRevealToggleFlipsType(t *testing.T) {
 		"'password'",
 		"'aria-pressed'",
 		"'aria-label'",
-		"Hide password", // label after revealing says what the next click does
-		"Show password",
+		"password.hide", // label after revealing says what the next click does
+		"password.show",
 		"setSelectionRange", // value/selection survive the type flip
 	} {
 		if !strings.Contains(flip, want) {
 			t.Errorf("togglePassword missing %s\n%s", want, flip)
 		}
 	}
+	requireCatalogueString(t, "password.hide", "Hide password")
 	// The flip targets the input it was handed — not every password field.
 	if !strings.Contains(flip, "getElementById(inputId)") {
 		t.Errorf("togglePassword must operate on the input it is given\n%s", flip)

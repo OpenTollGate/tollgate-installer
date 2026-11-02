@@ -73,20 +73,20 @@ func writeTrustError(w http.ResponseWriter, code int, msg, presented string) {
 // refused and leaves the trust store untouched; no credential is ever offered.
 func handleTrustHostKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, 405, "method not allowed")
+		writeError(w, r, 405, "method not allowed")
 		return
 	}
 	var req trustHostKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "invalid JSON")
+		writeError(w, r, 400, "invalid JSON")
 		return
 	}
 	if strings.TrimSpace(req.IP) == "" {
-		writeError(w, 400, "IP required")
+		writeError(w, r, 400, "IP required")
 		return
 	}
 	if !looksLikeFingerprint(req.Fingerprint) {
-		writeError(w, 400, "a fingerprint is required, e.g. SHA256:AbCdEf…")
+		writeError(w, r, 400, "a fingerprint is required, e.g. SHA256:AbCdEf…")
 		return
 	}
 

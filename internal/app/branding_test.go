@@ -96,11 +96,11 @@ var deployedRouterSeed = []string{
 func testDeviceIdentity() deviceIdentity {
 	return deviceIdentity{
 		Code:        "TEST",
-		Nym:         deviceIdentityDefaultNym,
+		Nym:         deviceIdentityDefaultOperator,
 		Source:      "store",
 		Hostname:    "tollgate-TEST",
 		SSID:        "!TollGate-TEST",
-		PrivateSSID: deviceIdentityDefaultNym + "-TEST",
+		PrivateSSID: "Private-" + deviceIdentityDefaultOperator + "-TEST",
 	}
 }
 
@@ -333,7 +333,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-ZZZZ",
 				"wireless.tollgate_2g_open.ssid=TollGate-1111",
 			},
-			wantCode: "OQ3Q", wantSource: "store", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "store", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-OQ3Q",
 		},
 		{
 			name: "a lowercase store value is normalised",
@@ -341,7 +341,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"tollgate.device=device", "tollgate.device.code=oq3q",
 				"system.@system[0].hostname=tollgate-ZZZZ",
 			},
-			wantCode: "OQ3Q", wantSource: "store", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "store", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-OQ3Q",
 		},
 		{
 			name: "a junk store value is re-derived, never trusted",
@@ -349,7 +349,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"tollgate.device=device", "tollgate.device.code=nope!",
 				"system.@system[0].hostname=tollgate-7Q7Q",
 			},
-			wantCode: "7Q7Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7Q7Q",
+			wantCode: "7Q7Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-7Q7Q",
 		},
 		{
 			// The bench box: the installer wrote the hostname, a later deploy
@@ -359,7 +359,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-OQ3Q",
 				"wireless.tollgate_2g_open.ssid=tollgate-0GLK",
 			},
-			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-OQ3Q",
 		},
 		{
 			name: "a custom hostname is not a code source, the captive SSID is",
@@ -367,7 +367,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=OperatorBox",
 				"wireless.tollgate_2g_open.ssid=TollGate-9K2M",
 			},
-			wantCode: "9K2M", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-9K2M",
+			wantCode: "9K2M", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-9K2M",
 		},
 		{
 			// The guest-facing captive SSID now carries a leading '!' so it
@@ -381,7 +381,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=OperatorBox",
 				"wireless.tollgate_2g_open.ssid=!TollGate-7F3A",
 			},
-			wantCode: "7F3A", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7F3A",
+			wantCode: "7F3A", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-7F3A",
 		},
 		{
 			name: "a stock default_radio0 SSID is a code source too",
@@ -389,7 +389,17 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=myrouter",
 				"wireless.default_radio0.ssid=tollgate-7Q7Q",
 			},
-			wantCode: "7Q7Q", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-7Q7Q",
+			wantCode: "7Q7Q", wantSource: "captive-ssid", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-7Q7Q",
+		},
+		{
+			// The current private shape is Private-<operator>-<suffix>; adopt the
+			// operator even when the suffix is a custom display token.
+			name: "the operator is adopted from Private-<operator>-<suffix>",
+			seed: []string{
+				"system.@system[0].hostname=tollgate-OQ3Q",
+				"wireless.private_radio0.ssid=Private-amperstrand-myplace",
+			},
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "amperstrand", wantPrivate: "Private-amperstrand-OQ3Q",
 		},
 		{
 			// The module mints <nym>-<suffix> with the operator's own nym; the
@@ -399,7 +409,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-OQ3Q",
 				"wireless.private_radio0.ssid=amperstrand-11AA",
 			},
-			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "amperstrand", wantPrivate: "amperstrand-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "amperstrand", wantPrivate: "Private-amperstrand-OQ3Q",
 		},
 		{
 			// `tollgate network private rename <name>` is the escape hatch: a
@@ -421,7 +431,7 @@ func TestDeviceIdentityScriptAdoptionOrder(t *testing.T) {
 				"system.@system[0].hostname=tollgate-OQ3Q",
 				"wireless.private_radio0.ssid=x';reboot #-1234",
 			},
-			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "c08r4d0r-OQ3Q",
+			wantCode: "OQ3Q", wantSource: "hostname", wantNym: "c08r4d0r", wantPrivate: "Private-c08r4d0r-OQ3Q",
 		},
 	}
 
@@ -653,7 +663,7 @@ func TestBrandingNeverMintsACode(t *testing.T) {
 
 // TestBangPrefixedSSIDSurvivesNonInteractiveShell is the escaping proof the
 // leading '!' needs. The captive SSID is written inside a double-quoted shell
-// assignment (`SSID="!TollGate-$CODE"`) that ships to the router over SSH. In
+// assignment (`SSID="!$BRAND_HOSTNAME-$SUFFIX"`) that ships to the router over SSH. In
 // an INTERACTIVE bash the '!' would be history-expansion syntax and be eaten;
 // the router runs the script through a NON-interactive channel, where history
 // expansion is off. This runs the SAME shipped resolver under `bash -c` (a
@@ -670,7 +680,48 @@ func TestBangPrefixedSSIDSurvivesNonInteractiveShell(t *testing.T) {
 	if id.SSID != "!TollGate-7F3A" {
 		t.Fatalf("captive SSID = %q, want %q — the leading '!' was lost (history expansion or quoting)\nresolver output:\n%s", id.SSID, "!TollGate-7F3A", out)
 	}
-	if !strings.Contains(deviceIdentityScript, `SSID="!TollGate-$CODE"`) {
+	if !strings.Contains(deviceIdentityScript, `SSID="!$BRAND_HOSTNAME-$SUFFIX"`) {
 		t.Errorf("the shipped resolver no longer emits the bang-prefixed captive SSID in its double-quoted assignment")
+	}
+}
+
+func TestDeviceIdentityScriptUsesStoredSuffixAndOperator(t *testing.T) {
+	env, statePath, _ := uciStubEnv(t, []string{
+		"tollgate.device=device", "tollgate.device.code=OQ3Q",
+		"tollgate.device.nym=Archipelago",
+		"tollgate.device.ssid_suffix=myplace",
+	})
+	id, out := runIdentityScript(t, env, statePath)
+	if id.Code != "OQ3Q" {
+		t.Fatalf("code = %q, want OQ3Q\n%s", id.Code, out)
+	}
+	if id.SSID != "!TollGate-myplace" {
+		t.Errorf("captive SSID = %q, want !TollGate-myplace", id.SSID)
+	}
+	if id.PrivateSSID != "Private-Archipelago-myplace" {
+		t.Errorf("private SSID = %q, want Private-Archipelago-myplace", id.PrivateSSID)
+	}
+	state := readUciState(t, statePath)
+	if got := uciStateValue(t, state, "tollgate.device.ssid_suffix"); got != "myplace" {
+		t.Errorf("stored suffix = %q, want myplace", got)
+	}
+	if got := uciStateValue(t, state, "tollgate.device.nym"); got != "Archipelago" {
+		t.Errorf("stored operator = %q, want Archipelago", got)
+	}
+}
+
+func TestDeviceIdentityScriptUsesOperatorBuildInput(t *testing.T) {
+	prev := deviceIdentityDefaultOperator
+	t.Cleanup(func() { deviceIdentityDefaultOperator = prev })
+	SetOperatorToken("Archipelago")
+
+	env, statePath, _ := uciStubEnv(t, []string{
+		"tollgate.device=device", "tollgate.device.code=OQ3Q",
+	})
+	store := filepath.Join(filepath.Dir(statePath), "tollgate.conf")
+	script := strings.Replace(deviceIdentityScriptCommand(), identityStoreAnchor, "CODE_STORE="+store, 1)
+	id := parseDeviceIdentity(shRunEnv(t, env, script))
+	if id.PrivateSSID != "Private-Archipelago-OQ3Q" {
+		t.Errorf("private SSID = %q, want Private-Archipelago-OQ3Q", id.PrivateSSID)
 	}
 }

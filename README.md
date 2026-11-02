@@ -258,13 +258,19 @@ after the one-shot screen has been missed.
 ### The router's device identity — one code, minted once
 
 Branding resolves **one** four-character code on the router and builds every
-name from it: hostname tollgate-<code>, captive SSID !TollGate-<code>, private
-SSID nym-<code>. The code is kept in the router's uci store, etc/config/tollgate,
+name from it: hostname tollgate-<code>, captive SSID !<brand>-<suffix>, private
+SSID Private-<operator>-<suffix>. The code is kept in the router's uci store, etc/config/tollgate,
 under the `code` option, and REUSED — a redeploy of an existing router keeps the
 name it already answers to, instead of minting a new one. Adoption order: the
 store, then a machine-shaped hostname, then a machine-shaped captive SSID, then
 a mint. The contract is shared with tollgate-module-basic-go (same store, same
 order, same alphabet); see [docs/device-identity.md](docs/device-identity.md).
+
+The private SSID operator defaults to `c08r4d0r` — leetspeak for *cobrador*,
+Spanish for the person who collects the toll/fare. A brand build can set it with
+`--operator-token <token>` or `TOLLGATE_OPERATOR_TOKEN`. The admin schema field
+`private_ssid_operator` overrides it per router, and `ssid_suffix` controls the
+suffix shared by both SSIDs.
 
 ### Which `tollgate-wrt` package gets installed
 

@@ -1,0 +1,69 @@
+# Step details that stay English, with the class of each.
+#
+# These are STATUS TOKENS shown under a step title that IS translated — two or
+# three words, usually carrying a runtime value (a count, an address, a raw
+# tool's output). Translating a token means translating its payload, and a
+# half-translated token with a raw tail reads worse than the English one.
+#
+# They are NOT failure-banner sentences: those are prose the operator reads, and
+# they must be in the catalogue (TestJobErrorsAreInTheCatalogue, no allowlist).
+#
+# This list may only SHRINK. Adding a line is a decision that a string is a
+# status token and not prose; removing one is how a token graduates to a
+# catalogue key. Regenerate with:
+#   UPDATE_GOSTRINGS=1 go test ./internal/app/ -run TestGoStepDetails
+#
+# One string per line, no quoting, no trailing spaces.
+
+API healthy on :2121
+Image push failed
+Router is not running OpenWrt
+Router unreachable after flash
+WAN mode (default)
+WiFi connection failed — check SSID and password
+already set (unchanged)
+cannot read the router's root password state
+captive portal assets missing
+checksum download failed
+checksum unavailable
+configured (partial)
+confirmation refused
+deferred until the install is verified
+deploy assets pre-downloaded
+download failed
+downloading and verifying image
+flashing vanilla OpenWrt
+identity refused
+image push failed
+integrity check failed
+internal error — see log
+laptop-side package integrity check failed
+locked (unchanged)
+lost the router — SSH transport died
+no wireless radio found
+not enough flash for tollgate-wrt
+nothing to stage
+opkg refused to downgrade tollgate-wrt
+portal check inconclusive
+portal incomplete (no splash.html)
+portal not found (installed by package)
+portal present (no asset refs)
+resolving board
+root password not established
+router connection failed
+router did not return
+router-side package integrity check failed
+sha256 verified
+skipped (already OpenWrt)
+skipped (no pre-stage requested)
+skipped (no tollgate config)
+subnet relocation severed the connection — see log
+sysupgrade failed
+tollgate API up but no advertisement
+tollgate service not listening on :2121
+tollgate-wrt install failed
+tollgate-wrt install failed (apk error)
+tollgate-wrt not installed
+tollgate-wrt version mismatch
+tollgate-wrt+nodogsplash+uhttpd
+upstream has no internet

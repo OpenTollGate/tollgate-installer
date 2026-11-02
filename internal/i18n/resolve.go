@@ -1,8 +1,8 @@
-// Package i18n resolves the UI language for a request.
+// Language resolution: which locale a given request gets.
 //
-// The installer ships 21 locales (see SupportedLanguages). Which one a given
-// request gets is decided here, in one place, so the order can be tested rather
-// than re-derived per handler.
+// The catalogue of locales we actually ship, the match rules (lookup) and the
+// RTL/direction helpers live in catalogue.go, because a locale is only
+// "supported" when it has text. This file owns the PRECEDENCE only.
 //
 // # WHY IP GEOLOCATION IS NOT THE PRIMARY SIGNAL
 //
@@ -27,175 +27,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-// supportedLanguage is one shipped locale.
-type supportedLanguage struct {
-	Tag   string // BCP-47 tag as we ship it, e.g. "de", "zh-Hans", "ar-EG"
-	Label string // the language's own name, for the picker
-}
-
-// supportedLanguages is the shipped catalogue, in menu order.
-//
-// 21 languages by total speakers. Two entries carry a caveat recorded in the
-// design note (docs/i18n.md): Nigerian Pidgin (pcm) and Wu Chinese (wuu) rank
-// high by speaker count but have little written convention, so a locale may be
-// dropped in favour of the next candidate rather than shipped as machine output
-// of doubtful quality. The catalogue below is what we INTEND to ship; a locale
-// with no catalogue file is simply not selectable, and English covers it.
-var supportedLanguages = []supportedLanguage{
-	{"en", "English"},
-	{"zh-Hans", "简体中文"},
-	{"zh-Hant", "繁體中文"},
-	{"hi", "हिन्दी"},
-	{"es", "Español"},
-	{"fr", "Français"},
-	{"ar", "العربية"},
-	{"bn", "বাংলা"},
-	{"pt", "Português"},
-	{"ru", "Русский"},
-	{"ur", "اردو"},
-	{"id", "Bahasa Indonesia"},
-	{"de", "Deutsch"},
-	{"ja", "日本語"},
-	{"pcm", "Naijá"},
-	{"ar-EG", "العربية (مصر)"},
-	{"mr", "मराठी"},
-	{"vi", "Tiếng Việt"},
-	{"te", "తెలుగు"},
-	{"tr", "Türkçe"},
-	{"ta", "தமிழ்"},
-	{"wuu", "吴语"},
-}
-
-// DefaultLanguage is used when nothing else matches. English is the fallback
-// for a practical reason as well as a conventional one: it is the language the
-// existing UI is written in, so a missing catalogue degrades to "what we have
-// today" rather than to a blank screen.
-const DefaultLanguage = "en"
-
-// SupportedLanguages returns the shipped tags in menu order.
-func SupportedLanguages() []string {
-	out := make([]string, 0, len(supportedLanguages))
-	for _, l := range supportedLanguages {
-		out = append(out, l.Tag)
-	}
-	return out
-}
-
-// LanguageLabel returns the language's own name, or "" when unsupported.
-func LanguageLabel(tag string) string {
-	for _, l := range supportedLanguages {
-		if strings.EqualFold(l.Tag, tag) {
-			return l.Label
-		}
-	}
-	return ""
-}
-
-// IsRTL reports whether the language is written right-to-left. Arabic and Urdu
-// need a mirrored layout, not only translated strings.
-func IsRTL(tag string) bool {
-	base := baseLanguage(tag)
-	return base == "ar" || base == "ur"
-}
-
-// baseLanguage lowercases a tag and drops any region or script subtag.
-// "de-AT" -> "de"; "zh-Hans-CN" -> "zh"; "ar-EG" -> "ar".
-func baseLanguage(tag string) string {
-	tag = strings.ToLower(strings.TrimSpace(tag))
-	if i := strings.IndexAny(tag, "-_"); i >= 0 {
-		tag = tag[:i]
-	}
-	return tag
-}
-
-// normalize lowercases a tag's language part but preserves the canonical casing
-// of a script subtag, so "zh-hans" and "ZH-Hans" both become "zh-Hans". Region
-// subtags are upper-cased ("ar-eg" -> "ar-EG").
-func normalize(tag string) string {
-	parts := strings.FieldsFunc(strings.TrimSpace(tag), func(r rune) bool { return r == '-' || r == '_' })
-	if len(parts) == 0 {
-		return ""
-	}
-	out := []string{strings.ToLower(parts[0])}
-	for _, p := range parts[1:] {
-		switch {
-		case len(p) == 4: // script subtag
-			out = append(out, strings.ToUpper(p[:1])+strings.ToLower(p[1:]))
-		case len(p) == 2 || len(p) == 3: // region subtag
-			out = append(out, strings.ToUpper(p))
-		default:
-			out = append(out, strings.ToLower(p))
-		}
-	}
-	return strings.Join(out, "-")
-}
-
-// regionScriptSpecialCase maps a bare Chinese region to the SCRIPT it implies.
-//
-// "zh-TW" and "zh-HK" carry no script subtag, so the language+script step cannot
-// match them, and the base-language step would return whichever zh variant is
-// listed first (zh-Hans) — telling a Traditional reader they read Simplified.
-// These regions use Traditional, so the mapping is knowledge that has to be
-// encoded rather than derived.
-var regionScriptSpecialCase = map[string]string{
-	"zh-tw": "zh-Hant",
-	"zh-hk": "zh-Hant",
-	"zh-mo": "zh-Hant",
-	"zh-cn": "zh-Hans",
-	"zh-sg": "zh-Hans",
-}
-
-// lookup finds the best shipped tag for a requested tag.
-//
-// Match order: exact tag, then language+script (so "zh-Hans-CN" hits "zh-Hans"),
-// then a region that implies a script (zh-TW -> zh-Hant), then the base language
-// (so "de-AT" and "de" both hit "de"). Returns "" when nothing matches, so the
-// caller can fall through rather than silently getting English from a helper
-// that claims success.
-func lookup(tag string) string {
-	want := normalize(tag)
-	if want == "" {
-		return ""
-	}
-	for _, l := range supportedLanguages {
-		if strings.EqualFold(normalize(l.Tag), want) {
-			return l.Tag
-		}
-	}
-	lower := strings.ToLower(want)
-	// language+region that pins a script: "zh-tw" -> "zh-Hant"
-	if sc, ok := regionScriptSpecialCase[lower]; ok {
-		if t := lookupExact(sc); t != "" {
-			return t
-		}
-	}
-	// language+script: "zh-Hans-CN" -> "zh-Hans"
-	parts := strings.Split(want, "-")
-	if len(parts) > 1 && len(parts[1]) == 4 {
-		if t := lookupExact(parts[0] + "-" + parts[1]); t != "" {
-			return t
-		}
-	}
-	// base language: "de-AT" -> "de"
-	base := baseLanguage(want)
-	for _, l := range supportedLanguages {
-		if baseLanguage(l.Tag) == base {
-			return l.Tag
-		}
-	}
-	return ""
-}
-
-// lookupExact matches a tag against the catalogue by exact tag only.
-func lookupExact(tag string) string {
-	for _, l := range supportedLanguages {
-		if strings.EqualFold(normalize(l.Tag), normalize(tag)) {
-			return l.Tag
-		}
-	}
-	return ""
-}
 
 // acceptEntry is one parsed Accept-Language entry.
 type acceptEntry struct {
@@ -243,9 +74,9 @@ func parseAcceptLanguage(header string) []acceptEntry {
 // Request carries the signals Resolve may use. Fields are raw: parsing happens
 // here so handlers stay dumb.
 type Request struct {
-	// Saved is an explicit choice the user made earlier (cookie / localStorage).
-	// It outranks everything: without that, a user who picks German is reset to
-	// their browser's language on the next visit, which reads as a broken picker.
+	// Saved is an explicit choice the user made earlier (cookie). It outranks
+	// everything: without that, a user who picks German is reset to their
+	// browser's language on the next visit, which reads as a broken picker.
 	Saved string
 	// AcceptLanguage is the raw header.
 	AcceptLanguage string
@@ -256,11 +87,10 @@ type Request struct {
 }
 
 // countryDefault maps a country to a language, for the tiebreaker only. The map
-// is deliberately sparse and every value MUST be a language we ship: a country
-// mapping to an unshipped language silently degrades by falling through to
-// lookup(), which matches on the base language and can therefore pick something
-// surprising (CH -> "de" looked correct only because German happens to be
-// shipped). TestCountryMapOnlyNamesShippedLanguages enforces that.
+// is deliberately sparse and every value MUST be a SHIPPED tag: a country
+// mapping to a locale we have no text for silently degrades by falling through
+// to the base language, or worse, selects a picker entry that renders English.
+// TestCountryMapOnlyNamesShippedLanguages enforces that.
 //
 // Absent = no opinion, which is the honest answer for Belgium, Switzerland,
 // Canada, India and friends: one country, several languages, no safe default.
@@ -268,13 +98,18 @@ var countryDefault = map[string]string{
 	"DE": "de", "AT": "de",
 	"FR": "fr", "ES": "es", "MX": "es", "AR": "es", "CO": "es",
 	"BR": "pt", "PT": "pt",
+	"IT": "it",
 	"JP": "ja",
 	"CN": "zh-Hans", "TW": "zh-Hant", "HK": "zh-Hant",
 	"RU": "ru",
 	"TR": "tr", "VN": "vi", "ID": "id",
-	"BD": "bn", "PK": "ur",
 	"SA": "ar", "EG": "ar-EG", "AE": "ar",
 	"US": "en", "GB": "en", "AU": "en", "IE": "en",
+	// Bangladesh (bn), Pakistan (ur) and India (hi) are deliberately ABSENT:
+	// we ship no catalogue for those languages yet, and a country entry naming
+	// an unshipped locale does not degrade gracefully — lookup() returns "",
+	// the rung silently does nothing, and the map reads as if it handled them.
+	// They are recorded in requestedLanguages as explicit fallbacks instead.
 }
 
 // Resolve returns the language tag to render, in precedence order:

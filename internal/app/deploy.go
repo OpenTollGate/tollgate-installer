@@ -546,16 +546,18 @@ func configJqCmd(margin int, ownerFactor, devFactor, mint string, includeTestnut
 // derive a code.
 type deviceIdentity struct {
 	Code        string // four characters of [A-Z0-9]
-	Nym         string // the operator's nym — the private SSID's prefix
+	Nym         string // the operator token — the private SSID's middle component
 	Source      string // where the code came from: store|hostname|captive-ssid|minted
 	Hostname    string // tollgate-<code>
-	SSID        string // !TollGate-<code> (brand prefix, leading '!' so the guest SSID sorts first)
-	PrivateSSID string // <nym>-<code>, or the operator's own rename
+	SSID        string // !<brand>-<suffix> (leading '!' so the guest SSID sorts first)
+	PrivateSSID string // Private-<operator>-<suffix>, or the operator's own rename
 }
 
-// deviceIdentityDefaultNym is the private SSID's prefix when nothing on the
-// router says otherwise (the same default the module compiles in).
-const deviceIdentityDefaultNym = "c08r4d0r"
+// deviceIdentityDefaultOperator is the private SSID's operator token when
+// nothing on the router says otherwise. c08r4d0r is leetspeak for cobrador,
+// Spanish for the person who collects the toll/fare — the TollGate operator.
+// A brand build or the --operator-token flag can replace it.
+var deviceIdentityDefaultOperator = "c08r4d0r"
 
 // ssidSafeForShell reports whether a value can be carried inside the
 // single-quoted `uci -q set …` lines this file builds. Those lines are joined
@@ -611,7 +613,7 @@ func privateSSIDCommand(section, ssid string) string {
 // BusyBox ash only: no bashisms, no `od` (the target has no guarantee of it),
 // no GNU sed. Every branch is a POSIX `case` so the same alphabet is enforced
 // on both sides.
-var deviceIdentityScript = `CODE_STORE=/etc/config/tollgate
+const deviceIdentityScriptTemplate = `CODE_STORE=/etc/config/tollgate
 [ -f "$CODE_STORE" ] || touch "$CODE_STORE" 2>/dev/null
 uci -q get tollgate.device >/dev/null 2>&1 || uci -q set tollgate.device='device'
 
@@ -689,27 +691,71 @@ case "$NYM" in
 esac
 if [ -z "$NYM" ]; then
     PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
-    P=${PRI%%-*}; S=${PRI#*-}
-    if [ "$S" != "$PRI" ] && [ -n "$P" ] && minted_suffix "$S" && ssid_safe "$P"; then
-        NYM="$P"
-    else
-        NYM=` + strconv.Quote(deviceIdentityDefaultNym) + `
-    fi
+    case "$PRI" in
+        Private-*)
+            REST=${PRI#Private-}
+            P=${REST%%-*}
+            S=${REST#*-}
+            if [ "$S" != "$REST" ] && [ -n "$P" ] && [ -n "$S" ] && [ "${#S}" -le 12 ] && ssid_safe "$P"; then
+                NYM="$P"
+            fi
+            ;;
+        *)
+            P=${PRI%%-*}
+            S=${PRI#*-}
+            if [ "$S" != "$PRI" ] && [ -n "$P" ] && minted_suffix "$S" && ssid_safe "$P"; then
+                NYM="$P"
+            fi
+            ;;
+    esac
+    [ -n "$NYM" ] || NYM=__DEFAULT_OPERATOR__
 fi
+
+SUFFIX=$(trim_ws "$(uci -q get tollgate.device.ssid_suffix 2>/dev/null)")
+case "$SUFFIX" in
+    ''|*[!A-Za-z0-9_-]*) SUFFIX="" ;;
+esac
+[ "${#SUFFIX}" -le 12 ] || SUFFIX=""
+[ -n "$SUFFIX" ] || SUFFIX="$CODE"
+
+BRAND_RAW=$(trim_ws "$(cat /etc/tollgate/brand 2>/dev/null)")
+case "$BRAND_RAW" in
+    ''|*[!A-Za-z0-9]*) BRAND_RAW=tollgate ;;
+esac
+case "$BRAND_RAW" in
+    tollgate) BRAND_HOSTNAME=TollGate ;;
+    *)
+        FIRST=$(printf '%s' "$BRAND_RAW" | cut -c1 | tr 'a-z' 'A-Z')
+        REST=$(printf '%s' "$BRAND_RAW" | cut -c2-)
+        BRAND_HOSTNAME="$FIRST$REST"
+        ;;
+esac
 
 uci -q set tollgate.device.code="$CODE"
 uci -q set tollgate.device.nym="$NYM"
+uci -q set tollgate.device.ssid_suffix="$SUFFIX"
 uci commit tollgate
 
-HOSTNAME="tollgate-$CODE"
-SSID="!TollGate-$CODE"
-PRIVATE_SSID="$NYM-$CODE"
+HOSTNAME="$(printf '%s' "$BRAND_HOSTNAME" | tr 'A-Z' 'a-z')-$CODE"
+SSID="!$BRAND_HOSTNAME-$SUFFIX"
+PRIVATE_SSID="Private-$NYM-$SUFFIX"
 PRI=$(trim_ws "$(uci -q get wireless.private_radio0.ssid 2>/dev/null)")
 if [ -n "$PRI" ] && ssid_safe "$PRI"; then
-    P=${PRI%%-*}; S=${PRI#*-}
-    if [ "$P" != "$NYM" ] || [ "$S" = "$PRI" ] || ! minted_suffix "$S"; then
-        PRIVATE_SSID="$PRI"
-    fi
+    case "$PRI" in
+        "Private-$NYM-"*)
+            S=${PRI#"Private-$NYM-"}
+            [ -n "$S" ] || PRIVATE_SSID="$PRI"
+            ;;
+        "$NYM-"*)
+            S=${PRI#*-}
+            if [ "$S" = "$PRI" ] || ! minted_suffix "$S"; then
+                PRIVATE_SSID="$PRI"
+            fi
+            ;;
+        *)
+            PRIVATE_SSID="$PRI"
+            ;;
+    esac
 fi
 
 echo "TG_CODE=$CODE"
@@ -719,6 +765,17 @@ echo "TG_HOSTNAME=$HOSTNAME"
 echo "TG_SSID=$SSID"
 echo "TG_PRIVATE_SSID=$PRIVATE_SSID"
 `
+
+// deviceIdentityScriptCommand renders the resolver with the current brand/operator
+// build input. The template is constant so the default token can be set from
+// --operator-token / TOLLGATE_OPERATOR_TOKEN before a deploy.
+func deviceIdentityScriptCommand() string {
+	return strings.ReplaceAll(deviceIdentityScriptTemplate, "__DEFAULT_OPERATOR__", strconv.Quote(deviceIdentityDefaultOperator))
+}
+
+// deviceIdentityScript is the default rendering, kept for tests that exercise
+// the shipped resolver without a brand input.
+var deviceIdentityScript = deviceIdentityScriptCommand()
 
 // parseDeviceIdentity reads the TG_* markers deviceIdentityScript echoes. It
 // returns the zero identity when no code was resolved (the router-side resolver
@@ -774,11 +831,11 @@ func fallbackDeviceIdentity() deviceIdentity {
 	code := string(suffix)
 	return deviceIdentity{
 		Code:        code,
-		Nym:         deviceIdentityDefaultNym,
+		Nym:         deviceIdentityDefaultOperator,
 		Source:      "minted-locally",
 		Hostname:    "tollgate-" + code,
 		SSID:        "!TollGate-" + code,
-		PrivateSSID: deviceIdentityDefaultNym + "-" + code,
+		PrivateSSID: "Private-" + deviceIdentityDefaultOperator + "-" + code,
 	}
 }
 
@@ -1754,7 +1811,7 @@ func runDeployment(job *Job, req deployRequest) {
 	// tollgate-0GLK: the module minted, then the installer minted again.
 	job.setStep(7, "running", "")
 
-	idOut := sshRun(client, deviceIdentityScript)
+	idOut := sshRun(client, deviceIdentityScriptCommand())
 	id := parseDeviceIdentity(idOut)
 	if id.Code == "" {
 		// The router-side resolver returned nothing usable (no uci, no

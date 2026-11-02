@@ -118,3 +118,36 @@ func TestNoBrandTokenWriterWithoutABrand(t *testing.T) {
 		t.Errorf("emitted a brand writer for the default brand: %v", cmds)
 	}
 }
+
+func TestOperatorTokenDefaultsAndBrandInput(t *testing.T) {
+	prev := deviceIdentityDefaultOperator
+	t.Cleanup(func() { deviceIdentityDefaultOperator = prev })
+
+	id := brandedDeviceIdentity("OQ3Q", "")
+	if id.PrivateSSID != "Private-c08r4d0r-OQ3Q" {
+		t.Errorf("default private SSID = %q, want Private-c08r4d0r-OQ3Q", id.PrivateSSID)
+	}
+
+	SetOperatorToken("Archipelago")
+	id = brandedDeviceIdentity("OQ3Q", "")
+	if id.PrivateSSID != "Private-Archipelago-OQ3Q" {
+		t.Errorf("brand-input private SSID = %q, want Private-Archipelago-OQ3Q", id.PrivateSSID)
+	}
+}
+
+func TestOperatorTokenValidation(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+	}{
+		{"Archipelago", "Archipelago"},
+		{"operator_2", "operator_2"},
+		{"bad token", ""},
+		{"bad/token", ""},
+		{"'", ""},
+		{"", ""},
+	} {
+		if got := sanitizeOperatorToken(tc.in); got != tc.want {
+			t.Errorf("sanitizeOperatorToken(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
