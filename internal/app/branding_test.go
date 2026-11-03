@@ -256,6 +256,69 @@ func TestBrandingCommandsNeverGrantAdminBoard(t *testing.T) {
 	}
 }
 
+// TestBrandingCommandsNeverSetGatewayDomainName is the regression guard for the
+// re-armed redirect loop (tollgate-module-basic-go issue #428). nodogsplash 5.0.2
+// redirects every splash request that carries a `redir` parameter back to the
+// splash when `gatewaydomainname` is configured, so a pre-auth client loops
+// forever — browsers abort with ERR_TOO_MANY_REDIRECTS and the paying customer
+// never reaches the payment page. The module's uci-defaults
+// (99-tollgate-setup → setup_nodogsplash) therefore DELETES the option on
+// upgrade. But the installer runs AFTER the package's uci-defaults (deploy step
+// 7) and used to `set` it straight back, re-arming the loop on every deploy.
+//
+// The friendly <hostname>.lan name does not need the option: dnsmasq serves the
+// system hostname in the `lan` zone, and the installer keeps setting
+// dhcp.@dnsmasq[0].domain='lan'/local='/lan/' for exactly that reason. A second
+// argument: the old line hardcoded 'tollgate.lan', which does not exist on a
+// whitelabel router whose friendly name is <brand>-<code>.lan.
+//
+// Scope of the assertion is the whole `gatewaydomainname` namespace, not just
+// the `set` verb, and it is deliberate that no `del`/`del_list` is wanted here:
+// the module owns the repair path and already deletes the key, and a second
+// writer for one key is precisely the class of bug this change set is about.
+// If a future change genuinely needs the installer to delete it too, this test
+// must be changed on purpose, with the justification in the commit message —
+// not silently re-armed.
+func TestBrandingCommandsNeverSetGatewayDomainName(t *testing.T) {
+	const key = "nodogsplash.@nodogsplash[0].gatewaydomainname"
+
+	// Text-level: none of the shipped commands may mention the key at all.
+	cmds := brandingCommands(testDeviceIdentity(), "192.168.1.1")
+	if len(cmds) == 0 {
+		t.Fatal("brandingCommands returned no commands")
+	}
+	for _, cmd := range cmds {
+		if !strings.Contains(cmd, "gatewaydomainname") {
+			continue
+		}
+		t.Errorf("shipped branding command touches %s: %q\n\n"+
+			"The module DELETES this option (nodogsplash 5.0.2 loops pre-auth clients "+
+			"carrying a `redir` param when it is set — ERR_TOO_MANY_REDIRECTS, issue #428), "+
+			"and the installer runs AFTER the package's uci-defaults. Setting it here re-arms "+
+			"the loop on every deploy; deleting it here makes the installer a second writer "+
+			"for a key the module already repairs. Neither belongs in brandingCommands.", key, cmd)
+	}
+
+	// Behavioural: what the shipped commands actually do to a deployed router's
+	// UCI state, and which verbs they use. This catches a `set` smuggled in
+	// through a shell one-liner that the substring check above might miss
+	// (e.g. a variable-built key).
+	state, uciLog := runBrandingUciCommands(t, deployedRouterSeed)
+	if got := state[key]; len(got) != 0 {
+		t.Errorf("after branding, %s is set to %v — a deployed router must not carry it (issue #428)", key, got)
+	}
+	for _, verb := range []string{"set", "add_list"} {
+		if strings.Contains(uciLog, verb+" "+key+"=") {
+			t.Errorf("branding issues `%s %s=...`:\n%s", verb, key, uciLog)
+		}
+	}
+	if strings.Contains(uciLog, "del_list "+key+"=") {
+		t.Errorf("branding now DELETES %s: %s\n\n"+
+			"Not wanted: the module owns the repair path and already deletes the key. "+
+			"A second writer for one key is the bug class this change set is about.", key, uciLog)
+	}
+}
+
 func containsString(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
