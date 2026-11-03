@@ -18,6 +18,14 @@ The wizard itself is `internal/app`:
 `tests/shell/` — shell pins run against a tree (`bash tests/shell/test-*.sh <tree>`);
 `tests/ui/` — the UI harness; `scripts/` — operator tools, not tests; `e2e/` — Playwright.
 
+`tests/shell/test-rebrand-literal-gutter.sh` is the whitelabel-brand gate: it fails if
+the commercial re-brand's name reappears on a shipped surface in this tree (the module
+enforces the same invariant at `tests/packaging/rebrand-literal-gutter_test.sh`, and the
+two repos share the device-code adoption contract). One occurrence in
+`internal/app/deploy.go` is an explicitly documented, path-scoped exemption — read the
+gutter's header before adding a second one. Run in CI by
+`.github/workflows/rebrand-literal-gutter.yml`.
+
 Version stamping follows the package: `-X github.com/OpenTollGate/tollgate-installer/internal/app.version`
 (see `scripts/release-binaries.sh`).
 

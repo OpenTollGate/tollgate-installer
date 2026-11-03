@@ -1,0 +1,48 @@
+name: Rebrand literal gutter
+
+# The whitelabel re-brand's name must never appear on a shipped surface in this
+# tree. This is the installer half of a two-repo contract: the ROUTER-SIDE
+# writer (tollgate-module-basic-go) and this WIZARD both name a router, and the
+# adoption path is pinned on both sides (docs/device-identity.md). The module
+# enforces the invariant in its own CI
+# (tests/packaging/rebrand-literal-gutter_test.sh); without this workflow the
+# same change drifts into this repo with CI green, and nobody finds out until a
+# customer-facing bug appears.
+#
+# Cheap, hermetic, no router, no network, no Go toolchain: a tree scan plus its
+# own controls. It runs on every push and PR so the guard cannot be bypassed by
+# forgetting to invoke it.
+#
+# Scope note: only THIS pin is wired here. The other tests/shell/test-*.sh pins
+# are not green at the current base (test-trust-host-key-forwarding.sh fails for
+# reasons unrelated to branding), so adding them would introduce a red check in
+# this PR. Wiring the rest of the shell suite is a separate change.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rebrand-literal-gutter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No re-brand literal on a shipped surface
+        run: |
+          # Offline and tree-only: the gutter fails the moment a literal
+          # reappears on a code, build, packaging, test or CI surface, and it
+          # scans itself — the pattern is a bracket expression, so the file does
+          # not carry the name it bans. Its controls prove the scan is neither
+          # inert nor too loose, and that the one documented exemption is
+          # exactly one line rather than a blindfold. A working-tree gutter, not
+          # a history rewrite: the literal legitimately survives in old commits.
+          bash tests/shell/test-rebrand-literal-gutter.sh .
