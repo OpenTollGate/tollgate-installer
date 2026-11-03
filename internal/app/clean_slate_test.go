@@ -168,6 +168,20 @@ func TestCleanSlateConfirmationMustMatchDetectedBoard(t *testing.T) {
 	}
 }
 
+func TestCleanSlatePasswordCommandQuotesThePassword(t *testing.T) {
+	cmd := cleanSlatePasswordCommand("p'w x")
+	if !strings.Contains(cmd, "passwd root") {
+		t.Fatalf("password command does not invoke passwd root: %q", cmd)
+	}
+	if !strings.Contains(cmd, `'p'\''w x'`) {
+		t.Fatalf("password is not safely single-quoted: %q", cmd)
+	}
+	simple := cleanSlatePasswordCommand("newpass123")
+	if !strings.Contains(simple, "'newpass123' 'newpass123'") {
+		t.Fatalf("password is not passed twice to passwd: %q", simple)
+	}
+}
+
 func TestCleanSlateHashMismatchAbortsBeforePush(t *testing.T) {
 	pushed := false
 	_, err := verifyCleanSlateImage([]byte("image"), "deadbeef", func([]byte) { pushed = true })

@@ -133,6 +133,10 @@ type cleanSlateRequest struct {
 	Password     string `json:"password"`
 	Version      string `json:"version"`
 	Confirmation string `json:"confirmation"`
+	// NewPassword is set on the router after it reboots. `sysupgrade -n`
+	// wipes the old root password, so without this a fresh router comes back
+	// passwordless and the operator cannot reconnect through Archy.
+	NewPassword string `json:"newPassword,omitempty"`
 }
 
 func imgFilename(img openWrtImage) string {
@@ -258,6 +262,18 @@ func runCleanSlate(job *Job, req cleanSlateRequest) {
 		jobFail(job, 2, "router did not return", err.Error())
 		return
 	}
+	if req.NewPassword != "" {
+		job.setStep(3, "running", "setting the new root password")
+		out := sshRun(newClient, cleanSlatePasswordCommand(req.NewPassword))
+		if !strings.Contains(out, "password for root changed") {
+			newClient.Close()
+			jobFail(job, 3, "password not set", truncate(out, 160))
+			return
+		}
+		job.setStep(3, "done", "root password set")
+	} else {
+		job.setStep(3, "skipped", "no new password requested")
+	}
 	newClient.Close()
 	job.setStep(2, "done", "OpenWrt "+img.Version+" flashed on "+board+"; router back at "+newIP)
 	job.mu.Lock()
@@ -266,5 +282,13 @@ func runCleanSlate(job *Job, req cleanSlateRequest) {
 }
 
 func newCleanSlateJob(ip string) *Job {
-	return &Job{IP: ip, Status: "running", Steps: []Step{{Name: "identity", Desc: "Confirm router identity", Status: "pending"}, {Name: "image", Desc: "Verify OpenWrt image", Status: "pending"}, {Name: "flash", Desc: "Flash vanilla OpenWrt", Status: "pending"}}, Log: []LogEntry{}, stageCache: map[string][]byte{}, lastActivity: time.Now()}
+	return &Job{IP: ip, Status: "running", Steps: []Step{{Name: "identity", Desc: "Confirm router identity", Status: "pending"}, {Name: "image", Desc: "Verify OpenWrt image", Status: "pending"}, {Name: "flash", Desc: "Flash vanilla OpenWrt", Status: "pending"}, {Name: "password", Desc: "Set the new root password", Status: "pending"}}, Log: []LogEntry{}, stageCache: map[string][]byte{}, lastActivity: time.Now()}
+}
+
+// cleanSlatePasswordCommand builds the router-side command that sets the new
+// root password twice for passwd's prompt. The password is single-quoted so
+// spaces and shell metacharacters cannot break out.
+func cleanSlatePasswordCommand(password string) string {
+	quoted := shellQuoteSingle(password)
+	return fmt.Sprintf("printf '%%s\\n%%s\\n' %s %s | passwd root", quoted, quoted)
 }
